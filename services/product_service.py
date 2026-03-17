@@ -18,8 +18,8 @@ class ProductFilter:
     produtos: Optional[List[int]] = None          # Lista de códigos de produto
     grupos: Optional[List[int]] = None            # Lista de códigos de grupo
     fornecedor: Optional[int] = None              # Código do fornecedor
-    fabricante: Optional[int] = None              # Código do fabricante
-    localizacoes: Optional[List[int]] = None      # Lista de códigos de localização
+    fabricante: Optional[int] = None              # Código do fabricante (não usado)
+    localizacoes: Optional[List[str]] = None      # Lista de localizações (texto)
     tipos_produto: Optional[List[int]] = None     # Lista de códigos de tipo
     
     @classmethod
@@ -44,51 +44,50 @@ class ProductService:
     - Aplicar regras de negócio (ativos, com EAN)
     - Calcular estoque total (depósito + loja)
     - Preparar dados para a grid
+    
+    Tabelas de referência:
+    - produtos: codproduto, descricaoproduto, unidade, codgrupo, controlarestoque, codeanunidade, codtipoproduto, PesoVariavel
+    - produtosestoque: codempresa, codproduto, situacao ('A'), localizacao, estoquedeposito, estoqueloja, codfornecedor, CompoeVenda, EncomendaSN
+    - LocalEstoque: codlocal, NomeLocalEstoque
+    - GrupoEstoque: codgrupo, NomeGrupo, chavegrupo, ordemnomegrupo
     """
     
     # Query base com regras fixas
     _BASE_QUERY = """
         SELECT 
             p.codproduto,
-            p.descricao AS descricaoproduto,
-            COALESCE(p.codean, '') + 
-                CASE WHEN p.unidade IS NOT NULL AND p.unidade <> '' 
-                     THEN '/' + p.unidade 
-                     ELSE '' 
-                END AS codeanunidade,
+            p.descricaoproduto,
+            COALESCE(p.codeanunidade, '') AS codeanunidade,
+            p.unidade,
             p.codgrupo,
-            COALESCE(g.descricao, '') AS nomegrupo,
-            COALESCE(le.descricao, '') AS nomeLocalEstoque,
-            COALESCE(pl.numlote, '') AS numlote,
-            pl.datafabricacao,
-            pl.datavalidade,
+            COALESCE(g.NomeGrupo, '') AS nomegrupo,
+            COALESCE(le.NomeLocalEstoque, '') AS nomeLocalEstoque,
             COALESCE(pe.estoqueloja, 0) AS estoqueloja,
             COALESCE(pe.estoquedeposito, 0) AS estoquedeposito,
             (COALESCE(pe.estoqueloja, 0) + COALESCE(pe.estoquedeposito, 0)) AS estoque,
-            p.codfornecedor,
-            COALESCE(forn.nome, '') AS nomefornecedor,
-            p.codfabricante,
-            COALESCE(fab.nome, '') AS nomefabricante,
-            p.codtipo,
-            COALESCE(tp.descricao, '') AS nometipo,
-            p.referencia,
-            p.unidade,
-            p.codean,
-            COALESCE(pe.customedio, 0) AS customedio,
-            COALESCE(pe.vendaatual, 0) AS precovenda,
-            pe.codlocal
-        FROM produtos p
-        LEFT JOIN gruposestoque g ON g.codgrupo = p.codgrupo
-        LEFT JOIN produtosestoque pe ON pe.codproduto = p.codproduto
-        LEFT JOIN locaisestoque le ON le.codlocal = pe.codlocal
-        LEFT JOIN produtoslotes pl ON pl.codproduto = p.codproduto 
-            AND pl.codlocal = pe.codlocal
-            AND pl.principal = 1
-        LEFT JOIN pessoas forn ON forn.codpessoa = p.codfornecedor
-        LEFT JOIN pessoas fab ON fab.codpessoa = p.codfabricante
-        LEFT JOIN tiposproduto tp ON tp.codtipo = p.codtipo
-        WHERE p.ativo = 1
-          AND COALESCE(p.codean, '') <> ''
+            COALESCE(pe.codfornecedor, 0) AS codfornecedor,
+            p.codtipoproduto,
+            COALESCE(p.PesoVariavel, 0) AS pesovariavel,
+            COALESCE(pe.CompoeVenda, 0) AS compoevenda,
+            COALESCE(pe.EncomendaSN, 0) AS encomenda,
+            pe.localizacao
+        FROM produtosestoque pe
+        INNER JOIN produtos p ON p.codproduto = pe.codproduto
+        LEFT JOIN GrupoEstoque g ON g.codgrupo = p.codgrupo
+        LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
+        WHERE pe.situacao = 'A'
+          AND p.controlarestoque = 1
+          AND ISNULL(p.codeanunidade, '') <> ''
+    """
+    
+    # Query de contagem
+    _COUNT_QUERY = """
+        SELECT COUNT(*) AS total
+        FROM produtosestoque pe
+        INNER JOIN produtos p ON p.codproduto = pe.codproduto
+        WHERE pe.situacao = 'A'
+          AND p.controlarestoque = 1
+          AND ISNULL(p.codeanunidade, '') <> ''
     """
     
     def __init__(self):
@@ -137,16 +136,11 @@ class ProductService:
         Returns:
             Quantidade de produtos
         """
-        _, params = self._build_query(filters)
+        params = self._build_params(filters) if filters else {}
         
-        count_query = f"""
-            SELECT COUNT(DISTINCT p.codproduto)
-            FROM produtos p
-            LEFT JOIN produtosestoque pe ON pe.codproduto = p.codproduto
-            WHERE p.ativo = 1
-              AND COALESCE(p.codean, '') <> ''
-            {self._build_where_clause(filters)}
-        """
+        count_query = self._COUNT_QUERY
+        if filters:
+            count_query += self._build_where_clause(filters)
         
         try:
             with get_session() as session:
@@ -179,7 +173,7 @@ class ProductService:
         total = self.get_products_count(filters)
         
         # Busca página
-        query, params = self._build_query(filters)
+        query, params = self._build_query(filters, include_order=False)
         
         # Adiciona paginação (SQL Server)
         offset = (page - 1) * page_size
@@ -205,13 +199,15 @@ class ProductService:
     
     def _build_query(
         self, 
-        filters: Optional[ProductFilter] = None
+        filters: Optional[ProductFilter] = None,
+        include_order: bool = True
     ) -> Tuple[str, Dict[str, Any]]:
         """
         Monta query SQL com filtros dinâmicos.
         
         Args:
             filters: Filtros a aplicar
+            include_order: Se True, inclui ORDER BY
             
         Returns:
             Tupla (query SQL, parâmetros)
@@ -224,8 +220,9 @@ class ProductService:
             query += where_clause
             params = self._build_params(filters)
         
-        # Ordenação padrão
-        query += " ORDER BY p.codproduto"
+        # Ordenação padrão (opcional)
+        if include_order:
+            query += " ORDER BY p.codproduto"
         
         return query, params
     
@@ -261,19 +258,19 @@ class ProductService:
         if filters.fornecedor:
             conditions.append("p.codfornecedor = :fornecedor")
         
-        # Filtro por fabricante
-        if filters.fabricante:
-            conditions.append("p.codfabricante = :fabricante")
+        # Filtro por fabricante (não existe no modelo atual)
+        # if filters.fabricante:
+        #     conditions.append("p.codfabricante = :fabricante")
         
-        # Filtro por localizações
+        # Filtro por localizações (pe.localizacao é texto)
         if filters.localizacoes:
             placeholders = ", ".join([f":local_{i}" for i in range(len(filters.localizacoes))])
-            conditions.append(f"pe.codlocal IN ({placeholders})")
+            conditions.append(f"pe.localizacao IN ({placeholders})")
         
         # Filtro por tipos de produto
         if filters.tipos_produto:
             placeholders = ", ".join([f":tipo_{i}" for i in range(len(filters.tipos_produto))])
-            conditions.append(f"p.codtipo IN ({placeholders})")
+            conditions.append(f"p.codtipoproduto IN ({placeholders})")
         
         if conditions:
             return " AND " + " AND ".join(conditions)
@@ -342,28 +339,21 @@ class ProductService:
             "codproduto": row.codproduto,
             "descricaoproduto": row.descricaoproduto or "",
             "codeanunidade": row.codeanunidade or "",
+            "unidade": row.unidade or "",
             "codgrupo": row.codgrupo,
             "nomegrupo": row.nomegrupo or "",
             "nomeLocalEstoque": row.nomeLocalEstoque or "",
-            "numlote": row.numlote or "",
-            "datafabricacao": row.datafabricacao,
-            "datavalidade": row.datavalidade,
-            # Campos adicionais para uso interno
+            # Estoques
             "estoqueloja": float(row.estoqueloja or 0),
             "estoquedeposito": float(row.estoquedeposito or 0),
             "estoque": float(row.estoque or 0),
-            "codfornecedor": row.codfornecedor,
-            "nomefornecedor": row.nomefornecedor or "",
-            "codfabricante": row.codfabricante,
-            "nomefabricante": row.nomefabricante or "",
-            "codtipo": row.codtipo,
-            "nometipo": row.nometipo or "",
-            "referencia": row.referencia or "",
-            "unidade": row.unidade or "",
-            "codean": row.codean or "",
-            "customedio": float(row.customedio or 0),
-            "precovenda": float(row.precovenda or 0),
-            "codlocal": row.codlocal,
+            # Outros
+            "codfornecedor": row.codfornecedor or 0,
+            "codtipoproduto": row.codtipoproduto or 0,
+            "pesovariavel": int(row.pesovariavel or 0),
+            "compoevenda": int(row.compoevenda or 0),
+            "encomenda": int(row.encomenda or 0),
+            "localizacao": row.localizacao or "",
         }
     
     # ===== MÉTODOS PARA CARREGAR DADOS DOS FILTROS =====
@@ -376,18 +366,20 @@ class ProductService:
             Lista de (codigo, descricao)
         """
         query = """
-            SELECT DISTINCT g.codgrupo, g.descricao 
-            FROM gruposestoque g
+            SELECT DISTINCT g.codgrupo, g.NomeGrupo
+            FROM GrupoEstoque g
             INNER JOIN produtos p ON p.codgrupo = g.codgrupo
-            WHERE p.ativo = 1
-              AND COALESCE(p.codean, '') <> ''
-            ORDER BY g.descricao
+            INNER JOIN produtosestoque pe ON pe.codproduto = p.codproduto
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+            ORDER BY g.NomeGrupo
         """
         
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codgrupo, row.descricao) for row in result]
+                return [(row.codgrupo, row.NomeGrupo) for row in result]
         except Exception as e:
             print(f"Erro ao carregar grupos: {e}")
             return []
@@ -400,43 +392,46 @@ class ProductService:
             Lista de (codigo, descricao)
         """
         query = """
-            SELECT DISTINCT tp.codtipo, tp.descricao 
-            FROM tiposproduto tp
-            INNER JOIN produtos p ON p.codtipo = tp.codtipo
-            WHERE p.ativo = 1
-              AND COALESCE(p.codean, '') <> ''
-            ORDER BY tp.descricao
+            SELECT DISTINCT p.codtipoproduto, CAST(p.codtipoproduto AS VARCHAR) AS descricao
+            FROM produtosestoque pe
+            INNER JOIN produtos p ON p.codproduto = pe.codproduto
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+              AND p.codtipoproduto IS NOT NULL
+            ORDER BY p.codtipoproduto
         """
         
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codtipo, row.descricao) for row in result]
+                return [(row.codtipoproduto, row.descricao) for row in result]
         except Exception as e:
             print(f"Erro ao carregar tipos: {e}")
             return []
     
-    def get_localizacoes(self) -> List[Tuple[int, str]]:
+    def get_localizacoes(self) -> List[Tuple[str, str]]:
         """
         Carrega localizações de estoque para filtro.
         
         Returns:
-            Lista de (codigo, descricao)
+            Lista de (localizacao, localizacao) - texto
         """
         query = """
-            SELECT DISTINCT le.codlocal, le.descricao 
-            FROM locaisestoque le
-            INNER JOIN produtosestoque pe ON pe.codlocal = le.codlocal
+            SELECT DISTINCT pe.localizacao
+            FROM produtosestoque pe
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
-            WHERE p.ativo = 1
-              AND COALESCE(p.codean, '') <> ''
-            ORDER BY le.descricao
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+              AND ISNULL(pe.localizacao, '') <> ''
+            ORDER BY pe.localizacao
         """
         
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codlocal, row.descricao) for row in result]
+                return [(row.localizacao, row.localizacao) for row in result]
         except Exception as e:
             print(f"Erro ao carregar localizações: {e}")
             return []
@@ -449,45 +444,34 @@ class ProductService:
             Lista de (codigo, nome)
         """
         query = """
-            SELECT DISTINCT ps.codpessoa, ps.nome 
-            FROM pessoas ps
-            INNER JOIN produtos p ON p.codfornecedor = ps.codpessoa
-            WHERE p.ativo = 1
-              AND COALESCE(p.codean, '') <> ''
-            ORDER BY ps.nome
+            SELECT DISTINCT pe.codfornecedor, CAST(pe.codfornecedor AS VARCHAR) AS nome
+            FROM produtosestoque pe
+            INNER JOIN produtos p ON p.codproduto = pe.codproduto
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+              AND pe.codfornecedor IS NOT NULL
+              AND pe.codfornecedor > 0
+            ORDER BY pe.codfornecedor
         """
         
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codpessoa, row.nome) for row in result]
+                return [(row.codfornecedor, row.nome) for row in result]
         except Exception as e:
             print(f"Erro ao carregar fornecedores: {e}")
             return []
     
     def get_fabricantes(self) -> List[Tuple[int, str]]:
         """
-        Carrega fabricantes para filtro.
+        Carrega fabricantes para filtro (não aplicável neste modelo).
         
         Returns:
-            Lista de (codigo, nome)
+            Lista vazia (campo não existe)
         """
-        query = """
-            SELECT DISTINCT ps.codpessoa, ps.nome 
-            FROM pessoas ps
-            INNER JOIN produtos p ON p.codfabricante = ps.codpessoa
-            WHERE p.ativo = 1
-              AND COALESCE(p.codean, '') <> ''
-            ORDER BY ps.nome
-        """
-        
-        try:
-            with get_session() as session:
-                result = session.execute(text(query))
-                return [(row.codpessoa, row.nome) for row in result]
-        except Exception as e:
-            print(f"Erro ao carregar fabricantes: {e}")
-            return []
+        # Fabricante não existe no modelo atual
+        return []
     
     def get_produtos_for_filter(self) -> List[Tuple[int, str]]:
         """
@@ -497,17 +481,19 @@ class ProductService:
             Lista de (codigo, descricao)
         """
         query = """
-            SELECT p.codproduto, p.descricao
-            FROM produtos p
-            WHERE p.ativo = 1
-              AND COALESCE(p.codean, '') <> ''
-            ORDER BY p.descricao
+            SELECT DISTINCT p.codproduto, p.descricaoproduto
+            FROM produtosestoque pe
+            INNER JOIN produtos p ON p.codproduto = pe.codproduto
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+            ORDER BY p.descricaoproduto
         """
         
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codproduto, row.descricao) for row in result]
+                return [(row.codproduto, row.descricaoproduto) for row in result]
         except Exception as e:
             print(f"Erro ao carregar produtos: {e}")
             return []
@@ -526,3 +512,101 @@ class ProductService:
             "fornecedores": self.get_fornecedores(),
             "fabricantes": self.get_fabricantes(),
         }
+    
+    def search_products(self, search_text: str = "", limit: int = 50, offset: int = 0) -> tuple[List[Dict[str, Any]], int]:
+        """
+        Busca produtos por código ou descrição com paginação.
+        
+        Usado pelo diálogo de busca ao pressionar Enter no campo "Buscar Produto".
+        Implementa lazy loading para melhor performance.
+        
+        Args:
+            search_text: Texto a buscar (código ou descrição). Se vazio, retorna todos.
+            limit: Número máximo de registros a retornar (default 50)
+            offset: Número de registros a pular (para paginação)
+        
+        Returns:
+            Tupla (lista_de_produtos, total_encontrado)
+        """
+        # Primeiro, conta o total de registros que correspondem
+        count_query = """
+            SELECT COUNT(*) AS total
+            FROM produtosestoque pe
+            INNER JOIN produtos p ON p.codproduto = pe.codproduto
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+        """
+        
+        params = {}
+        
+        # Se houver texto de busca, adiciona filtro
+        if search_text.strip():
+            search_term = f"%{search_text}%"
+            count_query += """
+              AND (
+                  CAST(p.codproduto AS VARCHAR) LIKE :search_term
+                  OR p.descricaoproduto LIKE :search_term
+              )
+            """
+            params["search_term"] = search_term
+        
+        # Query para buscar produtos com OFFSET/FETCH (SQL Server)
+        search_query = f"""
+            SELECT 
+                p.codproduto,
+                p.descricaoproduto,
+                COALESCE(p.codeanunidade, '') AS codeanunidade,
+                p.unidade,
+                p.codgrupo,
+                COALESCE(g.NomeGrupo, '') AS nomegrupo,
+                COALESCE(le.NomeLocalEstoque, '') AS nomeLocalEstoque,
+                COALESCE(pe.estoqueloja, 0) AS estoqueloja,
+                COALESCE(pe.estoquedeposito, 0) AS estoquedeposito,
+                (COALESCE(pe.estoqueloja, 0) + COALESCE(pe.estoquedeposito, 0)) AS estoque,
+                COALESCE(pe.codfornecedor, 0) AS codfornecedor,
+                p.codtipoproduto,
+                COALESCE(p.PesoVariavel, 0) AS pesovariavel,
+                COALESCE(pe.CompoeVenda, 0) AS compoevenda,
+                COALESCE(pe.EncomendaSN, 0) AS encomenda,
+                pe.localizacao
+            FROM produtosestoque pe
+            INNER JOIN produtos p ON p.codproduto = pe.codproduto
+            LEFT JOIN GrupoEstoque g ON g.codgrupo = p.codgrupo
+            LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+        """
+        
+        if search_text.strip():
+            search_query += """
+              AND (
+                  CAST(p.codproduto AS VARCHAR) LIKE :search_term
+                  OR p.descricaoproduto LIKE :search_term
+              )
+            """
+        
+        search_query += f"""
+            ORDER BY p.descricaoproduto
+            OFFSET {offset} ROWS
+            FETCH NEXT {limit} ROWS ONLY
+        """
+        
+        try:
+            with get_session() as session:
+                # Conta total
+                result_count = session.execute(text(count_query), params)
+                total = result_count.scalar() or 0
+                
+                # Busca produtos
+                result = session.execute(text(search_query), params)
+                
+                products = []
+                for row in result:
+                    products.append(self._row_to_dict(row))
+                
+                return products, total
+        except Exception as e:
+            print(f"Erro ao buscar produtos: {e}")
+            return [], 0

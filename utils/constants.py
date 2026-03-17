@@ -8,13 +8,16 @@ from dataclasses import dataclass
 from typing import Dict, Any
 import os
 
+# Importa versão do arquivo centralizado
+from version import VERSION, BUILD
+
 
 @dataclass(frozen=True)
 class AppInfo:
     """Informações da aplicação."""
     NAME: str = "CSCollectManager"
-    VERSION: str = "1.0.0"
-    BUILD: str = "2026.03.16"
+    VERSION: str = VERSION
+    BUILD: str = BUILD
     AUTHOR: str = "CEO Software"
     COMPANY: str = "CEO Software"
     DESCRIPTION: str = "Sistema de Gestão de Coletas para Coletores de Dados"

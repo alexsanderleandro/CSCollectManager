@@ -205,6 +205,13 @@ class AppStatusBar(QStatusBar):
         
         self._add_separator(permanent=True)
         
+        # Banco de dados e CNPJ
+        self._database_label = QLabel("")
+        self._database_label.setStyleSheet("color: rgba(255,255,255,0.8); font-size: 9pt;")
+        self.addPermanentWidget(self._database_label)
+        
+        self._add_separator(permanent=True)
+        
         # Versão
         from utils.constants import APP_INFO
         version_label = QLabel(f"v{APP_INFO.VERSION}")
@@ -329,6 +336,30 @@ class AppStatusBar(QStatusBar):
     def clear_user(self):
         """Limpa informação do usuário."""
         self._user_label.setText("")
+    
+    # ===== Banco de Dados e CNPJ =====
+    
+    def set_database_info(self, database: str, cnpj: str = ""):
+        """
+        Define informações do banco de dados e CNPJ da empresa.
+        
+        Args:
+            database: Nome do banco de dados
+            cnpj: CNPJ da empresa (opcional)
+        """
+        parts = []
+        
+        if database:
+            parts.append(f"🗂️ {database}")
+        
+        if cnpj:
+            parts.append(f"📋 {cnpj}")
+        
+        self._database_label.setText(" | ".join(parts))
+    
+    def clear_database_info(self):
+        """Limpa informações do banco de dados."""
+        self._database_label.setText("")
     
     # ===== Registros =====
     

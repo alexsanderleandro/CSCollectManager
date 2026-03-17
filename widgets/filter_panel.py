@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from widgets.multi_select_combo import MultiSelectCombo, SingleSelectCombo
+from widgets.product_search_combo import ProductSearchCombo
 
 
 class FilterPanel(QWidget):
@@ -93,10 +94,10 @@ class FilterPanel(QWidget):
         
         # ===== FILTROS DE SELEÇÃO MÚLTIPLA =====
         
-        # Produto
-        self.filter_produto = MultiSelectCombo(
+        # Produto (com busca ao pressionar Enter)
+        self.filter_produto = ProductSearchCombo(
             title="Produto",
-            placeholder="Buscar produto..."
+            placeholder="Buscar produto... (pressione Enter para buscar na base)"
         )
         filter_layout.addWidget(self.filter_produto)
         

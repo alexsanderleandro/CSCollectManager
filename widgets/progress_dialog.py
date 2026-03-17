@@ -9,6 +9,7 @@ Implementa:
 - Integração com workers
 """
 
+import os
 from typing import Optional, Callable
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -16,6 +17,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QFont, QIcon
+
+# Caminho do logotipo
+LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
 
 
 class ProgressDialog(QDialog):
@@ -67,6 +71,12 @@ class ProgressDialog(QDialog):
     ):
         """Configura a interface."""
         self.setWindowTitle(title)
+        
+        # Define ícone da janela
+        if os.path.exists(LOGO_PATH):
+            icon = QIcon(LOGO_PATH)
+            self.setWindowIcon(icon)
+        
         self.setWindowFlags(
             Qt.WindowType.Dialog |
             Qt.WindowType.WindowTitleHint |

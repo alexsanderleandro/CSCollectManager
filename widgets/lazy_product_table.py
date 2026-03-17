@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QFrame, QHeaderView, QMenu,
     QApplication, QMessageBox, QToolBar, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, Slot, QTimer, QModelIndex
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QModelIndex, QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 
 from models.lazy_table_model import LazyTableModel, LazySortFilterProxyModel
@@ -107,7 +107,7 @@ class LazyProductTable(QWidget):
         """Cria toolbar."""
         toolbar = QToolBar()
         toolbar.setMovable(False)
-        toolbar.setIconSize(Qt.QSize(20, 20))
+        toolbar.setIconSize(QSize(20, 20))
         
         # Pesquisa
         self._search_input = QLineEdit()

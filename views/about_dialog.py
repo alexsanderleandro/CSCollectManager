@@ -4,14 +4,18 @@ about_dialog.py
 Diálogo "Sobre" do sistema CSCollectManager.
 """
 
+import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QWidget
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QPixmap, QIcon
 
 from utils.constants import APP_INFO, Icons
+
+# Caminho do logotipo
+LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
 
 
 class AboutDialog(QDialog):
@@ -21,6 +25,12 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         
         self.setWindowTitle(f"Sobre - {APP_INFO.NAME}")
+        
+        # Define ícone da janela
+        if os.path.exists(LOGO_PATH):
+            icon = QIcon(LOGO_PATH)
+            self.setWindowIcon(icon)
+        
         self.setFixedSize(450, 400)
         self.setWindowFlags(
             Qt.WindowType.Dialog |
@@ -141,6 +151,12 @@ class SystemInfoDialog(QDialog):
         super().__init__(parent)
         
         self.setWindowTitle("Informações do Sistema")
+        
+        # Define ícone da janela
+        if os.path.exists(LOGO_PATH):
+            icon = QIcon(LOGO_PATH)
+            self.setWindowIcon(icon)
+        
         self.setMinimumSize(500, 400)
         
         self._setup_ui()

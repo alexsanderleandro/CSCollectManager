@@ -28,6 +28,7 @@ from PySide6.QtGui import QFont, QIcon, QPixmap
 from app.styles import DarkTheme, apply_theme
 from utils.logger import get_logger, setup_logging
 from utils.error_handler import setup_exception_handler
+from authentication import DBConfig, set_db_config
 from utils.constants import APP_INFO
 
 logger = get_logger(__name__)
@@ -183,10 +184,22 @@ class CSCollectManagerApp:
         self._empresa_info = login_data.get("empresa", {})
         self._usuario_info = login_data.get("usuario", {})
         
+        # Configura conexão global do banco de dados
+        server = self._connection_info.get("server", "localhost")
+        database = self._connection_info.get("database", "master")
+        
+        db_config = DBConfig(
+            server=server,
+            database=database,
+            auth="trusted"  # Windows Authentication
+        )
+        set_db_config(db_config)
+        
         logger.info(
             f"Login bem-sucedido: {self._usuario_info.get('nome', 'N/A')} "
             f"@ {self._empresa_info.get('nome', 'N/A')}"
         )
+        logger.info(f"Conexão configurada: {server}/{database}")
         
         # Fecha diálogo de login
         if self._login_dialog:

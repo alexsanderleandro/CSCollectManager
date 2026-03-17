@@ -42,7 +42,7 @@ class CSCollectManagerApp:
         # Nome da aplicação
         self.app.setApplicationName("CSCollectManager")
         self.app.setApplicationVersion("1.0.0")
-        self.app.setOrganizationName("CEO Software")
+        self.app.setOrganizationName("CEOsoftware")
         
         # Fonte padrão
         font = QFont("Segoe UI", 10)

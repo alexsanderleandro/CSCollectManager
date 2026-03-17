@@ -1,13 +1,16 @@
 """
 login_dialog.py
 ===============
-Diálogo de login profissional com seleção de base e empresa.
+Diálogo de login profissional com seleção de base, empresa e autenticação.
 
 Fluxo:
-1. Carrega conexões do cslogin.xml
-2. Usuário seleciona base de dados
-3. Testa conexão e carrega empresas
-4. Usuário seleciona empresa e faz login
+1. Carrega conexões do C:\\CEOSoftware\\CSLogin.xml
+2. Usuário seleciona base de dados (TipoBanco, NomeServidor, NomeBanco)
+3. Conecta ao banco e carrega empresas da tabela 'empresas'
+4. Usuário seleciona empresa (CodEmpresa, Nome, CNPJ)
+5. Usuário digita credenciais (login/senha) - último usuário é lembrado
+6. Valida credenciais via stored procedure csspValidaSenha
+7. Carrega o aplicativo
 """
 
 import os
@@ -17,7 +20,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QComboBox, QPushButton, QCheckBox,
     QGroupBox, QFrame, QMessageBox, QProgressBar, QSpacerItem,
-    QSizePolicy, QStackedWidget, QWidget
+    QSizePolicy, QStackedWidget, QWidget, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread
 from PySide6.QtGui import QFont, QPixmap, QIcon, QCursor
@@ -25,11 +29,22 @@ from PySide6.QtGui import QFont, QPixmap, QIcon, QCursor
 from utils.constants import APP_INFO
 from utils.logger import get_logger
 
+# Importações para persistência e autenticação
+import login as login_module
+from authentication import DBConfig, verify_user, get_connection
+
 logger = get_logger(__name__)
 
 
+# Caminho padrão do arquivo de conexões
+CSLOGIN_PATH = r"C:\CEOSoftware\CSLogin.xml"
+
+# Caminho do logo
+LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
+
+
 class ConnectionWorker(QThread):
-    """Worker para testar conexão em background."""
+    """Worker para conectar ao banco e carregar empresas em background."""
     
     finished = Signal(bool, str, list)  # sucesso, mensagem, empresas
     
@@ -38,25 +53,143 @@ class ConnectionWorker(QThread):
         self._connection_data = connection_data
     
     def run(self):
-        """Executa teste de conexão."""
+        """Executa conexão e busca empresas."""
         try:
-            # Simula teste de conexão
-            import time
-            time.sleep(1)
+            servidor = self._connection_data.get("server", "")
+            banco = self._connection_data.get("database", "")
+            tipo = self._connection_data.get("type", "MSSQL")
             
-            # TODO: Implementar teste real com SQLAlchemy
-            # Por enquanto, retorna sucesso com empresas de exemplo
-            empresas = [
-                {"codigo": 1, "nome": "EMPRESA MATRIZ LTDA"},
-                {"codigo": 2, "nome": "FILIAL SÃO PAULO"},
-                {"codigo": 3, "nome": "FILIAL RIO DE JANEIRO"},
-            ]
+            logger.info(f"Conectando a {servidor}/{banco}...")
             
-            self.finished.emit(True, "Conexão estabelecida!", empresas)
+            # Tenta importar e usar o DatabaseManager
+            try:
+                from database.connection import DatabaseManager
+                from sqlalchemy import text
+                
+                # Configura conexão
+                db = DatabaseManager()
+                db.configure(servidor, banco)
+                
+                # Testa conexão e busca empresas
+                with db.session() as session:
+                    # Busca empresas da tabela
+                    result = session.execute(text("""
+                        SELECT 
+                            CodEmpresa,
+                            NomeEmpresa,
+                            ISNULL(CNPJ, '') as CNPJ
+                        FROM Empresas
+                        ORDER BY NomeEmpresa
+                    """))
+                    
+                    empresas = []
+                    for row in result:
+                        empresas.append({
+                            "codigo": row[0],
+                            "nome": row[1] or "",
+                            "cnpj": row[2] or ""
+                        })
+                
+                if empresas:
+                    self.finished.emit(True, f"Conectado! {len(empresas)} empresa(s) encontrada(s).", empresas)
+                else:
+                    self.finished.emit(True, "Conectado! Nenhuma empresa encontrada.", [])
+                    
+            except ImportError as ie:
+                logger.warning(f"DatabaseManager não disponível: {ie}")
+                # Fallback: tenta conexão direta com pyodbc
+                self._connect_pyodbc(servidor, banco)
             
         except Exception as e:
             logger.error(f"Erro ao conectar: {e}")
             self.finished.emit(False, str(e), [])
+    
+    def _connect_pyodbc(self, servidor: str, banco: str):
+        """Conexão direta com pyodbc como fallback."""
+        try:
+            import pyodbc
+            
+            # Tenta encontrar driver disponível
+            drivers = [d for d in pyodbc.drivers() if 'SQL Server' in d]
+            if not drivers:
+                raise Exception("Nenhum driver SQL Server encontrado")
+            
+            driver = drivers[0]
+            
+            conn_str = (
+                f"DRIVER={{{driver}}};"
+                f"SERVER={servidor};"
+                f"DATABASE={banco};"
+                f"Trusted_Connection=yes;"
+            )
+            
+            conn = pyodbc.connect(conn_str, timeout=10)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    CodEmpresa,
+                    NomeEmpresa,
+                    ISNULL(CNPJ, '') as CNPJ
+                FROM Empresas
+                ORDER BY NomeEmpresa
+            """)
+            
+            empresas = []
+            for row in cursor.fetchall():
+                empresas.append({
+                    "codigo": row[0],
+                    "nome": row[1] or "",
+                    "cnpj": row[2] or ""
+                })
+            
+            cursor.close()
+            conn.close()
+            
+            if empresas:
+                self.finished.emit(True, f"Conectado! {len(empresas)} empresa(s) encontrada(s).", empresas)
+            else:
+                self.finished.emit(True, "Conectado! Nenhuma empresa encontrada.", [])
+                
+        except Exception as e:
+            logger.error(f"Erro pyodbc: {e}")
+            self.finished.emit(False, str(e), [])
+
+
+class AuthWorker(QThread):
+    """Worker para autenticar usuário em background."""
+    
+    finished = Signal(bool, str, dict)  # sucesso, mensagem, dados_usuario
+    
+    def __init__(self, username: str, password: str, db_config: DBConfig):
+        super().__init__()
+        self._username = username
+        self._password = password
+        self._db_config = db_config
+    
+    def run(self):
+        """Executa autenticação."""
+        try:
+            logger.info(f"Autenticando usuário: {self._username}")
+            
+            user_data = verify_user(
+                username=self._username,
+                password=self._password,
+                cfg=self._db_config,
+                require_active=True,
+                require_manager=False
+            )
+            
+            if user_data:
+                logger.info(f"Usuário autenticado: {user_data.get('NomeUsuario')}")
+                self.finished.emit(True, "Autenticação bem-sucedida!", user_data)
+            else:
+                logger.warning(f"Falha na autenticação: {self._username}")
+                self.finished.emit(False, "Usuário ou senha inválidos.", {})
+                
+        except Exception as e:
+            logger.error(f"Erro na autenticação: {e}")
+            self.finished.emit(False, f"Erro ao autenticar: {str(e)}", {})
 
 
 class LoginDialog(QDialog):
@@ -71,7 +204,8 @@ class LoginDialog(QDialog):
     
     # Etapas do login
     STEP_CONNECTION = 0
-    STEP_LOGIN = 1
+    STEP_EMPRESA = 1
+    STEP_AUTH = 2
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -80,8 +214,10 @@ class LoginDialog(QDialog):
         self._connections = []
         self._empresas = []
         self._selected_connection = None
+        self._selected_empresa = None
         self._current_step = self.STEP_CONNECTION
         self._worker: Optional[ConnectionWorker] = None
+        self._auth_worker: Optional[AuthWorker] = None
         
         self._setup_ui()
         self._connect_signals()
@@ -90,7 +226,13 @@ class LoginDialog(QDialog):
     def _setup_ui(self):
         """Configura interface."""
         self.setWindowTitle(f"{APP_INFO.NAME} - Login")
-        self.setFixedSize(480, 580)
+        
+        # Define ícone da janela
+        if os.path.exists(LOGO_PATH):
+            icon = QIcon(LOGO_PATH)
+            self.setWindowIcon(icon)
+        
+        self.setFixedSize(600, 750)
         self.setWindowFlags(
             Qt.WindowType.Dialog |
             Qt.WindowType.WindowCloseButtonHint
@@ -124,6 +266,12 @@ class LoginDialog(QDialog):
                 border-top: 5px solid #cccccc;
                 margin-right: 10px;
             }
+            QComboBox QAbstractItemView {
+                background-color: #2d2d30;
+                border: 1px solid #3e3e42;
+                selection-background-color: #094771;
+                color: #cccccc;
+            }
             QGroupBox {
                 color: #cccccc;
                 font-weight: bold;
@@ -137,19 +285,31 @@ class LoginDialog(QDialog):
                 left: 12px;
                 padding: 0 6px;
             }
-            QCheckBox {
+            QTableWidget {
+                background-color: #1e1e1e;
+                alternate-background-color: #252526;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                gridline-color: #3e3e42;
                 color: #cccccc;
             }
-            QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border: 1px solid #3e3e42;
-                border-radius: 3px;
+            QTableWidget::item {
+                padding: 8px;
+            }
+            QTableWidget::item:selected {
+                background-color: #094771;
+            }
+            QTableWidget::item:hover {
                 background-color: #2d2d30;
             }
-            QCheckBox::indicator:checked {
-                background-color: #0078d4;
-                border-color: #0078d4;
+            QHeaderView::section {
+                background-color: #2d2d30;
+                color: #cccccc;
+                padding: 8px;
+                border: none;
+                border-right: 1px solid #3e3e42;
+                border-bottom: 1px solid #3e3e42;
+                font-weight: bold;
             }
         """)
         
@@ -174,8 +334,11 @@ class LoginDialog(QDialog):
         # Etapa 1: Seleção de conexão
         self._stack.addWidget(self._create_connection_step())
         
-        # Etapa 2: Login
-        self._stack.addWidget(self._create_login_step())
+        # Etapa 2: Seleção de empresa
+        self._stack.addWidget(self._create_empresa_step())
+        
+        # Etapa 3: Autenticação
+        self._stack.addWidget(self._create_auth_step())
         
         main_layout.addWidget(self._stack)
         
@@ -210,11 +373,32 @@ class LoginDialog(QDialog):
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # Logo/Ícone
-        icon_label = QLabel("📦")
-        icon_label.setFont(QFont("Segoe UI", 40))
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon_label)
+        # Logo
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Carrega logo da pasta assets
+        if os.path.exists(LOGO_PATH):
+            pixmap = QPixmap(LOGO_PATH)
+            if not pixmap.isNull():
+                # Redimensiona mantendo proporção (max 128x128)
+                scaled = pixmap.scaled(
+                    128, 128,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                logo_label.setPixmap(scaled)
+            else:
+                # Fallback para emoji se logo não carregar
+                logo_label.setText("📦")
+                logo_label.setFont(QFont("Segoe UI", 40))
+        else:
+            # Fallback para emoji se arquivo não existir
+            logo_label.setText("📦")
+            logo_label.setFont(QFont("Segoe UI", 40))
+            logger.warning(f"Logo não encontrado: {LOGO_PATH}")
+        
+        layout.addWidget(logo_label)
         
         # Título
         title = QLabel(APP_INFO.NAME)
@@ -239,45 +423,37 @@ class LoginDialog(QDialog):
         layout.setContentsMargins(0, 16, 0, 0)
         
         # Grupo de conexão
-        group = QGroupBox("🔌 Conexão com Banco de Dados")
+        group = QGroupBox("🔌 Selecione a Base de Dados")
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(12)
         group_layout.setContentsMargins(16, 20, 16, 16)
+        
+        # Info do arquivo XML
+        xml_info = QLabel(f"📄 Arquivo: {CSLOGIN_PATH}")
+        xml_info.setStyleSheet("color: #666666; font-size: 9pt;")
+        group_layout.addWidget(xml_info)
         
         # Combo de conexões
         lbl_connection = QLabel("Base de Dados:")
         group_layout.addWidget(lbl_connection)
         
         self._cmb_connection = QComboBox()
-        self._cmb_connection.addItem("Selecione uma base de dados...")
+        self._cmb_connection.setMinimumHeight(40)
         group_layout.addWidget(self._cmb_connection)
         
-        # Botão de teste
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        
-        self._btn_test = QPushButton("🔍 Testar Conexão")
-        self._btn_test.setMinimumSize(140, 36)
-        self._btn_test.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._btn_test.setStyleSheet("""
-            QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
-            QPushButton:disabled {
-                background-color: #2d2d30;
-                color: #666666;
-            }
+        # Detalhes da conexão selecionada
+        self._lbl_connection_details = QLabel("")
+        self._lbl_connection_details.setStyleSheet("""
+            background-color: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 12px;
+            color: #9d9d9d;
+            font-size: 9pt;
         """)
-        self._btn_test.setEnabled(False)
-        btn_layout.addWidget(self._btn_test)
-        group_layout.addLayout(btn_layout)
+        self._lbl_connection_details.setWordWrap(True)
+        self._lbl_connection_details.hide()
+        group_layout.addWidget(self._lbl_connection_details)
         
         # Status de conexão
         self._lbl_connection_status = QLabel("")
@@ -287,33 +463,17 @@ class LoginDialog(QDialog):
         
         layout.addWidget(group)
         
-        # Grupo de empresa
-        self._grp_empresa = QGroupBox("🏢 Empresa")
-        self._grp_empresa.setEnabled(False)
-        empresa_layout = QVBoxLayout(self._grp_empresa)
-        empresa_layout.setSpacing(12)
-        empresa_layout.setContentsMargins(16, 20, 16, 16)
-        
-        lbl_empresa = QLabel("Selecione a Empresa:")
-        empresa_layout.addWidget(lbl_empresa)
-        
-        self._cmb_empresa = QComboBox()
-        self._cmb_empresa.addItem("Selecione uma empresa...")
-        empresa_layout.addWidget(self._cmb_empresa)
-        
-        layout.addWidget(self._grp_empresa)
-        
         layout.addStretch()
         
-        # Botão avançar
-        btn_layout2 = QHBoxLayout()
-        btn_layout2.addStretch()
+        # Botões
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
         
-        self._btn_next = QPushButton("Avançar  →")
-        self._btn_next.setMinimumSize(140, 40)
-        self._btn_next.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._btn_next.setEnabled(False)
-        self._btn_next.setStyleSheet("""
+        self._btn_connect = QPushButton("🔗  Conectar")
+        self._btn_connect.setMinimumSize(160, 44)
+        self._btn_connect.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._btn_connect.setEnabled(False)
+        self._btn_connect.setStyleSheet("""
             QPushButton {
                 background-color: #0078d4;
                 color: white;
@@ -321,6 +481,7 @@ class LoginDialog(QDialog):
                 border-radius: 4px;
                 padding: 10px 24px;
                 font-weight: bold;
+                font-size: 11pt;
             }
             QPushButton:hover {
                 background-color: #1e8ad4;
@@ -330,65 +491,62 @@ class LoginDialog(QDialog):
                 color: #666666;
             }
         """)
-        btn_layout2.addWidget(self._btn_next)
-        layout.addLayout(btn_layout2)
+        btn_layout.addWidget(self._btn_connect)
+        layout.addLayout(btn_layout)
         
         return widget
     
-    def _create_login_step(self) -> QWidget:
-        """Cria etapa de login."""
+    def _create_empresa_step(self) -> QWidget:
+        """Cria etapa de seleção de empresa."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(16)
         layout.setContentsMargins(0, 16, 0, 0)
         
         # Info da conexão selecionada
-        self._lbl_selected_info = QLabel("")
-        self._lbl_selected_info.setStyleSheet("""
+        self._lbl_selected_connection = QLabel("")
+        self._lbl_selected_connection.setStyleSheet("""
             background-color: #252526;
             border: 1px solid #3e3e42;
             border-radius: 4px;
             padding: 12px;
             color: #9d9d9d;
         """)
-        layout.addWidget(self._lbl_selected_info)
+        layout.addWidget(self._lbl_selected_connection)
         
-        # Grupo de credenciais
-        group = QGroupBox("👤 Credenciais")
-        group_layout = QFormLayout(group)
+        # Grupo de empresa
+        group = QGroupBox("🏢 Selecione a Empresa")
+        group_layout = QVBoxLayout(group)
         group_layout.setSpacing(12)
         group_layout.setContentsMargins(16, 20, 16, 16)
         
-        self._txt_usuario = QLineEdit()
-        self._txt_usuario.setPlaceholderText("Digite seu usuário")
-        group_layout.addRow("Usuário:", self._txt_usuario)
+        # Tabela de empresas
+        self._table_empresas = QTableWidget()
+        self._table_empresas.setColumnCount(3)
+        self._table_empresas.setHorizontalHeaderLabels(["Código", "Nome", "CNPJ"])
+        self._table_empresas.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table_empresas.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table_empresas.setAlternatingRowColors(True)
+        self._table_empresas.verticalHeader().setVisible(False)
+        self._table_empresas.setMinimumHeight(200)
         
-        self._txt_senha = QLineEdit()
-        self._txt_senha.setPlaceholderText("Digite sua senha")
-        self._txt_senha.setEchoMode(QLineEdit.EchoMode.Password)
-        group_layout.addRow("Senha:", self._txt_senha)
+        # Ajusta colunas
+        header = self._table_empresas.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         
-        self._chk_lembrar = QCheckBox("Lembrar usuário")
-        group_layout.addRow("", self._chk_lembrar)
+        group_layout.addWidget(self._table_empresas)
         
         layout.addWidget(group)
-        
-        # Mensagem de erro
-        self._lbl_login_error = QLabel("")
-        self._lbl_login_error.setStyleSheet("color: #f44336; font-size: 9pt;")
-        self._lbl_login_error.setWordWrap(True)
-        self._lbl_login_error.hide()
-        layout.addWidget(self._lbl_login_error)
-        
-        layout.addStretch()
         
         # Botões
         btn_layout = QHBoxLayout()
         
-        self._btn_back = QPushButton("←  Voltar")
-        self._btn_back.setMinimumSize(100, 40)
-        self._btn_back.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._btn_back.setStyleSheet("""
+        self._btn_back_empresa = QPushButton("←  Voltar")
+        self._btn_back_empresa.setMinimumSize(100, 40)
+        self._btn_back_empresa.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._btn_back_empresa.setStyleSheet("""
             QPushButton {
                 background-color: #3e3e42;
                 color: #cccccc;
@@ -400,13 +558,113 @@ class LoginDialog(QDialog):
                 background-color: #505050;
             }
         """)
-        btn_layout.addWidget(self._btn_back)
+        btn_layout.addWidget(self._btn_back_empresa)
         
         btn_layout.addStretch()
         
-        self._btn_login = QPushButton("🔐  Entrar")
-        self._btn_login.setMinimumSize(140, 40)
+        self._btn_next_empresa = QPushButton("Avançar  →")
+        self._btn_next_empresa.setMinimumSize(160, 44)
+        self._btn_next_empresa.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._btn_next_empresa.setEnabled(False)
+        self._btn_next_empresa.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 24px;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QPushButton:hover {
+                background-color: #1e8ad4;
+            }
+            QPushButton:disabled {
+                background-color: #3e3e42;
+                color: #666666;
+            }
+        """)
+        btn_layout.addWidget(self._btn_next_empresa)
+        
+        layout.addLayout(btn_layout)
+        
+        return widget
+    
+    def _create_auth_step(self) -> QWidget:
+        """Cria etapa de autenticação de usuário."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(16)
+        layout.setContentsMargins(0, 16, 0, 0)
+        
+        # Info da conexão e empresa selecionadas
+        self._lbl_selected_context = QLabel("")
+        self._lbl_selected_context.setStyleSheet("""
+            background-color: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 12px;
+            color: #9d9d9d;
+            font-size: 9pt;
+        """)
+        self._lbl_selected_context.setWordWrap(True)
+        layout.addWidget(self._lbl_selected_context)
+        
+        # Grupo de autenticação
+        group = QGroupBox("🔐 Autenticação")
+        group_layout = QFormLayout(group)
+        group_layout.setSpacing(16)
+        group_layout.setContentsMargins(16, 24, 16, 16)
+        
+        # Campo de usuário
+        self._txt_username = QLineEdit()
+        self._txt_username.setPlaceholderText("Digite seu usuário...")
+        self._txt_username.setMinimumHeight(40)
+        group_layout.addRow("Usuário:", self._txt_username)
+        
+        # Campo de senha
+        self._txt_password = QLineEdit()
+        self._txt_password.setPlaceholderText("Digite sua senha...")
+        self._txt_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self._txt_password.setMinimumHeight(40)
+        group_layout.addRow("Senha:", self._txt_password)
+        
+        # Status de autenticação
+        self._lbl_auth_status = QLabel("")
+        self._lbl_auth_status.setStyleSheet("font-size: 9pt;")
+        self._lbl_auth_status.setWordWrap(True)
+        group_layout.addRow("", self._lbl_auth_status)
+        
+        layout.addWidget(group)
+        
+        layout.addStretch()
+        
+        # Botões
+        btn_layout = QHBoxLayout()
+        
+        self._btn_back_auth = QPushButton("←  Voltar")
+        self._btn_back_auth.setMinimumSize(100, 40)
+        self._btn_back_auth.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._btn_back_auth.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42;
+                color: #cccccc;
+                border: none;
+                border-radius: 4px;
+                padding: 10px 20px;
+            }
+            QPushButton:hover {
+                background-color: #505050;
+            }
+        """)
+        btn_layout.addWidget(self._btn_back_auth)
+        
+        btn_layout.addStretch()
+        
+        self._btn_login = QPushButton("✅  Entrar")
+        self._btn_login.setMinimumSize(160, 44)
         self._btn_login.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._btn_login.setEnabled(False)
         self._btn_login.setStyleSheet("""
             QPushButton {
                 background-color: #0078d4;
@@ -433,73 +691,119 @@ class LoginDialog(QDialog):
     
     def _connect_signals(self):
         """Conecta sinais."""
+        # Step 1 - Conexão
         self._cmb_connection.currentIndexChanged.connect(self._on_connection_changed)
-        self._cmb_empresa.currentIndexChanged.connect(self._on_empresa_changed)
-        self._btn_test.clicked.connect(self._on_test_connection)
-        self._btn_next.clicked.connect(self._on_next)
-        self._btn_back.clicked.connect(self._on_back)
+        self._btn_connect.clicked.connect(self._on_connect)
+        
+        # Step 2 - Empresa
+        self._btn_back_empresa.clicked.connect(self._on_back_to_connection)
+        self._btn_next_empresa.clicked.connect(self._on_next_to_auth)
+        self._table_empresas.itemSelectionChanged.connect(self._on_empresa_selected)
+        self._table_empresas.doubleClicked.connect(self._on_next_to_auth)
+        
+        # Step 3 - Autenticação
+        self._btn_back_auth.clicked.connect(self._on_back_to_empresa)
         self._btn_login.clicked.connect(self._on_login)
-        self._txt_senha.returnPressed.connect(self._on_login)
+        self._txt_username.textChanged.connect(self._on_auth_fields_changed)
+        self._txt_password.textChanged.connect(self._on_auth_fields_changed)
+        self._txt_password.returnPressed.connect(self._on_login)
     
     def _load_connections(self):
-        """Carrega conexões disponíveis."""
+        """Carrega conexões do arquivo CSLogin.xml."""
         try:
-            from login import read_connections
-            
-            connections = read_connections()
-            self._connections = []
+            import xml.etree.ElementTree as ET
             
             self._cmb_connection.clear()
-            self._cmb_connection.addItem("Selecione uma base de dados...")
+            self._cmb_connection.addItem("Selecione uma base de dados...", None)
             
-            for conn in connections:
-                # ConnectionEntry é dataclass, converte para dict-like
-                if hasattr(conn, 'servidor'):
-                    conn_dict = {
-                        "alias": conn.login_id or conn.servidor,
-                        "server": conn.servidor,
-                        "database": conn.banco,
-                        "type": conn.tipo_banco,
-                        "codempresa": conn.codempresa,
-                        "nomeempresa": conn.nomeempresa
+            # Verifica se arquivo existe
+            if not os.path.exists(CSLOGIN_PATH):
+                logger.warning(f"Arquivo não encontrado: {CSLOGIN_PATH}")
+                self._lbl_connection_status.setText(f"⚠️ Arquivo não encontrado: {CSLOGIN_PATH}")
+                self._lbl_connection_status.setStyleSheet("color: #ff9800; font-size: 9pt;")
+                return
+            
+            # Lê XML
+            tree = ET.parse(CSLOGIN_PATH)
+            root = tree.getroot()
+            
+            self._connections = []
+            
+            # Carrega último login para pré-selecionar
+            last_login = login_module.load_last_login()
+            default_index = 0
+            
+            for conf in root.findall(".//Configuracao"):
+                try:
+                    entry = {
+                        "login_id": conf.attrib.get("LoginID", ""),
+                        "type": "",
+                        "server": "",
+                        "database": ""
                     }
-                    display = f"{conn_dict['alias']} - {conn_dict['database']}"
-                    self._connections.append(conn_dict)
-                    self._cmb_connection.addItem(display, conn_dict)
-                else:
-                    # É um dict normal
-                    display = f"{conn.get('alias', conn.get('server', 'N/A'))} - {conn.get('database', 'N/A')}"
-                    self._connections.append(conn)
-                    self._cmb_connection.addItem(display, conn)
+                    
+                    for child in conf:
+                        tag = (child.tag or "").strip()
+                        value = (child.text or "").strip()
+                        
+                        if tag == "TipoBanco":
+                            entry["type"] = value
+                        elif tag == "NomeServidor":
+                            entry["server"] = value
+                        elif tag == "NomeBanco":
+                            entry["database"] = value
+                    
+                    if entry["server"] and entry["database"]:
+                        self._connections.append(entry)
+                        
+                        # Formato de exibição: [TipoBanco] Servidor - Banco
+                        display = f"[{entry['type']}] {entry['server']} - {entry['database']}"
+                        self._cmb_connection.addItem(display, entry)
+                        
+                        # Verifica se é o último usado
+                        if last_login:
+                            if (entry["server"].lower() == last_login.get("srv", "").lower() and
+                                entry["database"].lower() == last_login.get("db", "").lower()):
+                                default_index = self._cmb_connection.count() - 1
+                        
+                except Exception as e:
+                    logger.warning(f"Erro ao processar entrada: {e}")
+                    continue
             
-            logger.info(f"Carregadas {len(connections)} conexões")
+            logger.info(f"Carregadas {len(self._connections)} conexões de {CSLOGIN_PATH}")
+            
+            if not self._connections:
+                self._lbl_connection_status.setText("⚠️ Nenhuma conexão encontrada no arquivo XML")
+                self._lbl_connection_status.setStyleSheet("color: #ff9800; font-size: 9pt;")
+            elif default_index > 0:
+                # Seleciona última conexão usada
+                self._cmb_connection.setCurrentIndex(default_index)
             
         except Exception as e:
-            logger.warning(f"Erro ao carregar conexões: {e}")
-            # Adiciona conexão de exemplo para teste
-            self._connections = [{
-                "alias": "Servidor Local",
-                "server": "SERVIDOR\\SQLEXPRESS",
-                "database": "BANCO_DADOS",
-                "type": "SQL Server"
-            }]
-            self._cmb_connection.addItem("Servidor Local - BANCO_DADOS", self._connections[0])
+            logger.error(f"Erro ao carregar conexões: {e}")
+            self._lbl_connection_status.setText(f"❌ Erro ao ler arquivo: {str(e)}")
+            self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
     
     def _on_connection_changed(self, index: int):
         """Quando conexão é alterada."""
-        self._btn_test.setEnabled(index > 0)
-        self._grp_empresa.setEnabled(False)
-        self._cmb_empresa.clear()
-        self._cmb_empresa.addItem("Selecione uma empresa...")
-        self._btn_next.setEnabled(False)
+        self._btn_connect.setEnabled(index > 0)
         self._lbl_connection_status.setText("")
+        
+        if index > 0:
+            conn = self._cmb_connection.currentData()
+            if conn:
+                details = (
+                    f"🔹 Tipo: {conn.get('type', 'N/A')}\n"
+                    f"🔹 Servidor: {conn.get('server', 'N/A')}\n"
+                    f"🔹 Banco: {conn.get('database', 'N/A')}"
+                )
+                self._lbl_connection_details.setText(details)
+                self._lbl_connection_details.show()
+        else:
+            self._lbl_connection_details.hide()
     
-    def _on_empresa_changed(self, index: int):
-        """Quando empresa é alterada."""
-        self._btn_next.setEnabled(index > 0)
-    
-    def _on_test_connection(self):
-        """Testa conexão selecionada."""
+    def _on_connect(self):
+        """Conecta ao banco selecionado."""
         index = self._cmb_connection.currentIndex()
         if index <= 0:
             return
@@ -513,115 +817,252 @@ class LoginDialog(QDialog):
         # Mostra progresso
         self._progress.setRange(0, 0)  # Indeterminado
         self._progress.show()
-        self._btn_test.setEnabled(False)
-        self._lbl_connection_status.setText("⏳ Testando conexão...")
+        self._btn_connect.setEnabled(False)
+        self._cmb_connection.setEnabled(False)
+        self._lbl_connection_status.setText("⏳ Conectando ao banco de dados...")
         self._lbl_connection_status.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
         
         # Inicia worker
         self._worker = ConnectionWorker(connection)
-        self._worker.finished.connect(self._on_connection_tested)
+        self._worker.finished.connect(self._on_connection_finished)
         self._worker.start()
     
-    def _on_connection_tested(self, success: bool, message: str, empresas: list):
-        """Callback do teste de conexão."""
+    def _on_connection_finished(self, success: bool, message: str, empresas: list):
+        """Callback da conexão."""
         self._progress.hide()
         self._progress.setRange(0, 100)
-        self._btn_test.setEnabled(True)
+        self._btn_connect.setEnabled(True)
+        self._cmb_connection.setEnabled(True)
         
         if success:
             self._lbl_connection_status.setText(f"✅ {message}")
             self._lbl_connection_status.setStyleSheet("color: #4caf50; font-size: 9pt;")
             
-            # Carrega empresas
             self._empresas = empresas
-            self._cmb_empresa.clear()
-            self._cmb_empresa.addItem("Selecione uma empresa...")
             
-            for emp in empresas:
-                self._cmb_empresa.addItem(emp.get("nome", "N/A"), emp)
-            
-            self._grp_empresa.setEnabled(True)
-            
+            if empresas:
+                # Avança para seleção de empresa
+                QTimer.singleShot(500, self._show_empresa_step)
+            else:
+                QMessageBox.warning(
+                    self, "Aviso",
+                    "Nenhuma empresa encontrada no banco de dados."
+                )
         else:
             self._lbl_connection_status.setText(f"❌ Erro: {message}")
             self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
-            self._grp_empresa.setEnabled(False)
     
-    def _on_next(self):
-        """Avança para etapa de login."""
-        empresa_idx = self._cmb_empresa.currentIndex()
-        if empresa_idx <= 0:
-            return
-        
-        empresa = self._cmb_empresa.currentData()
-        connection = self._selected_connection
-        
-        # Atualiza info
-        self._lbl_selected_info.setText(
-            f"🔌 {connection.get('alias', 'N/A')} • {connection.get('database', 'N/A')}\n"
-            f"🏢 {empresa.get('nome', 'N/A')}"
+    def _show_empresa_step(self):
+        """Mostra etapa de seleção de empresa."""
+        # Atualiza info da conexão
+        conn = self._selected_connection
+        self._lbl_selected_connection.setText(
+            f"🔌 Conectado a: [{conn.get('type')}] {conn.get('server')} / {conn.get('database')}"
         )
         
-        self._stack.setCurrentIndex(self.STEP_LOGIN)
-        self._txt_usuario.setFocus()
+        # Carrega último login para pré-selecionar empresa
+        last_login = login_module.load_last_login()
+        default_row = -1
+        
+        # Popula tabela de empresas
+        self._table_empresas.setRowCount(0)
+        
+        for idx, emp in enumerate(self._empresas):
+            row = self._table_empresas.rowCount()
+            self._table_empresas.insertRow(row)
+            
+            # Código
+            item_codigo = QTableWidgetItem(str(emp.get("codigo", "")))
+            item_codigo.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_codigo.setData(Qt.ItemDataRole.UserRole, emp)
+            self._table_empresas.setItem(row, 0, item_codigo)
+            
+            # Nome
+            item_nome = QTableWidgetItem(emp.get("nome", ""))
+            self._table_empresas.setItem(row, 1, item_nome)
+            
+            # CNPJ
+            cnpj = emp.get("cnpj", "")
+            if cnpj:
+                # Formata CNPJ
+                cnpj_clean = cnpj.replace(".", "").replace("/", "").replace("-", "").replace(" ", "")
+                if len(cnpj_clean) == 14:
+                    cnpj = f"{cnpj_clean[:2]}.{cnpj_clean[2:5]}.{cnpj_clean[5:8]}/{cnpj_clean[8:12]}-{cnpj_clean[12:]}"
+            item_cnpj = QTableWidgetItem(cnpj)
+            item_cnpj.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table_empresas.setItem(row, 2, item_cnpj)
+            
+            # Verifica se é a última empresa selecionada
+            if last_login:
+                if (conn.get("server", "").lower() == last_login.get("srv", "").lower() and
+                    conn.get("database", "").lower() == last_login.get("db", "").lower() and
+                    str(emp.get("codigo", "")) == str(last_login.get("codempresa", ""))):
+                    default_row = row
+        
+        # Muda para step de empresa
+        self._stack.setCurrentIndex(self.STEP_EMPRESA)
+        self._btn_next_empresa.setEnabled(False)
+        
+        # Seleciona última empresa usada
+        if default_row >= 0:
+            self._table_empresas.selectRow(default_row)
     
-    def _on_back(self):
+    def _on_empresa_selected(self):
+        """Quando empresa é selecionada."""
+        selected = self._table_empresas.selectedItems()
+        self._btn_next_empresa.setEnabled(len(selected) > 0)
+    
+    def _on_back_to_connection(self):
         """Volta para seleção de conexão."""
         self._stack.setCurrentIndex(self.STEP_CONNECTION)
-        self._lbl_login_error.hide()
+        self._selected_empresa = None
+    
+    def _on_next_to_auth(self):
+        """Avança para etapa de autenticação."""
+        selected_rows = self._table_empresas.selectedItems()
+        if not selected_rows:
+            return
+        
+        # Pega dados da empresa selecionada
+        row = selected_rows[0].row()
+        item = self._table_empresas.item(row, 0)
+        empresa = item.data(Qt.ItemDataRole.UserRole)
+        
+        if not empresa:
+            return
+        
+        self._selected_empresa = empresa
+        
+        # Atualiza contexto
+        conn = self._selected_connection
+        self._lbl_selected_context.setText(
+            f"🔌 Servidor: [{conn.get('type')}] {conn.get('server')} / {conn.get('database')}\n"
+            f"🏢 Empresa: {empresa.get('codigo')} - {empresa.get('nome')}"
+        )
+        
+        # Limpa campos
+        self._txt_password.clear()
+        self._lbl_auth_status.clear()
+        
+        # Carrega último usuário para este servidor/banco
+        last_login = login_module.load_last_login()
+        if last_login:
+            if (conn.get("server", "").lower() == last_login.get("srv", "").lower() and
+                conn.get("database", "").lower() == last_login.get("db", "").lower()):
+                self._txt_username.setText(last_login.get("user", ""))
+        
+        # Muda para step de autenticação
+        self._stack.setCurrentIndex(self.STEP_AUTH)
+        
+        # Foco no campo apropriado
+        if self._txt_username.text():
+            self._txt_password.setFocus()
+        else:
+            self._txt_username.setFocus()
+    
+    def _on_back_to_empresa(self):
+        """Volta para seleção de empresa."""
+        self._stack.setCurrentIndex(self.STEP_EMPRESA)
+    
+    def _on_auth_fields_changed(self):
+        """Quando campos de autenticação mudam."""
+        has_user = bool(self._txt_username.text().strip())
+        has_pass = bool(self._txt_password.text())
+        self._btn_login.setEnabled(has_user and has_pass)
+        self._lbl_auth_status.clear()
     
     def _on_login(self):
-        """Processa login."""
-        usuario = self._txt_usuario.text().strip()
-        senha = self._txt_senha.text()
+        """Executa login."""
+        username = self._txt_username.text().strip()
+        password = self._txt_password.text()
         
-        if not usuario:
-            self._lbl_login_error.setText("Digite o usuário")
-            self._lbl_login_error.show()
-            self._txt_usuario.setFocus()
+        if not username or not password:
             return
         
         # Mostra progresso
         self._progress.setRange(0, 0)
         self._progress.show()
         self._btn_login.setEnabled(False)
-        self._lbl_login_error.hide()
+        self._btn_back_auth.setEnabled(False)
+        self._txt_username.setEnabled(False)
+        self._txt_password.setEnabled(False)
+        self._lbl_auth_status.setText("⏳ Autenticando...")
+        self._lbl_auth_status.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
         
-        # Simula autenticação
-        QTimer.singleShot(800, lambda: self._do_login(usuario, senha))
+        # Cria configuração do banco
+        conn = self._selected_connection
+        db_config = DBConfig(
+            server=conn.get("server", ""),
+            database=conn.get("database", ""),
+            auth="trusted"  # Windows Authentication padrão
+        )
+        
+        # Inicia worker de autenticação
+        self._auth_worker = AuthWorker(username, password, db_config)
+        self._auth_worker.finished.connect(self._on_auth_finished)
+        self._auth_worker.start()
     
-    def _do_login(self, usuario: str, senha: str):
-        """Executa login."""
+    def _on_auth_finished(self, success: bool, message: str, user_data: dict):
+        """Callback da autenticação."""
         self._progress.hide()
         self._progress.setRange(0, 100)
         self._btn_login.setEnabled(True)
+        self._btn_back_auth.setEnabled(True)
+        self._txt_username.setEnabled(True)
+        self._txt_password.setEnabled(True)
         
-        # TODO: Implementar autenticação real
-        # Por enquanto, aceita qualquer login
-        
-        empresa_idx = self._cmb_empresa.currentIndex()
-        empresa = self._cmb_empresa.currentData() if empresa_idx > 0 else {}
-        
+        if success:
+            self._lbl_auth_status.setText(f"✅ {message}")
+            self._lbl_auth_status.setStyleSheet("color: #4caf50; font-size: 9pt;")
+            
+            # Salva último login
+            conn = self._selected_connection
+            empresa = self._selected_empresa
+            login_module.save_last_login(
+                user=self._txt_username.text().strip(),
+                srv=conn.get("server", ""),
+                db=conn.get("database", ""),
+                codempresa=str(empresa.get("codigo", "")),
+                nomeempresa=empresa.get("nome", "")
+            )
+            
+            logger.info(f"Login bem-sucedido: {user_data.get('NomeUsuario')}")
+            
+            # Emite sinal de sucesso após breve delay
+            QTimer.singleShot(500, lambda: self._emit_login_success(user_data))
+        else:
+            self._lbl_auth_status.setText(f"❌ {message}")
+            self._lbl_auth_status.setStyleSheet("color: #f44336; font-size: 9pt;")
+            self._txt_password.clear()
+            self._txt_password.setFocus()
+    
+    def _emit_login_success(self, user_data: dict):
+        """Emite sinal de login bem-sucedido."""
         login_data = {
-            "connection": self._selected_connection or {},
-            "empresa": empresa,
+            "connection": self._selected_connection,
+            "empresa": {
+                "codigo": self._selected_empresa.get("codigo"),
+                "nome": self._selected_empresa.get("nome"),
+                "cnpj": self._selected_empresa.get("cnpj", "")
+            },
             "usuario": {
-                "codigo": usuario,
-                "nome": usuario.upper(),
-                "admin": True
+                "codigo": user_data.get("CodUsuario", 0),
+                "nome": user_data.get("NomeUsuario", ""),
+                "admin": user_data.get("PDVGerenteSN", 0) == 1
             }
         }
-        
-        logger.info(f"Login realizado: {usuario}")
         
         self.login_successful.emit(login_data)
     
     def closeEvent(self, event):
         """Evento de fechamento."""
-        # Se fechar login, encerra aplicação
         if self._worker and self._worker.isRunning():
             self._worker.terminate()
             self._worker.wait()
+        
+        if self._auth_worker and self._auth_worker.isRunning():
+            self._auth_worker.terminate()
+            self._auth_worker.wait()
         
         event.accept()
 

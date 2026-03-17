@@ -23,14 +23,19 @@ from PySide6.QtWidgets import (
     QMessageBox, QFileDialog, QApplication, QSpacerItem, QGroupBox
 )
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QCursor
+from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QCursor, QPixmap
 
 from utils.constants import APP_INFO, Icons, Messages, Shortcuts, UIConfig
 from utils.logger import get_logger
+from utils.workers import DataLoaderWorker
 from widgets.status_bar import AppStatusBar
 from widgets.filter_panel import FilterPanel
 from widgets.lazy_product_table import LazyProductTable
 from widgets.progress_dialog import ProgressDialog
+from services.product_service import ProductService, ProductFilter
+
+# Caminho do logotipo
+LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
 
 logger = get_logger(__name__)
 
@@ -85,8 +90,32 @@ class ModuleHeader(QFrame):
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
+        layout.setSpacing(16)
         
-        # Ícone
+        # Logotipo da aplicação (menor, à esquerda)
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        if os.path.exists(LOGO_PATH):
+            pixmap = QPixmap(LOGO_PATH)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(
+                    36, 36,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                logo_label.setPixmap(scaled)
+            else:
+                logo_label.setText("📦")
+                logo_label.setFont(QFont("Segoe UI", 20))
+        else:
+            logo_label.setText("📦")
+            logo_label.setFont(QFont("Segoe UI", 20))
+        
+        logo_label.setStyleSheet("background: transparent;")
+        layout.addWidget(logo_label)
+        
+        # Ícone do módulo
         icon_label = QLabel(icon)
         icon_label.setFont(QFont("Segoe UI", 28))
         icon_label.setStyleSheet("background: transparent;")
@@ -232,6 +261,10 @@ class MainWindowERP(QMainWindow):
         self._usuario_info = {}
         self._connection_info = {}
         
+        # Serviços e Workers
+        self._product_service = ProductService()
+        self._load_worker: Optional[DataLoaderWorker] = None
+        
         # Setup
         self._setup_window()
         self._setup_ui()
@@ -247,14 +280,17 @@ class MainWindowERP(QMainWindow):
     def _setup_window(self):
         """Configura propriedades da janela."""
         self.setWindowTitle(f"{APP_INFO.NAME} - Sistema de Exportação de Carga")
+        
+        # Define ícone da janela
+        if os.path.exists(LOGO_PATH):
+            icon = QIcon(LOGO_PATH)
+            self.setWindowIcon(icon)
+        
         self.setMinimumSize(UIConfig.MIN_WINDOW_WIDTH, UIConfig.MIN_WINDOW_HEIGHT)
         self.resize(UIConfig.DEFAULT_WINDOW_WIDTH, UIConfig.DEFAULT_WINDOW_HEIGHT)
         
-        # Centraliza na tela
-        screen = QApplication.primaryScreen().geometry()
-        x = (screen.width() - self.width()) // 2
-        y = (screen.height() - self.height()) // 2
-        self.move(x, y)
+        # Maximiza a janela
+        self.showMaximized()
     
     def _setup_ui(self):
         """Configura interface principal."""
@@ -321,15 +357,41 @@ class MainWindowERP(QMainWindow):
         """)
         header_layout = QVBoxLayout(header)
         header_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.setContentsMargins(0, 4, 0, 4)
+        header_layout.setSpacing(4)
         
-        logo_label = QLabel(f"📦 {APP_INFO.NAME}")
-        logo_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        logo_label.setStyleSheet("color: #0078d4; background: transparent;")
+        # Logotipo
+        logo_label = QLabel()
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        if os.path.exists(LOGO_PATH):
+            pixmap = QPixmap(LOGO_PATH)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(
+                    48, 48,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                logo_label.setPixmap(scaled)
+            else:
+                logo_label.setText("📦")
+                logo_label.setFont(QFont("Segoe UI", 24))
+        else:
+            logo_label.setText("📦")
+            logo_label.setFont(QFont("Segoe UI", 24))
+        
+        logo_label.setStyleSheet("background: transparent;")
         header_layout.addWidget(logo_label)
         
+        # Nome da aplicação
+        name_label = QLabel(APP_INFO.NAME)
+        name_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        name_label.setStyleSheet("color: #0078d4; background: transparent;")
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(name_label)
+        
         version_label = QLabel(f"v{APP_INFO.VERSION}")
-        version_label.setStyleSheet("color: #666666; font-size: 9pt; background: transparent;")
+        version_label.setStyleSheet("color: #666666; font-size: 8pt; background: transparent;")
         version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(version_label)
         
@@ -913,6 +975,8 @@ class MainWindowERP(QMainWindow):
         empresa_nome = empresa.get("nome", "Empresa")
         usuario_nome = usuario.get("nome", "Usuário")
         servidor = connection.get("server", "")
+        database = connection.get("database", "")
+        cnpj = empresa.get("cnpj", "")
         
         self._lbl_user_name.setText(usuario_nome)
         self._lbl_company.setText(empresa_nome)
@@ -920,6 +984,7 @@ class MainWindowERP(QMainWindow):
         # Status bar
         self._status_bar.set_user(usuario_nome, empresa_nome)
         self._status_bar.set_connected(servidor)
+        self._status_bar.set_database_info(database, cnpj)
         
         self.setWindowTitle(f"{APP_INFO.NAME} - {empresa_nome}")
         
@@ -932,28 +997,120 @@ class MainWindowERP(QMainWindow):
         self._card_photos.set_value(f"{photos:,}")
         self._card_pending.set_value(f"{pending:,}")
     
-    def load_products(self, filters=None):
-        """Carrega produtos na tabela."""
-        # Delegado para o controller
-        pass
+    def load_products(self, filters: Dict[str, Any] = None):
+        """
+        Carrega produtos na tabela com filtros aplicados.
+        
+        Args:
+            filters: Dicionário de filtros do FilterPanel
+        """
+        # Cancela worker anterior se existir
+        if self._load_worker and self._load_worker.isRunning():
+            self._load_worker.cancel()
+            self._load_worker.wait()
+        
+        # Converte filtros do painel para ProductFilter
+        product_filter = self._build_product_filter(filters) if filters else None
+        
+        # Função de busca para o worker
+        def fetch_products(page: int, page_size: int):
+            return self._product_service.get_products_paginated(
+                filters=product_filter,
+                page=page,
+                page_size=page_size
+            )
+        
+        # Cria worker
+        self._load_worker = DataLoaderWorker(fetch_products, page_size=1000)
+        self._load_worker.progress.connect(self._on_load_progress)
+        self._load_worker.page_ready.connect(self._on_page_ready)
+        self._load_worker.finished.connect(self._on_load_finished)
+        self._load_worker.error.connect(self._on_load_error)
+        
+        # Limpa tabela e inicia carregamento
+        self._product_table.model.clear()
+        self._product_table.model.begin_loading()
+        self._status_bar.show_progress("Carregando produtos...", cancelable=True)
+        
+        logger.info("Iniciando carregamento de produtos")
+        self._load_worker.start()
+    
+    def _build_product_filter(self, filters: Dict[str, Any]) -> ProductFilter:
+        """
+        Converte filtros do painel para ProductFilter.
+        
+        Args:
+            filters: Dicionário de filtros
+            
+        Returns:
+            ProductFilter configurado
+        """
+        return ProductFilter(
+            produtos=filters.get("produtos") or None,
+            grupos=filters.get("grupos") or None,
+            fornecedor=filters.get("fornecedor") or None,
+            fabricante=filters.get("fabricante") or None,
+            localizacoes=filters.get("localizacoes") or None,
+            tipos_produto=filters.get("tipos_produto") or None,
+        )
+    
+    def _on_load_progress(self, current: int, total: int, percentage: float, message: str):
+        """Callback de progresso do carregamento."""
+        self._status_bar.update_progress(current, total, f"Carregando... {current:,}/{total:,} ({percentage:.0f}%)")
+    
+    def _on_page_ready(self, page_number: int, data):
+        """Callback quando uma página de dados está pronta."""
+        if data:
+            # data é a lista de produtos (não tupla)
+            products = data
+            if page_number == 1:
+                # Primeira página: define dados iniciais
+                self._product_table.model.set_data(products, len(products))
+            else:
+                # Páginas seguintes: adiciona aos dados existentes
+                self._product_table.model.append_data(products)
+    
+    def _on_load_finished(self, total_records: int):
+        """Callback quando carregamento termina."""
+        self._product_table.model.end_loading()
+        self._status_bar.hide_progress()
+        self._status_bar.show_message(f"✅ {total_records:,} produtos carregados", 5000)
+        logger.info(f"Carregamento finalizado: {total_records} produtos")
+    
+    def _on_load_error(self, error: Exception):
+        """Callback de erro no carregamento."""
+        self._product_table.model.end_loading()
+        self._status_bar.hide_progress()
+        self._status_bar.show_error(f"Erro ao carregar: {str(error)}")
+        logger.error(f"Erro ao carregar produtos: {error}")
+        
+        QMessageBox.critical(
+            self,
+            "Erro",
+            f"Erro ao carregar produtos:\n\n{str(error)}"
+        )
     
     # ==========================================
     # HANDLERS
     # ==========================================
     
     def _on_apply_filters(self):
-        """Aplica filtros."""
+        """Aplica filtros e carrega produtos."""
+        filters = self._filter_panel.get_filters()
         self._status_bar.show_message("Aplicando filtros...")
-        logger.debug("Aplicando filtros")
+        logger.debug(f"Aplicando filtros: {filters}")
+        self.load_products(filters)
     
     def _on_clear_filters(self):
         """Limpa filtros."""
+        self._product_table.model.clear()
         self._status_bar.show_message("Filtros limpos", 3000)
     
     def _on_refresh(self):
-        """Atualiza dados."""
-        self._status_bar.show_progress("Atualizando...", cancelable=True)
+        """Atualiza dados com filtros atuais."""
+        filters = self._filter_panel.get_filters()
         logger.info("Atualizando dados")
+        self.load_products(filters)
     
     def _on_select_all(self):
         """Seleciona todos os produtos."""
