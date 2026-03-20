@@ -316,7 +316,7 @@ class MainWindowERP(QMainWindow):
         
         # Info do usuário na parte inferior
         user_frame = QFrame()
-        user_frame.setMinimumHeight(70)
+        user_frame.setMinimumHeight(50)
         user_frame.setStyleSheet("""
             QFrame {
                 background-color: #252526;
@@ -326,37 +326,19 @@ class MainWindowERP(QMainWindow):
         """)
         user_layout = QHBoxLayout(user_frame)
         user_layout.setContentsMargins(12, 8, 12, 8)
-        
-        user_icon = QLabel("👤")
-        user_icon.setFont(QFont("Segoe UI", 20))
-        user_icon.setStyleSheet("background: transparent;")
-        user_layout.addWidget(user_icon)
-        
-        user_info = QVBoxLayout()
-        user_info.setSpacing(2)
-        
-        self._lbl_user_name = QLabel("Usuário")
-        self._lbl_user_name.setStyleSheet("color: #ffffff; font-weight: bold; font-size: 10pt; background: transparent;")
-        user_info.addWidget(self._lbl_user_name)
-        
-        self._lbl_company = QLabel("Empresa")
-        self._lbl_company.setStyleSheet("color: #9d9d9d; font-size: 9pt; background: transparent;")
-        user_info.addWidget(self._lbl_company)
-        
-        user_layout.addLayout(user_info)
         user_layout.addStretch()
-        
-        # Botão de logout
-        btn_logout = QPushButton("🚪")
-        btn_logout.setToolTip("Sair")
-        btn_logout.setFixedSize(32, 32)
+
+        # Botão de troca de usuário
+        btn_logout = QPushButton("👤")
+        btn_logout.setToolTip("Trocar usuário")
+        btn_logout.setFixedSize(36, 36)
         btn_logout.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_logout.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 border: none;
                 border-radius: 4px;
-                font-size: 14pt;
+                font-size: 16pt;
             }
             QPushButton:hover {
                 background-color: #3e3e42;
@@ -364,7 +346,7 @@ class MainWindowERP(QMainWindow):
         """)
         btn_logout.clicked.connect(self._on_logout)
         user_layout.addWidget(btn_logout)
-        
+
         layout.addWidget(user_frame)
         
         return sidebar

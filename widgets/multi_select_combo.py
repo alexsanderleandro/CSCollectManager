@@ -10,11 +10,20 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton, QLabel,
     QFrame, QCheckBox, QAbstractItemView, QMenu
 )
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QEvent
 from PySide6.QtGui import QIcon, QAction
 
 
-class MultiSelectCombo(QWidget):
+class _ScrollGuardList(QListWidget):
+    """QListWidget que só rola quando o usuário clicou explicitamente nela."""
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()  # propaga ao pai sem rolar
+
+
     """
     Widget de seleção múltipla com busca.
     
@@ -93,6 +102,7 @@ class MultiSelectCombo(QWidget):
         """)
         self.list_widget.setMinimumHeight(120)
         self.list_widget.setMaximumHeight(200)
+        self.list_widget.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         layout.addWidget(self.list_widget)
         
         # Botões de ação
