@@ -57,13 +57,13 @@ class ProdutoExport:
             descricaoproduto=data.get("descricaoproduto", data.get("descricao", "")),
             unidade=data.get("unidade", "UN"),
             casasdecimais=data.get("casasdecimais", 3),
-            controlalote="S" if data.get("controlalote") or data.get("numlote") else "N",
+            controlalote="1" if data.get("controlalote") or data.get("controlarlote") else "0",
             numlote=data.get("numlote", ""),
             datafab=cls._parse_date(data.get("datafabricacao", data.get("datafab"))),
             dataval=cls._parse_date(data.get("datavalidade", data.get("dataval"))),
             codgrupo=data.get("codgrupo", 0),
             nomegrupo=data.get("nomegrupo", ""),
-            localizacao=data.get("localizacao", data.get("nomeLocalEstoque", "")),
+            localizacao=(data.get("localizacao") or data.get("nomeLocalEstoque") or "").strip(),
         )
     
     @staticmethod
@@ -215,7 +215,7 @@ class ExportService:
         return self.SEPARATOR.join([
             "",  # Início com pipe
             "V",
-            str(usuario.codusuario),
+            str(usuario.codusuario).zfill(3),
             usuario.nomeusuario,
             ""   # Final com pipe
         ])
@@ -247,7 +247,7 @@ class ExportService:
             self.format_date(produto.dataval),
             str(produto.codgrupo),
             produto.nomegrupo,
-            produto.localizacao,
+            produto.localizacao.strip(),
             ""   # Final com pipe
         ])
     

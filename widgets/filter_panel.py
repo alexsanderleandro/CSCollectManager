@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
-from widgets.multi_select_combo import MultiSelectCombo, SingleSelectCombo
+from widgets.multi_select_combo import MultiSelectCombo
 from widgets.product_search_combo import ProductSearchCombo
 
 
@@ -106,15 +106,15 @@ class FilterPanel(QWidget):
         )
         filter_layout.addWidget(self.filter_grupo)
         
-        # Fornecedor (seleção única)
-        self.filter_fornecedor = SingleSelectCombo(
+        # Fornecedor (múltipla seleção)
+        self.filter_fornecedor = MultiSelectCombo(
             title="Fornecedor",
             placeholder="Buscar fornecedor..."
         )
         filter_layout.addWidget(self.filter_fornecedor)
         
-        # Fabricante (seleção única)
-        self.filter_fabricante = SingleSelectCombo(
+        # Fabricante (múltipla seleção)
+        self.filter_fabricante = MultiSelectCombo(
             title="Fabricante",
             placeholder="Buscar fabricante..."
         )
@@ -437,8 +437,8 @@ class FilterPanel(QWidget):
             # Seleções
             "produtos": self.filter_produto.get_selected_values(),
             "grupos": self.filter_grupo.get_selected_values(),
-            "fornecedor": self.filter_fornecedor.get_selected_value(),
-            "fabricante": self.filter_fabricante.get_selected_value(),
+            "fornecedor": self.filter_fornecedor.get_selected_values(),
+            "fabricante": self.filter_fabricante.get_selected_values(),
             "localizacoes": self.filter_localizacao.get_selected_values(),
             "tipos_produto": self.filter_tipo_produto.get_selected_values(),
             

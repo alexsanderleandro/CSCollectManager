@@ -17,8 +17,8 @@ class ProductFilter:
     """Filtros para consulta de produtos."""
     produtos: Optional[List] = None               # Lista de códigos de produto (str ou int, conforme o banco)
     grupos: Optional[List] = None                 # Lista de códigos de grupo (str ou int, conforme o banco)
-    fornecedor: Optional[int] = None              # Código do fornecedor (pe.codfornecedor — int)
-    fabricante: Optional[int] = None              # Código do fabricante — int
+    fornecedor: Optional[List] = None             # Lista de códigos de fornecedor (pe.codfornecedor — int)
+    fabricante: Optional[List] = None             # Lista de códigos de fabricante — int
     localizacoes: Optional[List[str]] = None      # Lista de localizações (texto)
     tipos_produto: Optional[List] = None          # Lista de códigos de tipo (str ou int, conforme o banco)
 
@@ -291,7 +291,13 @@ class ProductService:
         
         # Filtro por fornecedor (pe.codfornecedor, não p.codfornecedor)
         if filters.fornecedor:
-            conditions.append("pe.codfornecedor = :fornecedor")
+            placeholders = ", ".join([f":forn_{i}" for i in range(len(filters.fornecedor))])
+            conditions.append(f"pe.codfornecedor IN ({placeholders})")
+
+        # Filtro por fabricante (p.codfabricante)
+        if filters.fabricante:
+            placeholders = ", ".join([f":fab_{i}" for i in range(len(filters.fabricante))])
+            conditions.append(f"p.codfabricante IN ({placeholders})")
         
         # Filtro por localizações (pe.localizacao é texto)
         if filters.localizacoes:
@@ -373,13 +379,15 @@ class ProductService:
             for i, cod in enumerate(filters.grupos):
                 params[f"grupo_{i}"] = str(cod)
         
-        # Parâmetro para fornecedor (coluna int — mantém int)
+        # Parâmetros para fornecedor (coluna int — mantém int)
         if filters.fornecedor:
-            params["fornecedor"] = filters.fornecedor
+            for i, cod in enumerate(filters.fornecedor):
+                params[f"forn_{i}"] = cod
         
-        # Parâmetro para fabricante (coluna int — mantém int)
+        # Parâmetros para fabricante (coluna int — mantém int)
         if filters.fabricante:
-            params["fabricante"] = filters.fabricante
+            for i, cod in enumerate(filters.fabricante):
+                params[f"fab_{i}"] = cod
         
         # Parâmetros para localizações (texto — mantém str)
         if filters.localizacoes:
@@ -462,30 +470,21 @@ class ProductService:
         Returns:
             Lista de (codigo, "cod - descricao")
         """
-        # Tenta join com tabela tipoproduto (CEO Software); se não existir, usa apenas o código
         query = """
-            SELECT DISTINCT
-                p.codtipoproduto,
-                COALESCE(tp.descricao, CAST(p.codtipoproduto AS VARCHAR)) AS descricao
-            FROM produtosestoque pe
-            INNER JOIN produtos p ON p.codproduto = pe.codproduto
-            LEFT JOIN tipoproduto tp ON tp.codtipoproduto = p.codtipoproduto
-            WHERE pe.situacao = 'A'
-              AND p.controlarestoque = 1
-              AND ISNULL(p.codeanunidade, '') <> ''
-              AND p.codtipoproduto IS NOT NULL
-            ORDER BY p.codtipoproduto
+            SELECT codtipoproduto, nometipoproduto
+            FROM tipoproduto
+            ORDER BY nometipoproduto
         """
 
         try:
             with get_session() as session:
                 result = session.execute(text(query))
                 return [
-                    (row.codtipoproduto, f"{row.codtipoproduto} - {row.descricao}")
+                    (row.codtipoproduto, f"{row.codtipoproduto} - {row.nometipoproduto}")
                     for row in result
                 ]
         except Exception as e:
-            print(f"Erro ao carregar tipos: {e}")
+            print(f"Erro ao carregar tipos de produto: {e}")
             return []
     
     def get_localizacoes(self) -> List[Tuple[str, str]]:
@@ -523,24 +522,24 @@ class ProductService:
         """
         query = """
             SELECT DISTINCT
-                pe.codfornecedor,
-                COALESCE(parc.nomeparceiro, CAST(pe.codfornecedor AS VARCHAR)) AS nome
-            FROM produtosestoque pe
+                pe.CodFornecedor,
+                COALESCE(c.nomecliente, CAST(pe.CodFornecedor AS VARCHAR)) AS nome
+            FROM ProdutosEstoque pe
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
-            LEFT JOIN parceiros parc ON parc.codparceiro = pe.codfornecedor
+            LEFT JOIN clientes c ON c.codcliente = pe.CodFornecedor
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
               AND ISNULL(p.codeanunidade, '') <> ''
-              AND pe.codfornecedor IS NOT NULL
-              AND pe.codfornecedor > 0
-            ORDER BY parc.nomeparceiro
+              AND pe.CodFornecedor IS NOT NULL
+              AND pe.CodFornecedor > 0
+            ORDER BY nome
         """
 
         try:
             with get_session() as session:
                 result = session.execute(text(query))
                 return [
-                    (row.codfornecedor, f"{row.codfornecedor} - {row.nome}")
+                    (row.CodFornecedor, f"{row.CodFornecedor} - {row.nome}")
                     for row in result
                 ]
         except Exception as e:
@@ -555,25 +554,27 @@ class ProductService:
             Lista de (codigo, "cod - nome")
         """
         query = """
-            SELECT DISTINCT
-                p.codfabricante,
-                COALESCE(parc.nomeparceiro, CAST(p.codfabricante AS VARCHAR)) AS nome
-            FROM produtos p
-            INNER JOIN produtosestoque pe ON pe.codproduto = p.codproduto
-            LEFT JOIN parceiros parc ON parc.codparceiro = p.codfabricante
-            WHERE pe.situacao = 'A'
-              AND p.controlarestoque = 1
-              AND ISNULL(p.codeanunidade, '') <> ''
-              AND p.codfabricante IS NOT NULL
-              AND p.codfabricante > 0
-            ORDER BY parc.nomeparceiro
+            SELECT c.codcliente, c.NomeCliente
+            FROM clientes c
+            INNER JOIN tipocliente tc ON tc.codtipocliente = c.codtipocliente
+            WHERE tc.NomeTipoCliente = 'Fabricante'
+              AND EXISTS (
+                  SELECT 1
+                  FROM produtos p
+                  INNER JOIN produtosestoque pe ON pe.codproduto = p.codproduto
+                  WHERE p.codfabricante = c.codcliente
+                    AND pe.situacao = 'A'
+                    AND p.controlarestoque = 1
+                    AND ISNULL(p.codeanunidade, '') <> ''
+              )
+            ORDER BY c.NomeCliente
         """
 
         try:
             with get_session() as session:
                 result = session.execute(text(query))
                 return [
-                    (row.codfabricante, f"{row.codfabricante} - {row.nome}")
+                    (row.codcliente, f"{row.codcliente} - {row.NomeCliente}")
                     for row in result
                 ]
         except Exception as e:

@@ -312,16 +312,6 @@ class MainWindowERP(QMainWindow):
         
         nav_layout.addStretch()
         
-        # Seção inferior
-        section_label2 = QLabel("  SISTEMA")
-        section_label2.setStyleSheet("color: #666666; font-size: 9pt; font-weight: bold; padding: 8px 0;")
-        nav_layout.addWidget(section_label2)
-        
-        btn_settings = SidebarButton("⚙️", "Configurações")
-        btn_settings.clicked.connect(lambda: self._switch_module(self.MODULE_SETTINGS))
-        nav_layout.addWidget(btn_settings)
-        self._sidebar_buttons[self.MODULE_SETTINGS] = btn_settings
-        
         layout.addWidget(nav_frame)
         
         # Info do usuário na parte inferior
@@ -388,8 +378,6 @@ class MainWindowERP(QMainWindow):
         
         # Header
         header = ModuleHeader("📦", "Produtos", "Consulta e seleção de produtos para exportação")
-        self._btn_refresh = header.add_action_button("Atualizar", "🔄")
-        self._btn_export_selected = header.add_action_button("Exportar Selecionados", "📤", primary=True)
         layout.addWidget(header)
         
         # Área de conteúdo com splitter
@@ -764,13 +752,6 @@ class MainWindowERP(QMainWindow):
         
         menu_file.addSeparator()
         
-        action_export = QAction("Exportar Selecionados", self)
-        action_export.setShortcut(Shortcuts.EXPORT)
-        action_export.triggered.connect(self._on_export_selected)
-        menu_file.addAction(action_export)
-        
-        menu_file.addSeparator()
-        
         action_logout = QAction("Trocar Usuário", self)
         action_logout.triggered.connect(self._on_logout)
         menu_file.addAction(action_logout)
@@ -824,10 +805,6 @@ class MainWindowERP(QMainWindow):
     
     def _connect_signals(self):
         """Conecta sinais."""
-        # Botões do header de produtos
-        self._btn_refresh.clicked.connect(self._on_refresh)
-        self._btn_export_selected.clicked.connect(self._on_export_selected)
-        
         # Filter panel
         self._filter_panel.select_clicked.connect(self._on_apply_filters)
         self._filter_panel.clear_clicked.connect(self._on_clear_filters)
@@ -870,9 +847,6 @@ class MainWindowERP(QMainWindow):
         servidor = connection.get("server", "")
         database = connection.get("database", "")
         cnpj = empresa.get("cnpj", "")
-        
-        self._lbl_user_name.setText(usuario_nome)
-        self._lbl_company.setText(empresa_nome)
         
         # Status bar
         self._status_bar.set_user(usuario_nome, empresa_nome)
@@ -971,20 +945,24 @@ class MainWindowERP(QMainWindow):
         tipos_raw = filters.get("tipos_produto") or []
         tipos = [t for t in tipos_raw if t is not None]
 
-        # Fornecedor / Fabricante: int ou None (SingleSelectCombo)
-        fornecedor = filters.get("fornecedor") or None
-        if fornecedor is not None:
+        # Fornecedor / Fabricante: listas de int (MultiSelectCombo)
+        fornecedores_raw = filters.get("fornecedor") or []
+        fornecedor_list: List[int] = []
+        for v in fornecedores_raw:
             try:
-                fornecedor = int(fornecedor)
+                fornecedor_list.append(int(v))
             except (ValueError, TypeError):
-                fornecedor = None
+                pass
+        fornecedor = fornecedor_list or None
 
-        fabricante = filters.get("fabricante") or None
-        if fabricante is not None:
+        fabricantes_raw = filters.get("fabricante") or []
+        fabricante_list: List[int] = []
+        for v in fabricantes_raw:
             try:
-                fabricante = int(fabricante)
+                fabricante_list.append(int(v))
             except (ValueError, TypeError):
-                fabricante = None
+                pass
+        fabricante = fabricante_list or None
 
         return ProductFilter(
             produtos=produtos or None,
@@ -1241,7 +1219,7 @@ class MainWindowERP(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Nenhum produto",
-                "Nenhum produto selecionado.\n\nVolte para a aba Produtos, selecione os produtos e clique em Exportar Selecionados."
+                "Nenhum produto selecionado.\n\nVolte para a aba Produtos, marque os produtos desejados e navegue para Exportar Carga."
             )
             return
 
@@ -1259,7 +1237,7 @@ class MainWindowERP(QMainWindow):
         empresa = EmpresaInfo(
             codempresa=int(self._empresa_info.get("codigo", 1) or 1),
             nomeempresa=self._empresa_info.get("nome", ""),
-            local="D" if self._local_estoque == "deposito" else "L"
+            local="Depósito" if self._local_estoque == "deposito" else "Loja"
         )
         usuario = UsuarioInfo(
             codusuario=int(self._export_vendedor.get("codigo", 0) or 0),
