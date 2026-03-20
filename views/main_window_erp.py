@@ -27,12 +27,13 @@ from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QCur
 
 from utils.constants import APP_INFO, Icons, Messages, Shortcuts, UIConfig
 from utils.logger import get_logger
-from utils.workers import DataLoaderWorker
+from utils.workers import DataLoaderWorker, ExportWorker
 from widgets.status_bar import AppStatusBar
 from widgets.filter_panel import FilterPanel
 from widgets.lazy_product_table import LazyProductTable
 from widgets.progress_dialog import ProgressDialog
 from services.product_service import ProductService, ProductFilter
+from services.export_service import ExportService, EmpresaInfo, UsuarioInfo
 
 # Caminho do logotipo
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
@@ -91,29 +92,6 @@ class ModuleHeader(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(16)
-        
-        # Logotipo da aplicação (menor, à esquerda)
-        logo_label = QLabel()
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        if os.path.exists(LOGO_PATH):
-            pixmap = QPixmap(LOGO_PATH)
-            if not pixmap.isNull():
-                scaled = pixmap.scaled(
-                    36, 36,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                logo_label.setPixmap(scaled)
-            else:
-                logo_label.setText("📦")
-                logo_label.setFont(QFont("Segoe UI", 20))
-        else:
-            logo_label.setText("📦")
-            logo_label.setFont(QFont("Segoe UI", 20))
-        
-        logo_label.setStyleSheet("background: transparent;")
-        layout.addWidget(logo_label)
         
         # Ícone do módulo
         icon_label = QLabel(icon)
@@ -184,55 +162,6 @@ class ModuleHeader(QFrame):
         return btn
 
 
-class QuickStatsCard(QFrame):
-    """Card de estatísticas rápidas."""
-    
-    def __init__(self, icon: str, title: str, value: str, color: str = "#0078d4", parent=None):
-        super().__init__(parent)
-        self._setup_ui(icon, title, value, color)
-    
-    def _setup_ui(self, icon: str, title: str, value: str, color: str):
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: #252526;
-                border: 1px solid #3e3e42;
-                border-radius: 8px;
-                border-left: 4px solid {color};
-            }}
-        """)
-        self.setMinimumSize(200, 90)
-        self.setMaximumHeight(90)
-        
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        
-        # Ícone
-        icon_label = QLabel(icon)
-        icon_label.setFont(QFont("Segoe UI", 24))
-        icon_label.setStyleSheet(f"color: {color}; background: transparent;")
-        layout.addWidget(icon_label)
-        
-        # Textos
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(4)
-        
-        title_label = QLabel(title)
-        title_label.setStyleSheet("color: #9d9d9d; font-size: 10pt; background: transparent;")
-        text_layout.addWidget(title_label)
-        
-        self._value_label = QLabel(value)
-        self._value_label.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        self._value_label.setStyleSheet(f"color: {color}; background: transparent;")
-        text_layout.addWidget(self._value_label)
-        
-        layout.addLayout(text_layout)
-        layout.addStretch()
-    
-    def set_value(self, value: str):
-        """Atualiza valor."""
-        self._value_label.setText(value)
-
-
 class MainWindowERP(QMainWindow):
     """
     Janela principal profissional estilo ERP.
@@ -246,7 +175,6 @@ class MainWindowERP(QMainWindow):
     export_requested = Signal(dict)
     
     # Módulos do sistema
-    MODULE_DASHBOARD = "dashboard"
     MODULE_PRODUCTS = "products"
     MODULE_EXPORT = "export"
     MODULE_HISTORY = "history"
@@ -259,11 +187,17 @@ class MainWindowERP(QMainWindow):
         self._current_module = self.MODULE_PRODUCTS
         self._empresa_info = {}
         self._usuario_info = {}
+        self._local_estoque: str = "loja"  # Valor selecionado no filtro Loja/Depósito
+        self._export_vendedor: Dict[str, Any] = {}  # Vendedor selecionado na tela de exportação
         self._connection_info = {}
         
         # Serviços e Workers
         self._product_service = ProductService()
         self._load_worker: Optional[DataLoaderWorker] = None
+        self._export_worker: Optional[ExportWorker] = None
+        
+        # Códigos selecionados para exportação (preenchidos em _on_export_selected)
+        self._export_codprodutos: List = []
         
         # Setup
         self._setup_window()
@@ -315,8 +249,10 @@ class MainWindowERP(QMainWindow):
         # Stack de módulos
         self._module_stack = QStackedWidget()
         
+        # Dicionário de índices das páginas no stack
+        self._pages = {}
+        
         # Cria páginas dos módulos
-        self._create_dashboard_page()
         self._create_products_page()
         self._create_export_page()
         self._create_history_page()
@@ -345,57 +281,7 @@ class MainWindowERP(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Logo/Header
-        header = QFrame()
-        header.setMinimumHeight(70)
-        header.setStyleSheet("""
-            QFrame {
-                background-color: #252526;
-                border-bottom: 1px solid #3e3e42;
-                border-right: none;
-            }
-        """)
-        header_layout = QVBoxLayout(header)
-        header_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.setContentsMargins(0, 4, 0, 4)
-        header_layout.setSpacing(4)
-        
-        # Logotipo
-        logo_label = QLabel()
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        if os.path.exists(LOGO_PATH):
-            pixmap = QPixmap(LOGO_PATH)
-            if not pixmap.isNull():
-                scaled = pixmap.scaled(
-                    48, 48,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                logo_label.setPixmap(scaled)
-            else:
-                logo_label.setText("📦")
-                logo_label.setFont(QFont("Segoe UI", 24))
-        else:
-            logo_label.setText("📦")
-            logo_label.setFont(QFont("Segoe UI", 24))
-        
-        logo_label.setStyleSheet("background: transparent;")
-        header_layout.addWidget(logo_label)
-        
-        # Nome da aplicação
-        name_label = QLabel(APP_INFO.NAME)
-        name_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        name_label.setStyleSheet("color: #0078d4; background: transparent;")
-        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(name_label)
-        
-        version_label = QLabel(f"v{APP_INFO.VERSION}")
-        version_label.setStyleSheet("color: #666666; font-size: 8pt; background: transparent;")
-        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(version_label)
-        
-        layout.addWidget(header)
+
         
         # Botões de navegação
         nav_frame = QFrame()
@@ -413,7 +299,6 @@ class MainWindowERP(QMainWindow):
         self._sidebar_buttons = {}
         
         modules = [
-            (self.MODULE_DASHBOARD, "🏠", "Dashboard"),
             (self.MODULE_PRODUCTS, "📦", "Produtos"),
             (self.MODULE_EXPORT, "📤", "Exportar Carga"),
             (self.MODULE_HISTORY, "📋", "Histórico"),
@@ -494,120 +379,6 @@ class MainWindowERP(QMainWindow):
         
         return sidebar
     
-    def _create_dashboard_page(self):
-        """Cria página do dashboard."""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # Header
-        header = ModuleHeader("🏠", "Dashboard", "Visão geral do sistema")
-        layout.addWidget(header)
-        
-        # Conteúdo
-        content = QWidget()
-        content.setStyleSheet("background-color: #1e1e1e;")
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(24, 24, 24, 24)
-        content_layout.setSpacing(20)
-        
-        # Cards de estatísticas
-        stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(16)
-        
-        self._card_products = QuickStatsCard("📦", "Produtos Ativos", "0", "#4caf50")
-        stats_layout.addWidget(self._card_products)
-        
-        self._card_exports = QuickStatsCard("📤", "Exportações Hoje", "0", "#2196f3")
-        stats_layout.addWidget(self._card_exports)
-        
-        self._card_photos = QuickStatsCard("📷", "Fotos Cadastradas", "0", "#ff9800")
-        stats_layout.addWidget(self._card_photos)
-        
-        self._card_pending = QuickStatsCard("⏳", "Pendentes", "0", "#f44336")
-        stats_layout.addWidget(self._card_pending)
-        
-        stats_layout.addStretch()
-        content_layout.addLayout(stats_layout)
-        
-        # Ações rápidas
-        actions_group = QGroupBox("⚡ Ações Rápidas")
-        actions_group.setStyleSheet("""
-            QGroupBox {
-                color: #cccccc;
-                font-weight: bold;
-                border: 1px solid #3e3e42;
-                border-radius: 8px;
-                margin-top: 16px;
-                padding-top: 16px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 16px;
-                padding: 0 8px;
-            }
-        """)
-        actions_layout = QHBoxLayout(actions_group)
-        actions_layout.setContentsMargins(16, 24, 16, 16)
-        actions_layout.setSpacing(12)
-        
-        btn_new_export = self._create_action_card("📤", "Nova Exportação", "Exportar carga para coletores")
-        btn_new_export.clicked.connect(lambda: self._switch_module(self.MODULE_EXPORT))
-        actions_layout.addWidget(btn_new_export)
-        
-        btn_view_products = self._create_action_card("📦", "Ver Produtos", "Consultar produtos cadastrados")
-        btn_view_products.clicked.connect(lambda: self._switch_module(self.MODULE_PRODUCTS))
-        actions_layout.addWidget(btn_view_products)
-        
-        btn_history = self._create_action_card("📋", "Histórico", "Ver exportações anteriores")
-        btn_history.clicked.connect(lambda: self._switch_module(self.MODULE_HISTORY))
-        actions_layout.addWidget(btn_history)
-        
-        actions_layout.addStretch()
-        content_layout.addWidget(actions_group)
-        
-        content_layout.addStretch()
-        layout.addWidget(content)
-        
-        self._module_stack.addWidget(page)
-        self._pages = {self.MODULE_DASHBOARD: self._module_stack.count() - 1}
-    
-    def _create_action_card(self, icon: str, title: str, description: str) -> QPushButton:
-        """Cria card de ação clicável."""
-        btn = QPushButton()
-        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn.setMinimumSize(200, 100)
-        btn.setMaximumSize(250, 120)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #252526;
-                border: 1px solid #3e3e42;
-                border-radius: 8px;
-                text-align: left;
-                padding: 16px;
-            }
-            QPushButton:hover {
-                background-color: #2d2d30;
-                border-color: #0078d4;
-            }
-        """)
-        
-        btn_layout = QVBoxLayout(btn)
-        btn_layout.setSpacing(8)
-        
-        icon_label = QLabel(f"{icon} {title}")
-        icon_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        icon_label.setStyleSheet("color: #ffffff;")
-        btn_layout.addWidget(icon_label)
-        
-        desc_label = QLabel(description)
-        desc_label.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
-        desc_label.setWordWrap(True)
-        btn_layout.addWidget(desc_label)
-        
-        return btn
-    
     def _create_products_page(self):
         """Cria página de produtos."""
         page = QWidget()
@@ -682,19 +453,138 @@ class MainWindowERP(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
+
         # Header
         header = ModuleHeader("📤", "Exportar Carga", "Configure e execute a exportação para coletores")
         layout.addWidget(header)
-        
+
         # Conteúdo
         content = QWidget()
         content.setStyleSheet("background-color: #1e1e1e;")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 24, 24, 24)
         content_layout.setSpacing(20)
-        
-        # Opções de exportação
+
+        from PySide6.QtWidgets import QCheckBox, QLineEdit
+
+        # ===== GRUPO: DIRETÓRIO DE SAÍDA =====
+        dir_group = QGroupBox("📁 Diretório de Saída  (obrigatório)")
+        dir_group.setStyleSheet("""
+            QGroupBox {
+                color: #cccccc;
+                font-weight: bold;
+                border: 2px solid #0078d4;
+                border-radius: 8px;
+                margin-top: 16px;
+                padding: 20px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+            }
+        """)
+        dir_layout = QHBoxLayout(dir_group)
+        dir_layout.setSpacing(10)
+
+        self._txt_export_dir = QLineEdit()
+        self._txt_export_dir.setPlaceholderText("Selecione o diretório onde o arquivo será gerado...")
+        self._txt_export_dir.setReadOnly(True)
+        self._txt_export_dir.setMinimumHeight(36)
+        self._txt_export_dir.setStyleSheet("""
+            QLineEdit {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11pt;
+            }
+            QLineEdit:focus {
+                border-color: #0078d4;
+            }
+        """)
+        dir_layout.addWidget(self._txt_export_dir, 1)
+
+        btn_browse = QPushButton("📂  Procurar...")
+        btn_browse.setMinimumSize(130, 36)
+        btn_browse.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_browse.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42;
+                color: #cccccc;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #505050; }
+            QPushButton:pressed { background-color: #0078d4; color: white; }
+        """)
+        btn_browse.clicked.connect(self._on_browse_export_dir)
+        dir_layout.addWidget(btn_browse)
+
+        content_layout.addWidget(dir_group)
+
+        # ===== GRUPO: VENDEDOR (obrigatório) =====
+        vendedor_group = QGroupBox("👤 Vendedor  (obrigatório)")
+        vendedor_group.setStyleSheet("""
+            QGroupBox {
+                color: #cccccc;
+                font-weight: bold;
+                border: 2px solid #0078d4;
+                border-radius: 8px;
+                margin-top: 16px;
+                padding: 20px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+            }
+        """)
+        vendedor_layout = QHBoxLayout(vendedor_group)
+        vendedor_layout.setSpacing(10)
+
+        self._txt_vendedor = QLineEdit()
+        self._txt_vendedor.setPlaceholderText("Pressione Enter ou clique em Buscar para selecionar o vendedor...")
+        self._txt_vendedor.setReadOnly(True)
+        self._txt_vendedor.setMinimumHeight(36)
+        self._txt_vendedor.setStyleSheet("""
+            QLineEdit {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11pt;
+            }
+            QLineEdit:focus { border-color: #0078d4; }
+        """)
+        self._txt_vendedor.installEventFilter(self)
+        vendedor_layout.addWidget(self._txt_vendedor, 1)
+
+        btn_buscar_vendedor = QPushButton("🔍  Buscar")
+        btn_buscar_vendedor.setMinimumSize(120, 36)
+        btn_buscar_vendedor.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_buscar_vendedor.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42;
+                color: #cccccc;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #505050; }
+            QPushButton:pressed { background-color: #0078d4; color: white; }
+        """)
+        btn_buscar_vendedor.clicked.connect(self._on_search_vendedor)
+        vendedor_layout.addWidget(btn_buscar_vendedor)
+
+        content_layout.addWidget(vendedor_group)
+
+        # ===== GRUPO: OPÇÕES =====
         export_options = QGroupBox("📋 Opções de Exportação")
         export_options.setStyleSheet("""
             QGroupBox {
@@ -713,26 +603,22 @@ class MainWindowERP(QMainWindow):
         """)
         options_layout = QGridLayout(export_options)
         options_layout.setSpacing(16)
-        
-        # Checkboxes de opções
-        from PySide6.QtWidgets import QCheckBox, QRadioButton, QButtonGroup
-        
+
+        chk_style = "color: #cccccc; font-size: 11pt;"
+
         self._chk_export_txt = QCheckBox("Exportar arquivo TXT de carga")
         self._chk_export_txt.setChecked(True)
-        self._chk_export_txt.setStyleSheet("color: #cccccc;")
+        self._chk_export_txt.setEnabled(False)  # Sempre obrigatório
+        self._chk_export_txt.setStyleSheet(chk_style)
         options_layout.addWidget(self._chk_export_txt, 0, 0)
-        
+
         self._chk_export_photos = QCheckBox("Incluir fotos dos produtos (ZIP)")
-        self._chk_export_photos.setStyleSheet("color: #cccccc;")
+        self._chk_export_photos.setStyleSheet(chk_style)
         options_layout.addWidget(self._chk_export_photos, 0, 1)
-        
-        self._chk_compress = QCheckBox("Compactar arquivo final")
-        self._chk_compress.setStyleSheet("color: #cccccc;")
-        options_layout.addWidget(self._chk_compress, 1, 0)
-        
+
         content_layout.addWidget(export_options)
-        
-        # Resumo
+
+        # ===== GRUPO: RESUMO =====
         summary_group = QGroupBox("📊 Resumo da Exportação")
         summary_group.setStyleSheet("""
             QGroupBox {
@@ -750,24 +636,36 @@ class MainWindowERP(QMainWindow):
             }
         """)
         summary_layout = QVBoxLayout(summary_group)
-        
-        self._lbl_export_summary = QLabel("Selecione produtos na aba 'Produtos' para exportar.")
+
+        self._lbl_export_summary = QLabel("Selecione produtos na aba \u2018Produtos\u2019 e clique em Exportar Selecionados.")
         self._lbl_export_summary.setStyleSheet("color: #9d9d9d; font-size: 11pt; padding: 16px;")
         summary_layout.addWidget(self._lbl_export_summary)
-        
+
         content_layout.addWidget(summary_group)
-        
-        # Botões de ação
+
+        # ===== BOTÕES DE AÇÃO =====
         action_layout = QHBoxLayout()
         action_layout.addStretch()
-        
+
         btn_cancel = QPushButton("Cancelar")
         btn_cancel.setMinimumSize(120, 40)
+        btn_cancel.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42;
+                color: #cccccc;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 20px;
+            }
+            QPushButton:hover { background-color: #505050; }
+        """)
         btn_cancel.clicked.connect(lambda: self._switch_module(self.MODULE_PRODUCTS))
         action_layout.addWidget(btn_cancel)
-        
+
         self._btn_start_export = QPushButton("📤  Iniciar Exportação")
         self._btn_start_export.setMinimumSize(180, 40)
+        self._btn_start_export.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._btn_start_export.setStyleSheet("""
             QPushButton {
                 background-color: #0078d4;
@@ -776,10 +674,10 @@ class MainWindowERP(QMainWindow):
                 border-radius: 4px;
                 font-weight: bold;
                 font-size: 11pt;
+                padding: 8px 20px;
             }
-            QPushButton:hover {
-                background-color: #1e8ad4;
-            }
+            QPushButton:hover { background-color: #1e8ad4; }
+            QPushButton:pressed { background-color: #005a9e; }
             QPushButton:disabled {
                 background-color: #3e3e42;
                 color: #666666;
@@ -787,12 +685,12 @@ class MainWindowERP(QMainWindow):
         """)
         self._btn_start_export.clicked.connect(self._on_start_export)
         action_layout.addWidget(self._btn_start_export)
-        
+
         content_layout.addLayout(action_layout)
         content_layout.addStretch()
-        
+
         layout.addWidget(content)
-        
+
         self._module_stack.addWidget(page)
         self._pages[self.MODULE_EXPORT] = self._module_stack.count() - 1
     
@@ -898,10 +796,6 @@ class MainWindowERP(QMainWindow):
         # Menu Visualizar
         menu_view = menubar.addMenu("&Visualizar")
         
-        action_dashboard = QAction("Dashboard", self)
-        action_dashboard.triggered.connect(lambda: self._switch_module(self.MODULE_DASHBOARD))
-        menu_view.addAction(action_dashboard)
-        
         action_products = QAction("Produtos", self)
         action_products.triggered.connect(lambda: self._switch_module(self.MODULE_PRODUCTS))
         menu_view.addAction(action_products)
@@ -937,10 +831,9 @@ class MainWindowERP(QMainWindow):
         # Filter panel
         self._filter_panel.select_clicked.connect(self._on_apply_filters)
         self._filter_panel.clear_clicked.connect(self._on_clear_filters)
-        self._filter_panel.export_clicked.connect(self._on_export_selected)
         
-        # Product table
-        self._product_table.export_requested.connect(self._on_export_products)
+        # Product table — redireciona exportação do menu de contexto para o mesmo fluxo
+        self._product_table.export_requested.connect(lambda _: self._on_export_selected())
         self._product_table.export_photos_requested.connect(self._on_export_photos)
     
     # ==========================================
@@ -990,13 +883,28 @@ class MainWindowERP(QMainWindow):
         
         logger.info(f"Conexão configurada: {empresa_nome} / {usuario_nome}")
     
-    def update_statistics(self, products: int, exports: int, photos: int, pending: int):
-        """Atualiza estatísticas do dashboard."""
-        self._card_products.set_value(f"{products:,}")
-        self._card_exports.set_value(f"{exports:,}")
-        self._card_photos.set_value(f"{photos:,}")
-        self._card_pending.set_value(f"{pending:,}")
-    
+    def load_filter_data(self):
+        """
+        Carrega dados dos filtros a partir do banco e popula os combos do FilterPanel.
+
+        Deve ser chamado após a conexão ser configurada (pós-login).
+        """
+        try:
+            self._status_bar.show_message("Carregando filtros...")
+            filter_data = self._product_service.get_all_filter_data()
+            self._filter_panel.load_filter_data(
+                grupos=filter_data.get("grupos", []),
+                fornecedores=filter_data.get("fornecedores", []),
+                fabricantes=filter_data.get("fabricantes", []),
+                localizacoes=filter_data.get("localizacoes", []),
+                tipos_produto=filter_data.get("tipos_produto", []),
+            )
+            self._status_bar.show_message("Filtros carregados", 3000)
+            logger.info("Dados dos filtros carregados com sucesso")
+        except Exception as e:
+            self._status_bar.show_message("Erro ao carregar filtros")
+            logger.error(f"Erro ao carregar dados dos filtros: {e}")
+
     def load_products(self, filters: Dict[str, Any] = None):
         """
         Carrega produtos na tabela com filtros aplicados.
@@ -1038,20 +946,60 @@ class MainWindowERP(QMainWindow):
     def _build_product_filter(self, filters: Dict[str, Any]) -> ProductFilter:
         """
         Converte filtros do painel para ProductFilter.
-        
+
         Args:
-            filters: Dicionário de filtros
-            
+            filters: Dicionário de filtros retornado por FilterPanel.get_filters()
+
         Returns:
-            ProductFilter configurado
+            ProductFilter configurado com todos os campos
         """
+        # Produtos: manter como strings para evitar erro de conversão nvarchar→int no SQL Server.
+        # p.codproduto é nvarchar no banco (pode conter valores como 'CF1102');
+        # passar inteiros faz o SQL Server tentar converter toda a coluna para int e falhar.
+        produtos_raw = filters.get("produtos") or []
+        produtos: List[str] = [
+            str(cod).strip() for cod in produtos_raw
+            if cod is not None and str(cod).strip()
+        ]
+
+        # Grupos: preservar o tipo retornado pelo banco (int ou str conforme a coluna).
+        # Forçar int(g) derrubava silenciosamente códigos alfanuméricos como 'CF1102'.
+        grupos_raw = filters.get("grupos") or []
+        grupos = [g for g in grupos_raw if g is not None]
+
+        # Tipos de produto: idem — preservar tipo original do banco.
+        tipos_raw = filters.get("tipos_produto") or []
+        tipos = [t for t in tipos_raw if t is not None]
+
+        # Fornecedor / Fabricante: int ou None (SingleSelectCombo)
+        fornecedor = filters.get("fornecedor") or None
+        if fornecedor is not None:
+            try:
+                fornecedor = int(fornecedor)
+            except (ValueError, TypeError):
+                fornecedor = None
+
+        fabricante = filters.get("fabricante") or None
+        if fabricante is not None:
+            try:
+                fabricante = int(fabricante)
+            except (ValueError, TypeError):
+                fabricante = None
+
         return ProductFilter(
-            produtos=filters.get("produtos") or None,
-            grupos=filters.get("grupos") or None,
-            fornecedor=filters.get("fornecedor") or None,
-            fabricante=filters.get("fabricante") or None,
+            produtos=produtos or None,
+            grupos=grupos or None,
+            fornecedor=fornecedor,
+            fabricante=fabricante,
             localizacoes=filters.get("localizacoes") or None,
-            tipos_produto=filters.get("tipos_produto") or None,
+            tipos_produto=tipos or None,
+            # Filtros do painel
+            local_estoque=filters.get("local_estoque", "loja"),
+            filtro_localizacao=filters.get("filtro_localizacao", "ambos"),
+            filtro_estoque=filters.get("filtro_estoque", "todos"),
+            filtro_encomenda=filters.get("filtro_encomenda", "ambos"),
+            somente_peso_variavel=bool(filters.get("somente_peso_variavel", False)),
+            somente_venda=bool(filters.get("somente_venda", False)),
         )
     
     def _on_load_progress(self, current: int, total: int, percentage: float, message: str):
@@ -1097,6 +1045,7 @@ class MainWindowERP(QMainWindow):
     def _on_apply_filters(self):
         """Aplica filtros e carrega produtos."""
         filters = self._filter_panel.get_filters()
+        self._local_estoque = filters.get("local_estoque", "loja")
         self._status_bar.show_message("Aplicando filtros...")
         logger.debug(f"Aplicando filtros: {filters}")
         self.load_products(filters)
@@ -1109,6 +1058,7 @@ class MainWindowERP(QMainWindow):
     def _on_refresh(self):
         """Atualiza dados com filtros atuais."""
         filters = self._filter_panel.get_filters()
+        self._local_estoque = filters.get("local_estoque", "loja")
         logger.info("Atualizando dados")
         self.load_products(filters)
     
@@ -1117,33 +1067,293 @@ class MainWindowERP(QMainWindow):
         self._product_table._select_all()
     
     def _on_export_selected(self):
-        """Exporta produtos selecionados."""
+        """Navega para a página de exportação com os produtos selecionados."""
         codprodutos = self._product_table.get_selected_codprodutos()
         if not codprodutos:
             QMessageBox.warning(self, "Aviso", "Selecione produtos para exportar.")
             return
+        
+        # Armazena códigos selecionados para uso na exportação
+        self._export_codprodutos = codprodutos
+        
         self._switch_module(self.MODULE_EXPORT)
         self._lbl_export_summary.setText(
-            f"✅ {len(codprodutos):,} produtos selecionados para exportação."
+            f"✅ {len(codprodutos):,} produto(s) selecionado(s) para exportação."
         )
     
-    def _on_export_products(self, codprodutos: List[int]):
-        """Exporta lista de produtos."""
-        logger.info(f"Exportando {len(codprodutos)} produtos")
-        self.export_requested.emit({"codprodutos": codprodutos})
-    
-    def _on_export_photos(self, codprodutos: List[int]):
-        """Exporta fotos."""
-        logger.info(f"Exportando fotos de {len(codprodutos)} produtos")
-    
+    def eventFilter(self, obj, event):
+        """Captura Enter no campo de vendedor para abrir busca."""
+        from PySide6.QtCore import QEvent
+        if obj is self._txt_vendedor and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._on_search_vendedor()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _on_search_vendedor(self):
+        """Abre diálogo de busca de vendedores."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
+            QListWidget, QListWidgetItem, QDialogButtonBox, QLabel
+        )
+        from database.connection import get_session
+        from sqlalchemy import text as sa_text
+
+        # Busca vendedores no banco
+        try:
+            with get_session() as session:
+                result = session.execute(sa_text(
+                    "SELECT CodVendedor, NomeVendedor FROM vendedores "
+                    "WHERE TipoCadastro IN (0, 2) ORDER BY NomeVendedor"
+                ))
+                vendedores = [(row[0], row[1]) for row in result]
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Não foi possível carregar vendedores:\n{e}")
+            return
+
+        if not vendedores:
+            QMessageBox.information(self, "Aviso", "Nenhum vendedor encontrado.")
+            return
+
+        # Monta diálogo
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Selecionar Vendedor")
+        dlg.setMinimumSize(420, 480)
+        dlg.setStyleSheet("""
+            QDialog { background-color: #1e1e1e; color: #cccccc; }
+            QLabel  { color: #cccccc; font-size: 10pt; }
+            QLineEdit {
+                background-color: #252526; color: #cccccc;
+                border: 1px solid #3e3e42; border-radius: 4px;
+                padding: 6px 10px; font-size: 11pt;
+            }
+            QLineEdit:focus { border-color: #0078d4; }
+            QListWidget {
+                background-color: #252526; color: #cccccc;
+                border: 1px solid #3e3e42; border-radius: 4px;
+                font-size: 11pt;
+            }
+            QListWidget::item:hover     { background-color: #2d2d2d; }
+            QListWidget::item:selected  { background-color: #0078d4; color: white; }
+            QPushButton {
+                background-color: #3e3e42; color: #cccccc;
+                border: none; border-radius: 4px;
+                padding: 6px 20px; font-size: 10pt;
+            }
+            QPushButton:hover  { background-color: #505050; }
+            QPushButton[primary="true"] { background-color: #0078d4; color: white; font-weight: bold; }
+            QPushButton[primary="true"]:hover { background-color: #1e8ad4; }
+        """)
+
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(16, 16, 16, 16)
+        dlg_layout.setSpacing(10)
+
+        dlg_layout.addWidget(QLabel("Digite para filtrar:"))
+
+        txt_filter = QLineEdit()
+        txt_filter.setPlaceholderText("Nome ou código...")
+        txt_filter.setClearButtonEnabled(True)
+        dlg_layout.addWidget(txt_filter)
+
+        list_widget = QListWidget()
+        list_widget.setAlternatingRowColors(True)
+        dlg_layout.addWidget(list_widget)
+
+        def _populate(text: str = ""):
+            list_widget.clear()
+            txt = text.strip().lower()
+            for cod, nome in vendedores:
+                label = f"{cod} – {nome}"
+                if txt and txt not in label.lower():
+                    continue
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, {"codigo": cod, "nome": nome})
+                list_widget.addItem(item)
+            if list_widget.count() > 0:
+                list_widget.setCurrentRow(0)
+
+        _populate()
+        txt_filter.textChanged.connect(_populate)
+
+        # Duplo clique confirma
+        def _accept_item(item):
+            dlg.accept()
+        list_widget.itemDoubleClicked.connect(_accept_item)
+
+        # Botões
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        ok_btn.setText("Selecionar")
+        ok_btn.setProperty("primary", "true")
+        btn_box.accepted.connect(dlg.accept)
+        btn_box.rejected.connect(dlg.reject)
+        dlg_layout.addWidget(btn_box)
+
+        txt_filter.setFocus()
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            current = list_widget.currentItem()
+            if current:
+                self._export_vendedor = current.data(Qt.ItemDataRole.UserRole)
+                nome = self._export_vendedor["nome"]
+                cod  = self._export_vendedor["codigo"]
+                self._txt_vendedor.setText(f"{cod} – {nome}")
+
+    def _on_browse_export_dir(self):
+        """Abre diálogo para selecionar diretório de saída."""
+        current = self._txt_export_dir.text() or os.path.expanduser("~")
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Selecionar Diretório de Saída",
+            current,
+            QFileDialog.Option.ShowDirsOnly
+        )
+        if directory:
+            self._txt_export_dir.setText(directory)
+
     def _on_start_export(self):
-        """Inicia exportação."""
-        if self._chk_export_txt.isChecked():
-            self._status_bar.show_progress("Exportando carga...", cancelable=True)
+        """Valida e inicia a exportação em worker separado."""
+        # 1. Valida diretório
+        output_dir = self._txt_export_dir.text().strip()
+        if not output_dir:
+            QMessageBox.warning(
+                self,
+                "Diretório não informado",
+                "Informe o diretório de saída antes de iniciar a exportação."
+            )
+            self._txt_export_dir.setFocus()
+            return
         
-        if self._chk_export_photos.isChecked():
-            self._status_bar.show_info("Exportação de fotos incluída")
-    
+        if not os.path.isdir(output_dir):
+            QMessageBox.warning(
+                self,
+                "Diretório inválido",
+                f"O diretório informado não existe:\n{output_dir}"
+            )
+            return
+
+        # 2. Obtém produtos selecionados como dicts completos
+        produtos = self._product_table.get_selected_products_as_dicts()
+        if not produtos:
+            QMessageBox.warning(
+                self,
+                "Nenhum produto",
+                "Nenhum produto selecionado.\n\nVolte para a aba Produtos, selecione os produtos e clique em Exportar Selecionados."
+            )
+            return
+
+        # 3. Valida vendedor
+        if not self._export_vendedor:
+            QMessageBox.warning(
+                self,
+                "Vendedor não informado",
+                "Selecione o vendedor antes de iniciar a exportação."
+            )
+            self._txt_vendedor.setFocus()
+            return
+
+        # 4. Monta objetos de empresa e usuário
+        empresa = EmpresaInfo(
+            codempresa=int(self._empresa_info.get("codigo", 1) or 1),
+            nomeempresa=self._empresa_info.get("nome", ""),
+            local="D" if self._local_estoque == "deposito" else "L"
+        )
+        usuario = UsuarioInfo(
+            codusuario=int(self._export_vendedor.get("codigo", 0) or 0),
+            nomeusuario=self._export_vendedor.get("nome", "")
+        )
+
+        compress = False
+
+        # 4. Função de exportação a ser executada no worker
+        service = ExportService(output_dir=output_dir)
+
+        def do_export(progress_callback=None):
+            return service.export_carga(
+                empresa=empresa,
+                usuario=usuario,
+                produtos=produtos,
+                output_path=output_dir,
+                compress=compress,
+                progress_callback=progress_callback,
+            )
+
+        # 5. Cria worker
+        if self._export_worker and self._export_worker.isRunning():
+            self._export_worker.cancel()
+            self._export_worker.wait()
+
+        self._export_worker = ExportWorker(do_export)
+        self._export_worker.progress.connect(self._on_export_progress)
+        self._export_worker.finished.connect(self._on_export_finished)
+        self._export_worker.error.connect(self._on_export_error)
+        self._export_worker.cancelled.connect(
+            lambda: self._status_bar.show_message("Exportação cancelada.", 4000)
+        )
+
+        # 6. Desabilita botão e inicia
+        self._btn_start_export.setEnabled(False)
+        self._btn_start_export.setText("⏳  Exportando...")
+        self._status_bar.show_progress(
+            f"Exportando {len(produtos):,} produto(s)...", cancelable=False
+        )
+        logger.info(f"Iniciando exportação: {len(produtos)} produtos → {output_dir}")
+        self._export_worker.start()
+
+    def _on_export_progress(self, current: int, total: int, percentage: float, message: str):
+        """Atualiza progresso da exportação."""
+        self._status_bar.update_progress(current, total, message)
+
+    def _on_export_finished(self, filepath: str):
+        """Callback quando exportação termina com sucesso."""
+        self._btn_start_export.setEnabled(True)
+        self._btn_start_export.setText("📤  Iniciar Exportação")
+        self._status_bar.hide_progress()
+        self._status_bar.show_message(f"✅ Exportação concluída: {os.path.basename(filepath)}", 8000)
+        logger.info(f"Exportação concluída: {filepath}")
+
+        # Diálogo de sucesso com opção de abrir pasta
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Exportação Concluída")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setText("✅ Arquivo gerado com sucesso!")
+        msg.setInformativeText(f"<b>{os.path.basename(filepath)}</b>")
+        msg.setDetailedText(f"Caminho completo:\n{filepath}")
+        btn_abrir = msg.addButton("Abrir Pasta", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        msg.exec()
+
+        if msg.clickedButton() == btn_abrir:
+            import subprocess
+            subprocess.Popen(f'explorer /select,"{filepath}"')
+
+    def _on_export_error(self, error: Exception):
+        """Callback de erro na exportação."""
+        self._btn_start_export.setEnabled(True)
+        self._btn_start_export.setText("📤  Iniciar Exportação")
+        self._status_bar.hide_progress()
+        error_msg = str(error)
+        self._status_bar.show_error(f"Erro na exportação: {error_msg}")
+        logger.error(f"Erro na exportação: {error}", exc_info=True)
+
+        QMessageBox.critical(
+            self,
+            "Erro na Exportação",
+            f"Ocorreu um erro durante a exportação:\n\n{error_msg}"
+        )
+
+    def _on_export_photos(self, codprodutos: List[int]):
+        """Exportação de fotos — a ser implementada."""
+        logger.info(f"Exportação de fotos solicitada: {len(codprodutos)} produtos")
+        QMessageBox.information(
+            self,
+            "Fotos",
+            "A exportação de fotos será implementada em versão futura."
+        )
+
     def _on_logout(self):
         """Solicita logout."""
         reply = QMessageBox.question(
@@ -1196,12 +1406,6 @@ if __name__ == "__main__":
         empresa={"nome": "Empresa Demonstração LTDA", "codigo": 1},
         usuario={"nome": "Administrador", "codigo": "001"},
         connection={"server": "SERVIDOR\\SQLEXPRESS", "database": "BANCO"}
-    )
-    window.update_statistics(
-        products=45230,
-        exports=12,
-        photos=8450,
-        pending=3
     )
     window.show()
     

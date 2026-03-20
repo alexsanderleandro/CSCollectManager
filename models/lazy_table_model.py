@@ -102,17 +102,15 @@ class LazyTableModel(QAbstractTableModel):
     
     # Definição das colunas
     COLUMNS = [
-        ("codproduto", "Código", 80),
-        ("descricaoproduto", "Descrição", 300),
-        ("codeanunidade", "Cód. EAN/Unidade", 130),
-        ("codgrupo", "Cód. Grupo", 80),
-        ("nomegrupo", "Grupo", 150),
-        ("nomeLocalEstoque", "Local Estoque", 130),
-        ("numlote", "Lote", 100),
-        ("datafabricacao", "Dt. Fabricação", 100),
-        ("datavalidade", "Dt. Validade", 100),
-        ("estoque", "Estoque", 80),
-        ("precovenda", "Preço", 90),
+        ("codproduto",        "Código",           80),
+        ("descricaoproduto",  "Descrição",        300),
+        ("codeanunidade",     "Cód. EAN/Unidade", 130),
+        ("codgrupo",          "Cód. Grupo",        70),
+        ("nomegrupo",         "Grupo",             150),
+        ("nomeLocalEstoque",  "Local Estoque",     130),
+        ("numlote",           "Lote",              110),
+        ("datafabricacao",    "Dt. Fabricação",   100),
+        ("datavalidade",      "Dt. Validade",      100),
     ]
     
     def __init__(self, parent=None):
@@ -120,6 +118,7 @@ class LazyTableModel(QAbstractTableModel):
         
         # Dados
         self._data: List[ProductData] = []
+        self._raw_data: List[Dict[str, Any]] = []  # Preserva dicts originais para exportação
         self._total_records = 0
         self._loaded_records = 0
         self._is_loading = False
@@ -210,7 +209,7 @@ class LazyTableModel(QAbstractTableModel):
             return self._get_display_value(product, column_key)
         
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            if column_key in ("codproduto", "codgrupo", "estoque", "customedio", "precovenda"):
+            if column_key in ("codproduto", "codgrupo"):
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             elif column_key in ("datafabricacao", "datavalidade"):
                 return Qt.AlignmentFlag.AlignCenter
@@ -238,13 +237,6 @@ class LazyTableModel(QAbstractTableModel):
         if column_key in ("datafabricacao", "datavalidade"):
             if isinstance(value, date):
                 return value.strftime("%d/%m/%Y")
-            return ""
-        
-        if column_key in ("estoque", "customedio", "precovenda"):
-            if isinstance(value, (int, float)):
-                if column_key == "estoque":
-                    return f"{value:,.0f}"
-                return f"{value:,.2f}"
             return ""
         
         return str(value)
@@ -325,6 +317,7 @@ class LazyTableModel(QAbstractTableModel):
         """Limpa todos os dados."""
         self.beginResetModel()
         self._data.clear()
+        self._raw_data.clear()
         self._loaded_records = 0
         self._total_records = 0
         self.endResetModel()
@@ -340,6 +333,7 @@ class LazyTableModel(QAbstractTableModel):
         """
         self.beginResetModel()
         
+        self._raw_data = list(products)  # Preserva dicts originais
         self._data = [ProductData.from_dict(p) for p in products]
         self._loaded_records = len(self._data)
         self._total_records = total if total is not None else self._loaded_records
@@ -363,6 +357,7 @@ class LazyTableModel(QAbstractTableModel):
         
         self.beginInsertRows(QModelIndex(), first_row, last_row)
         
+        self._raw_data.extend(products)  # Preserva dicts originais
         new_data = [ProductData.from_dict(p) for p in products]
         self._data.extend(new_data)
         self._loaded_records = len(self._data)
@@ -387,6 +382,26 @@ class LazyTableModel(QAbstractTableModel):
     def get_all_codprodutos(self) -> List[int]:
         """Retorna lista de códigos de todos os produtos."""
         return [p.codproduto for p in self._data]
+
+    def get_selected_dicts(self, rows: List[int]) -> List[Dict[str, Any]]:
+        """
+        Retorna dicts originais das linhas selecionadas.
+        
+        Usa os dados brutos preservados na carga para não perder
+        campos como 'unidade', 'codfornecedor', etc.
+        
+        Args:
+            rows: Linhas selecionadas (índices do modelo fonte)
+        """
+        return [
+            self._raw_data[r]
+            for r in rows
+            if 0 <= r < len(self._raw_data)
+        ]
+
+    def get_all_dicts(self) -> List[Dict[str, Any]]:
+        """Retorna todos os dicts originais carregados."""
+        return self._raw_data.copy()
 
 
 class LazySortFilterProxyModel(QSortFilterProxyModel):

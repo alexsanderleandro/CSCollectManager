@@ -6,8 +6,8 @@ Implementa lazy loading para melhor performance.
 """
 
 from typing import List, Tuple, Optional
-from PySide6.QtWidgets import QWidget, QListWidgetItem
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QWidget, QListWidgetItem, QCheckBox
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QKeyEvent
 
 from widgets.multi_select_combo import MultiSelectCombo
@@ -71,18 +71,44 @@ class ProductSearchCombo(MultiSelectCombo):
                 # Se não existe, adiciona
                 if item_index == -1:
                     self._items.append((codigo, descricao))
-                    
-                    # Cria item na lista widget
-                    item = QListWidgetItem(descricao)
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-                    item.setCheckState(Qt.CheckState.Checked)
+
+                    # Cria item com QCheckBox (igual ao MultiSelectCombo._populate_list)
+                    # para que select_all / clear_selection / get_selected_values funcionem
+                    item = QListWidgetItem()
+                    checkbox = QCheckBox(descricao)
+                    checkbox.setProperty("item_value", codigo)
+                    checkbox.setStyleSheet("""
+                        QCheckBox {
+                            color: #cccccc;
+                            spacing: 5px;
+                        }
+                        QCheckBox::indicator {
+                            width: 14px;
+                            height: 14px;
+                        }
+                        QCheckBox::indicator:unchecked {
+                            border: 1px solid #555;
+                            background-color: #252526;
+                            border-radius: 2px;
+                        }
+                        QCheckBox::indicator:checked {
+                            border: 1px solid #0078d4;
+                            background-color: #0078d4;
+                            border-radius: 2px;
+                        }
+                    """)
+                    checkbox.setChecked(True)
+                    checkbox.stateChanged.connect(self._on_item_changed)
+                    item.setSizeHint(QSize(0, 24))
                     self.list_widget.addItem(item)
+                    self.list_widget.setItemWidget(item, checkbox)
                 else:
-                    # Se já existe, marca como selecionado
-                    for i in range(self.list_widget.count()):
-                        if self.list_widget.item(i).text() == descricao:
-                            self.list_widget.item(i).setCheckState(Qt.CheckState.Checked)
-                            break
+                    # Se já existe, marca o checkbox como selecionado
+                    widget = self.list_widget.itemWidget(self.list_widget.item(item_index))
+                    if widget:
+                        widget.blockSignals(True)
+                        widget.setChecked(True)
+                        widget.blockSignals(False)
             
             # Limpa campo de busca
             self.txt_search.clear()

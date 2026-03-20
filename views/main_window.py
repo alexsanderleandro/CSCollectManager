@@ -335,7 +335,6 @@ class MainWindow(QMainWindow):
         # Filter panel
         self.filter_panel.select_clicked.connect(self._on_apply_filters)
         self.filter_panel.clear_clicked.connect(self._on_filters_cleared)
-        self.filter_panel.export_clicked.connect(self._on_export)
         
         # Product table
         self.product_table.selection_changed.connect(self._on_selection_changed)

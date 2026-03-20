@@ -15,13 +15,21 @@ from sqlalchemy import text
 @dataclass
 class ProductFilter:
     """Filtros para consulta de produtos."""
-    produtos: Optional[List[int]] = None          # Lista de códigos de produto
-    grupos: Optional[List[int]] = None            # Lista de códigos de grupo
-    fornecedor: Optional[int] = None              # Código do fornecedor
-    fabricante: Optional[int] = None              # Código do fabricante (não usado)
+    produtos: Optional[List] = None               # Lista de códigos de produto (str ou int, conforme o banco)
+    grupos: Optional[List] = None                 # Lista de códigos de grupo (str ou int, conforme o banco)
+    fornecedor: Optional[int] = None              # Código do fornecedor (pe.codfornecedor — int)
+    fabricante: Optional[int] = None              # Código do fabricante — int
     localizacoes: Optional[List[str]] = None      # Lista de localizações (texto)
-    tipos_produto: Optional[List[int]] = None     # Lista de códigos de tipo
-    
+    tipos_produto: Optional[List] = None          # Lista de códigos de tipo (str ou int, conforme o banco)
+
+    # Filtros adicionais do painel
+    local_estoque: str = "loja"          # "loja" | "deposito"
+    filtro_localizacao: str = "ambos"    # "com" | "sem" | "ambos"
+    filtro_estoque: str = "todos"        # "negativo" | "positivo" | "zerado" | "todos"
+    filtro_encomenda: str = "ambos"      # "somente_encomenda" | "somente_nao_encomenda" | "ambos"
+    somente_peso_variavel: bool = False  # p.PesoVariavel = 1
+    somente_venda: bool = False          # pe.CompoeVenda = 1
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProductFilter":
         """Cria filtro a partir de dicionário."""
@@ -32,6 +40,12 @@ class ProductFilter:
             fabricante=data.get("fabricante"),
             localizacoes=data.get("localizacoes"),
             tipos_produto=data.get("tipos_produto"),
+            local_estoque=data.get("local_estoque", "loja"),
+            filtro_localizacao=data.get("filtro_localizacao", "ambos"),
+            filtro_estoque=data.get("filtro_estoque", "todos"),
+            filtro_encomenda=data.get("filtro_encomenda", "ambos"),
+            somente_peso_variavel=bool(data.get("somente_peso_variavel", False)),
+            somente_venda=bool(data.get("somente_venda", False)),
         )
 
 
@@ -70,11 +84,30 @@ class ProductService:
             COALESCE(p.PesoVariavel, 0) AS pesovariavel,
             COALESCE(pe.CompoeVenda, 0) AS compoevenda,
             COALESCE(pe.EncomendaSN, 0) AS encomenda,
-            pe.localizacao
+            pe.localizacao,
+            CASE WHEN COALESCE(p.controlarlote, 0) <> 0
+                 THEN COALESCE(lote.numlote, '')
+                 ELSE '' END AS numlote,
+            CASE WHEN COALESCE(p.controlarlote, 0) <> 0
+                 THEN lote.datafabricacao
+                 ELSE NULL END AS datafabricacao,
+            CASE WHEN COALESCE(p.controlarlote, 0) <> 0
+                 THEN lote.datavalidade
+                 ELSE NULL END AS datavalidade
         FROM produtosestoque pe
         INNER JOIN produtos p ON p.codproduto = pe.codproduto
         LEFT JOIN GrupoEstoque g ON g.codgrupo = p.codgrupo
         LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
+        OUTER APPLY (
+            SELECT TOP 1
+                pl.numlote,
+                pl.datafabricacao,
+                pl.datavalidade
+            FROM produtoslote pl
+            WHERE pl.codproduto = pe.codproduto
+              AND pl.codempresa = pe.codempresa
+            ORDER BY pl.datavalidade DESC
+        ) AS lote
         WHERE pe.situacao = 'A'
           AND p.controlarestoque = 1
           AND ISNULL(p.codeanunidade, '') <> ''
@@ -245,22 +278,20 @@ class ProductService:
         conditions = []
         
         # Filtro por produtos específicos
+        # Usa CAST para garantir comparação nvarchar-vs-nvarchar no SQL Server,
+        # evitando erro de conversão quando p.codproduto é nvarchar (ex.: 'CF1102').
         if filters.produtos:
             placeholders = ", ".join([f":prod_{i}" for i in range(len(filters.produtos))])
-            conditions.append(f"p.codproduto IN ({placeholders})")
+            conditions.append(f"CAST(p.codproduto AS NVARCHAR) IN ({placeholders})")
         
         # Filtro por grupos
         if filters.grupos:
             placeholders = ", ".join([f":grupo_{i}" for i in range(len(filters.grupos))])
-            conditions.append(f"p.codgrupo IN ({placeholders})")
+            conditions.append(f"CAST(p.codgrupo AS NVARCHAR) IN ({placeholders})")
         
-        # Filtro por fornecedor
+        # Filtro por fornecedor (pe.codfornecedor, não p.codfornecedor)
         if filters.fornecedor:
-            conditions.append("p.codfornecedor = :fornecedor")
-        
-        # Filtro por fabricante (não existe no modelo atual)
-        # if filters.fabricante:
-        #     conditions.append("p.codfabricante = :fabricante")
+            conditions.append("pe.codfornecedor = :fornecedor")
         
         # Filtro por localizações (pe.localizacao é texto)
         if filters.localizacoes:
@@ -270,8 +301,45 @@ class ProductService:
         # Filtro por tipos de produto
         if filters.tipos_produto:
             placeholders = ", ".join([f":tipo_{i}" for i in range(len(filters.tipos_produto))])
-            conditions.append(f"p.codtipoproduto IN ({placeholders})")
-        
+            conditions.append(f"CAST(p.codtipoproduto AS NVARCHAR) IN ({placeholders})")
+
+        # ----- Filtros adicionais -----
+
+        # Local de estoque + filtro de estoque combinados
+        stock_col = "pe.estoqueloja" if (filters.local_estoque or "loja") == "loja" else "pe.estoquedeposito"
+        filtro_est = filters.filtro_estoque or "todos"
+        if filtro_est == "negativo":
+            conditions.append(f"{stock_col} < 0")
+        elif filtro_est == "positivo":
+            conditions.append(f"{stock_col} > 0")
+        elif filtro_est == "zerado":
+            conditions.append(f"{stock_col} = 0")
+        # "todos" → sem restrição de estoque
+
+        # Filtro de localização (com/sem/ambos)
+        filtro_loc = filters.filtro_localizacao or "ambos"
+        if filtro_loc == "com":
+            conditions.append("ISNULL(pe.localizacao, '') <> ''")
+        elif filtro_loc == "sem":
+            conditions.append("ISNULL(pe.localizacao, '') = ''")
+        # "ambos" → sem restrição
+
+        # Filtro de encomenda
+        filtro_enc = filters.filtro_encomenda or "ambos"
+        if filtro_enc == "somente_encomenda":
+            conditions.append("pe.EncomendaSN = 1")
+        elif filtro_enc == "somente_nao_encomenda":
+            conditions.append("pe.EncomendaSN = 0")
+        # "ambos" → sem restrição
+
+        # Somente peso variável
+        if filters.somente_peso_variavel:
+            conditions.append("p.PesoVariavel = 1")
+
+        # Somente produtos para venda
+        if filters.somente_venda:
+            conditions.append("pe.CompoeVenda = 1")
+
         if conditions:
             return " AND " + " AND ".join(conditions)
         
@@ -295,33 +363,33 @@ class ProductService:
         
         params = {}
         
-        # Parâmetros para produtos
+        # Parâmetros para produtos (sempre str, pois a comparação usa CAST … AS NVARCHAR)
         if filters.produtos:
             for i, cod in enumerate(filters.produtos):
-                params[f"prod_{i}"] = cod
+                params[f"prod_{i}"] = str(cod)
         
-        # Parâmetros para grupos
+        # Parâmetros para grupos (sempre str pelo mesmo motivo)
         if filters.grupos:
             for i, cod in enumerate(filters.grupos):
-                params[f"grupo_{i}"] = cod
+                params[f"grupo_{i}"] = str(cod)
         
-        # Parâmetro para fornecedor
+        # Parâmetro para fornecedor (coluna int — mantém int)
         if filters.fornecedor:
             params["fornecedor"] = filters.fornecedor
         
-        # Parâmetro para fabricante
+        # Parâmetro para fabricante (coluna int — mantém int)
         if filters.fabricante:
             params["fabricante"] = filters.fabricante
         
-        # Parâmetros para localizações
+        # Parâmetros para localizações (texto — mantém str)
         if filters.localizacoes:
             for i, cod in enumerate(filters.localizacoes):
                 params[f"local_{i}"] = cod
         
-        # Parâmetros para tipos de produto
+        # Parâmetros para tipos de produto (sempre str, pois a comparação usa CAST … AS NVARCHAR)
         if filters.tipos_produto:
             for i, cod in enumerate(filters.tipos_produto):
-                params[f"tipo_{i}"] = cod
+                params[f"tipo_{i}"] = str(cod)
         
         return params
     
@@ -361,9 +429,9 @@ class ProductService:
     def get_grupos(self) -> List[Tuple[int, str]]:
         """
         Carrega grupos de estoque para filtro.
-        
+
         Returns:
-            Lista de (codigo, descricao)
+            Lista de (codigo, "codgrupo - NomeGrupo")
         """
         query = """
             SELECT DISTINCT g.codgrupo, g.NomeGrupo
@@ -373,13 +441,16 @@ class ProductService:
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
               AND ISNULL(p.codeanunidade, '') <> ''
-            ORDER BY g.NomeGrupo
+            ORDER BY g.codgrupo
         """
-        
+
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codgrupo, row.NomeGrupo) for row in result]
+                return [
+                    (row.codgrupo, f"{row.codgrupo} - {row.NomeGrupo}")
+                    for row in result
+                ]
         except Exception as e:
             print(f"Erro ao carregar grupos: {e}")
             return []
@@ -387,25 +458,32 @@ class ProductService:
     def get_tipos_produto(self) -> List[Tuple[int, str]]:
         """
         Carrega tipos de produto para filtro.
-        
+
         Returns:
-            Lista de (codigo, descricao)
+            Lista de (codigo, "cod - descricao")
         """
+        # Tenta join com tabela tipoproduto (CEO Software); se não existir, usa apenas o código
         query = """
-            SELECT DISTINCT p.codtipoproduto, CAST(p.codtipoproduto AS VARCHAR) AS descricao
+            SELECT DISTINCT
+                p.codtipoproduto,
+                COALESCE(tp.descricao, CAST(p.codtipoproduto AS VARCHAR)) AS descricao
             FROM produtosestoque pe
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
+            LEFT JOIN tipoproduto tp ON tp.codtipoproduto = p.codtipoproduto
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
               AND ISNULL(p.codeanunidade, '') <> ''
               AND p.codtipoproduto IS NOT NULL
             ORDER BY p.codtipoproduto
         """
-        
+
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codtipoproduto, row.descricao) for row in result]
+                return [
+                    (row.codtipoproduto, f"{row.codtipoproduto} - {row.descricao}")
+                    for row in result
+                ]
         except Exception as e:
             print(f"Erro ao carregar tipos: {e}")
             return []
@@ -439,39 +517,68 @@ class ProductService:
     def get_fornecedores(self) -> List[Tuple[int, str]]:
         """
         Carrega fornecedores para filtro.
-        
+
         Returns:
-            Lista de (codigo, nome)
+            Lista de (codigo, "cod - nome")
         """
         query = """
-            SELECT DISTINCT pe.codfornecedor, CAST(pe.codfornecedor AS VARCHAR) AS nome
+            SELECT DISTINCT
+                pe.codfornecedor,
+                COALESCE(parc.nomeparceiro, CAST(pe.codfornecedor AS VARCHAR)) AS nome
             FROM produtosestoque pe
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
+            LEFT JOIN parceiros parc ON parc.codparceiro = pe.codfornecedor
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
               AND ISNULL(p.codeanunidade, '') <> ''
               AND pe.codfornecedor IS NOT NULL
               AND pe.codfornecedor > 0
-            ORDER BY pe.codfornecedor
+            ORDER BY parc.nomeparceiro
         """
-        
+
         try:
             with get_session() as session:
                 result = session.execute(text(query))
-                return [(row.codfornecedor, row.nome) for row in result]
+                return [
+                    (row.codfornecedor, f"{row.codfornecedor} - {row.nome}")
+                    for row in result
+                ]
         except Exception as e:
             print(f"Erro ao carregar fornecedores: {e}")
             return []
     
     def get_fabricantes(self) -> List[Tuple[int, str]]:
         """
-        Carrega fabricantes para filtro (não aplicável neste modelo).
-        
+        Carrega fabricantes para filtro.
+
         Returns:
-            Lista vazia (campo não existe)
+            Lista de (codigo, "cod - nome")
         """
-        # Fabricante não existe no modelo atual
-        return []
+        query = """
+            SELECT DISTINCT
+                p.codfabricante,
+                COALESCE(parc.nomeparceiro, CAST(p.codfabricante AS VARCHAR)) AS nome
+            FROM produtos p
+            INNER JOIN produtosestoque pe ON pe.codproduto = p.codproduto
+            LEFT JOIN parceiros parc ON parc.codparceiro = p.codfabricante
+            WHERE pe.situacao = 'A'
+              AND p.controlarestoque = 1
+              AND ISNULL(p.codeanunidade, '') <> ''
+              AND p.codfabricante IS NOT NULL
+              AND p.codfabricante > 0
+            ORDER BY parc.nomeparceiro
+        """
+
+        try:
+            with get_session() as session:
+                result = session.execute(text(query))
+                return [
+                    (row.codfabricante, f"{row.codfabricante} - {row.nome}")
+                    for row in result
+                ]
+        except Exception as e:
+            print(f"Erro ao carregar fabricantes: {e}")
+            return []
     
     def get_produtos_for_filter(self) -> List[Tuple[int, str]]:
         """

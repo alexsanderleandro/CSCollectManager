@@ -429,20 +429,25 @@ class ProductSearchDialog(QDialog):
     
     def _select_all(self):
         """Seleciona todos os produtos visíveis."""
-        model = self.table.model()
-        sel_model = self.table.selectionModel()
-        ncols = self.table.columnCount() - 1
-        # Monta seleção completa de uma vez e aplica com ClearAndSelect
-        selection = QItemSelection()
-        for row in range(self.table.rowCount()):
-            if not self.table.isRowHidden(row):
-                selection.select(model.index(row, 0), model.index(row, ncols))
-        sel_model.select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        # selectAll() é método nativo Qt — funciona sempre
+        self.table.selectAll()
+        # Se houver linhas ocultas (filtro ativo), desseleciona elas
+        has_hidden = any(self.table.isRowHidden(r) for r in range(self.table.rowCount()))
+        if has_hidden:
+            model = self.table.model()
+            sel_model = self.table.selectionModel()
+            for row in range(self.table.rowCount()):
+                if self.table.isRowHidden(row):
+                    sel_model.select(
+                        model.index(row, 0),
+                        QItemSelectionModel.SelectionFlag.Deselect
+                        | QItemSelectionModel.SelectionFlag.Rows
+                    )
         self._update_count()
-    
+
     def _clear_selection(self):
         """Limpa a seleção de todos os produtos."""
-        self.table.selectionModel().clearSelection()
+        self.table.clearSelection()
         self._update_count()
     
     def _on_select(self):
@@ -453,9 +458,11 @@ class ProductSearchDialog(QDialog):
             QMessageBox.warning(self, "Aviso", "Selecione ao menos um produto.")
             return
         
-        # Coleta dados dos produtos selecionados
+        # Coleta dados dos produtos selecionados (ignora linhas ocultas pelo filtro)
         selected_products = []
-        for row in selected_rows:
+        for row in sorted(selected_rows):
+            if self.table.isRowHidden(row):
+                continue
             # Mantém código como string para preservar zeros à esquerda
             codigo = self.table.item(row, 0).text().strip()
             descricao = self.table.item(row, 1).text().strip()

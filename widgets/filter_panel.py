@@ -26,13 +26,11 @@ class FilterPanel(QWidget):
         filters_changed: Emitido quando filtros mudam
         select_clicked: Emitido ao clicar em Selecionar
         clear_clicked: Emitido ao clicar em Limpar
-        export_clicked: Emitido ao clicar em Exportar
     """
     
     filters_changed = Signal(dict)
     select_clicked = Signal()
     clear_clicked = Signal()
-    export_clicked = Signal()
     
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -301,37 +299,6 @@ class FilterPanel(QWidget):
         """)
         btn_layout.addWidget(self.btn_limpar)
         
-        # Separador
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.Shape.HLine)
-        sep3.setStyleSheet("background-color: #3e3e42;")
-        btn_layout.addWidget(sep3)
-        
-        # Botão Exportar Carga
-        self.btn_exportar = QPushButton("Exportar Carga")
-        self.btn_exportar.setMinimumHeight(45)
-        self.btn_exportar.setStyleSheet("""
-            QPushButton {
-                background-color: #0e7a0d;
-                color: white;
-                font-weight: bold;
-                font-size: 14px;
-                border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #0c6b0c;
-            }
-            QPushButton:pressed {
-                background-color: #095809;
-            }
-            QPushButton:disabled {
-                background-color: #3e3e42;
-                color: #666;
-            }
-        """)
-        btn_layout.addWidget(self.btn_exportar)
-        
         main_layout.addWidget(btn_container)
     
     def _create_group_box(self, title: str) -> QGroupBox:
@@ -412,7 +379,6 @@ class FilterPanel(QWidget):
         # Botões
         self.btn_selecionar.clicked.connect(self.select_clicked.emit)
         self.btn_limpar.clicked.connect(self._on_clear_clicked)
-        self.btn_exportar.clicked.connect(self.export_clicked.emit)
         
         # Filtros de seleção
         self.filter_produto.selection_changed.connect(self._on_filter_changed)

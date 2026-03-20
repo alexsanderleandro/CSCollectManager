@@ -46,12 +46,12 @@ class MainView(QMainWindow):
     
     def _setup_ui(self):
         """Configura interface do usuário."""
-        self.setWindowTitle(f"CSCollectManager - {self._user.company_name}")
-        self.setMinimumSize(1024, 768)
+        #self.setWindowTitle(f"CSCollectManager - {self._user.company_name}")
+        #self.setMinimumSize(1024, 768)
         
         # Ícone da janela
-        icon_path = AppConfig.get_asset_path("logo.png")
-        self.setWindowIcon(QIcon(icon_path))
+        #icon_path = AppConfig.get_asset_path("logo.png")
+        #self.setWindowIcon(QIcon(icon_path))
         
         # Widget central
         central_widget = QWidget()

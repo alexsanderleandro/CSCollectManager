@@ -284,6 +284,16 @@ class LazyProductTable(QWidget):
         products = self._model.get_selected_products(source_rows)
         return [p.codproduto for p in products]
     
+    def get_selected_products_as_dicts(self) -> List[dict]:
+        """
+        Retorna dicts completos dos produtos selecionados.
+        
+        Usa os dados brutos originais (preservando todos os campos do banco,
+        como 'unidade', 'codfornecedor', etc.) para uso na exportação.
+        """
+        source_rows = self.get_selected_source_rows()
+        return self._model.get_selected_dicts(source_rows)
+    
     # ==========================================
     # HANDLERS
     # ==========================================

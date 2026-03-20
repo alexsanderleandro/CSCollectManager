@@ -25,6 +25,7 @@ def gerar_versao():
 
     with open(VERSION_FILE, "w", encoding="utf-8") as f:
         f.write(f'VERSION = "{versao}"\n')
+        f.write(f'BUILD = "{hoje}"\n')
 
     print(f"Versão atualizada para: {versao}")
 

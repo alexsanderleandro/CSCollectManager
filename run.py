@@ -228,21 +228,17 @@ class CSCollectManagerApp:
         self._main_window.logout_requested.connect(self._on_logout)
         self._main_window.export_requested.connect(self._on_export)
         
-        # Carrega estatísticas iniciais (exemplo)
-        self._load_statistics()
-        
+        # Carrega dados nos combos de filtro a partir do banco
+        self._load_filter_data()
+
         self._main_window.show()
     
-    def _load_statistics(self):
-        """Carrega estatísticas para o dashboard."""
-        # TODO: Buscar do banco de dados
-        # Por enquanto, valores de exemplo
-        self._main_window.update_statistics(
-            products=0,
-            exports=0,
-            photos=0,
-            pending=0
-        )
+    def _load_filter_data(self):
+        """Carrega dados dos combos de filtro a partir do banco de dados."""
+        try:
+            self._main_window.load_filter_data()
+        except Exception as e:
+            logger.warning(f"Erro ao carregar dados dos filtros: {e}")
     
     def _on_logout(self):
         """Callback de logout."""
