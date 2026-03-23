@@ -18,6 +18,51 @@ from widgets.multi_select_combo import MultiSelectCombo
 from widgets.product_search_combo import ProductSearchCombo
 
 
+class CollapsibleSection(QWidget):
+    """Seção expansível (expand/collapse) com header clicável."""
+
+    def __init__(self, title: str, content: QWidget, expanded: bool = True, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._title = title
+        self._content = content
+
+        self._btn = QPushButton()
+        self._btn.setCheckable(True)
+        self._btn.setChecked(expanded)
+        self._btn.setText(("\u25BC "+ title) if expanded else ("\u25BA "+ title))
+        self._btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                background-color: transparent;
+                color: #cccccc;
+                border: none;
+                padding: 6px 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover { color: #ffffff; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self._btn)
+
+        # content wrapper
+        self._wrap = QFrame()
+        inner = QVBoxLayout(self._wrap)
+        inner.setContentsMargins(6, 4, 6, 6)
+        inner.addWidget(self._content)
+        layout.addWidget(self._wrap)
+
+        self._btn.toggled.connect(self._on_toggled)
+        self._on_toggled(expanded)
+
+    def _on_toggled(self, checked: bool):
+        self._wrap.setVisible(checked)
+        self._btn.setText(("\u25BC "+ self._title) if checked else ("\u25BA "+ self._title))
+
+
+
 class FilterPanel(QWidget):
     """
     Painel de filtros para seleção de produtos para exportação.
@@ -97,42 +142,42 @@ class FilterPanel(QWidget):
             title="Produto",
             placeholder="Buscar produto... (pressione Enter para buscar na base)"
         )
-        filter_layout.addWidget(self.filter_produto)
+        filter_layout.addWidget(CollapsibleSection("Produto", self.filter_produto, expanded=False))
         
         # Grupo de Estoque
         self.filter_grupo = MultiSelectCombo(
             title="Grupo de Estoque",
             placeholder="Buscar grupo..."
         )
-        filter_layout.addWidget(self.filter_grupo)
+        filter_layout.addWidget(CollapsibleSection("Grupo de Estoque", self.filter_grupo, expanded=False))
         
         # Fornecedor (múltipla seleção)
         self.filter_fornecedor = MultiSelectCombo(
             title="Fornecedor",
             placeholder="Buscar fornecedor..."
         )
-        filter_layout.addWidget(self.filter_fornecedor)
+        filter_layout.addWidget(CollapsibleSection("Fornecedor", self.filter_fornecedor, expanded=False))
         
         # Fabricante (múltipla seleção)
         self.filter_fabricante = MultiSelectCombo(
             title="Fabricante",
             placeholder="Buscar fabricante..."
         )
-        filter_layout.addWidget(self.filter_fabricante)
+        filter_layout.addWidget(CollapsibleSection("Fabricante", self.filter_fabricante, expanded=False))
         
         # Localização
         self.filter_localizacao = MultiSelectCombo(
             title="Localização",
             placeholder="Buscar localização..."
         )
-        filter_layout.addWidget(self.filter_localizacao)
+        filter_layout.addWidget(CollapsibleSection("Localização", self.filter_localizacao, expanded=False))
         
         # Tipo de Produto
         self.filter_tipo_produto = MultiSelectCombo(
             title="Tipo de Produto",
             placeholder="Buscar tipo..."
         )
-        filter_layout.addWidget(self.filter_tipo_produto)
+        filter_layout.addWidget(CollapsibleSection("Tipo de Produto", self.filter_tipo_produto, expanded=False))
         
         # ===== GRUPO: LOCAL ESTOQUE =====
         group_local = self._create_group_box("Local Estoque")

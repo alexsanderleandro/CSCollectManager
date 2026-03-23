@@ -24,6 +24,7 @@ class _ScrollGuardList(QListWidget):
             event.ignore()  # propaga ao pai sem rolar
 
 
+class MultiSelectCombo(QWidget):
     """
     Widget de seleção múltipla com busca.
     

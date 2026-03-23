@@ -1031,10 +1031,17 @@ class LoginDialog(QDialog):
             # Emite sinal de sucesso após breve delay
             QTimer.singleShot(500, lambda: self._emit_login_success(user_data))
         else:
+            # Atualiza label de status e exibe caixa de diálogo explícita
             self._lbl_auth_status.setText(f"❌ {message}")
             self._lbl_auth_status.setStyleSheet("color: #f44336; font-size: 9pt;")
             self._txt_password.clear()
             self._txt_password.setFocus()
+
+            try:
+                QMessageBox.critical(self, "Falha no Login", message)
+            except Exception:
+                # Em alguns contextos a caixa pode falhar silenciosamente; apenas continue
+                pass
     
     def _emit_login_success(self, user_data: dict):
         """Emite sinal de login bem-sucedido."""

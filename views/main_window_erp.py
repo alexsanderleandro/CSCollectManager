@@ -34,6 +34,7 @@ from widgets.lazy_product_table import LazyProductTable
 from widgets.progress_dialog import ProgressDialog
 from services.product_service import ProductService, ProductFilter
 from services.export_service import ExportService, EmpresaInfo, UsuarioInfo
+from services.db_export_service import DbExportService
 
 # Caminho do logotipo
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
@@ -190,6 +191,7 @@ class MainWindowERP(QMainWindow):
         self._local_estoque: str = "loja"  # Valor selecionado no filtro Loja/Depósito
         self._export_vendedor: Dict[str, Any] = {}  # Vendedor selecionado na tela de exportação
         self._connection_info = {}
+        self._last_db_export_path: str = ""  # Caminho do último .db gerado
         
         # Serviços e Workers
         self._product_service = ProductService()
@@ -459,6 +461,14 @@ class MainWindowERP(QMainWindow):
 
         self._txt_export_dir = QLineEdit()
         self._txt_export_dir.setPlaceholderText("Selecione o diretório onde o arquivo será gerado...")
+        # carrega último diretório salvo (persistência)
+        try:
+            from utils.config import AppConfig
+            last_dir = AppConfig.get_last_export_dir()
+        except Exception:
+            last_dir = None
+        if last_dir:
+            self._txt_export_dir.setText(last_dir)
         self._txt_export_dir.setReadOnly(True)
         self._txt_export_dir.setMinimumHeight(36)
         self._txt_export_dir.setStyleSheet("""
@@ -680,14 +690,36 @@ class MainWindowERP(QMainWindow):
         content.setStyleSheet("background-color: #1e1e1e;")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 24, 24, 24)
-        
-        # Placeholder
-        placeholder = QLabel("📋\n\nHistórico de exportações\n\nEm desenvolvimento...")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet("color: #666666; font-size: 14pt;")
-        content_layout.addWidget(placeholder)
-        
+
+        # Controles
+        controls = QWidget()
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
+
+        btn_refresh = QPushButton("🔄 Atualizar")
+        btn_refresh.setMinimumHeight(36)
+        btn_refresh.clicked.connect(self._refresh_history)
+        controls_layout.addWidget(btn_refresh)
+
+        btn_open = QPushButton("📂 Abrir Pasta")
+        btn_open.setMinimumHeight(36)
+        btn_open.clicked.connect(self._on_open_history_item)
+        controls_layout.addWidget(btn_open)
+
+        controls_layout.addStretch()
+        content_layout.addWidget(controls)
+
+        # Lista de histórico
+        self._history_list = QListWidget()
+        self._history_list.setStyleSheet("color: #cccccc; background-color: #252526;")
+        self._history_list.itemDoubleClicked.connect(self._on_history_item_double_clicked)
+        content_layout.addWidget(self._history_list)
+
         layout.addWidget(content)
+
+        # Carrega inicialmente
+        QTimer.singleShot(100, self._refresh_history)
         
         self._module_stack.addWidget(page)
         self._pages[self.MODULE_HISTORY] = self._module_stack.count() - 1
@@ -719,6 +751,77 @@ class MainWindowERP(QMainWindow):
         
         self._module_stack.addWidget(page)
         self._pages[self.MODULE_SETTINGS] = self._module_stack.count() - 1
+
+    # -------------------------
+    # Histórico helpers
+    # -------------------------
+    def _refresh_history(self):
+        """Carrega e exibe o histórico em ordem decrescente por timestamp."""
+        try:
+            from utils.config import AppConfig
+            history = AppConfig.load_export_history()
+        except Exception:
+            history = []
+
+        def parse_ts(e):
+            ts = e.get("timestamp")
+            try:
+                return datetime.fromisoformat(ts)
+            except Exception:
+                return datetime.min
+
+        # Ordenar decrescente (mais recente primeiro)
+        history_sorted = sorted(history, key=parse_ts, reverse=True)
+
+        self._history_list.clear()
+        for entry in history_sorted:
+            empresa = entry.get("empresa", {})
+            usuario = entry.get("usuario", {})
+            total = entry.get("total_produtos", 0)
+            txt = entry.get("txt_path", "")
+
+            # Apresentar apenas a hora HH:MM
+            try:
+                dt = parse_ts(entry)
+                time_str = dt.strftime("%H:%M") if dt and dt != datetime.min else ""
+            except Exception:
+                time_str = ""
+
+            local = empresa.get("local", "")
+            empresa_nome = empresa.get('nome', '')
+            usuario_nome = usuario.get('nome', '')
+
+            display = f"{time_str}  •  {empresa_nome}"
+            if local:
+                display += f" ({local})"
+            display += f"  •  {usuario_nome}  •  {total} produtos  •  {os.path.basename(txt)}"
+
+            item = QListWidgetItem(display)
+            item.setData(Qt.ItemDataRole.UserRole, entry)
+            self._history_list.addItem(item)
+
+    def _on_history_item_double_clicked(self, item: QListWidgetItem):
+        """Ao dar duplo-clique: tentar abrir pasta do TXT gerado."""
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        if not entry:
+            return
+        txt = entry.get("txt_path") or ""
+        folder = os.path.dirname(txt) if txt else entry.get("output_dir", "")
+        if folder and os.path.isdir(folder):
+            try:
+                os.startfile(folder)
+            except Exception:
+                QMessageBox.information(self, "Abrir Pasta", f"Não foi possível abrir: {folder}")
+        else:
+            QMessageBox.information(self, "Abrir Pasta", "Pasta não encontrada.")
+
+    def _on_open_history_item(self):
+        """Abre a pasta do item selecionado na lista de histórico."""
+        item = self._history_list.currentItem()
+        if not item:
+            QMessageBox.information(self, "Abrir Pasta", "Selecione um item do histórico primeiro.")
+            return
+        self._on_history_item_double_clicked(item)
     
     def _setup_menus(self):
         """Configura menus."""
@@ -1064,7 +1167,7 @@ class MainWindowERP(QMainWindow):
             with get_session() as session:
                 result = session.execute(sa_text(
                     "SELECT CodVendedor, NomeVendedor FROM vendedores "
-                    "WHERE TipoCadastro IN (0, 2) ORDER BY NomeVendedor"
+                    "WHERE TipoCadastro IN (0, 2) ORDER BY CodVendedor ASC"
                 ))
                 vendedores = [(row[0], row[1]) for row in result]
         except Exception as e:
@@ -1164,7 +1267,11 @@ class MainWindowERP(QMainWindow):
 
     def _on_browse_export_dir(self):
         """Abre diálogo para selecionar diretório de saída."""
-        current = self._txt_export_dir.text() or os.path.expanduser("~")
+        try:
+            from utils.config import AppConfig
+            current = self._txt_export_dir.text() or AppConfig.ensure_export_dir()
+        except Exception:
+            current = self._txt_export_dir.text() or os.path.expanduser("~")
         directory = QFileDialog.getExistingDirectory(
             self,
             "Selecionar Diretório de Saída",
@@ -1173,6 +1280,11 @@ class MainWindowERP(QMainWindow):
         )
         if directory:
             self._txt_export_dir.setText(directory)
+            try:
+                from utils.config import AppConfig
+                AppConfig.set_last_export_dir(directory)
+            except Exception:
+                pass
 
     def _on_start_export(self):
         """Valida e inicia a exportação em worker separado."""
@@ -1221,25 +1333,73 @@ class MainWindowERP(QMainWindow):
             nomeempresa=self._empresa_info.get("nome", ""),
             local="Depósito" if self._local_estoque == "deposito" else "Loja"
         )
+        # Busca nome do vendedor diretamente no banco para garantir consistência
+        cod_vendedor = int(self._export_vendedor.get("codigo", 0) or 0)
+        nome_vendedor = self._export_vendedor.get("nome", "")
+        try:
+            from database.connection import get_session
+            from sqlalchemy import text as sa_text
+            with get_session() as session:
+                result = session.execute(sa_text(
+                    "SELECT NomeVendedor FROM vendedores WHERE CodVendedor = :cod LIMIT 1"
+                ), {"cod": cod_vendedor})
+                row = result.first()
+                if row and row[0]:
+                    nome_vendedor = row[0]
+        except Exception:
+            # fallback: usa o nome já armazenado na seleção
+            pass
+
         usuario = UsuarioInfo(
-            codusuario=int(self._export_vendedor.get("codigo", 0) or 0),
-            nomeusuario=self._export_vendedor.get("nome", "")
+            codusuario=cod_vendedor,
+            nomeusuario=nome_vendedor or ""
         )
 
         compress = False
 
         # 4. Função de exportação a ser executada no worker
         service = ExportService(output_dir=output_dir)
+        db_service = DbExportService(output_dir=output_dir)
+        # Guarda metadados temporários para histórico
+        self._last_export_count = len(produtos)
+        self._last_export_empresa = {
+            "codigo": str(empresa.codempresa),
+            "nome": empresa.nomeempresa,
+            "local": empresa.local,
+        }
+        self._last_export_usuario = {
+            "codigo": str(usuario.codusuario),
+            "nome": usuario.nomeusuario,
+        }
+        self._last_export_output_dir = output_dir
 
         def do_export(progress_callback=None):
-            return service.export_carga(
+            # Wrapper de progresso: divide 0-49% para TXT e 50-100% para DB
+            def cb_txt(pct, msg):
+                if progress_callback:
+                    progress_callback(pct // 2, f"[TXT] {msg}")
+
+            def cb_db(pct, msg):
+                if progress_callback:
+                    progress_callback(50 + pct // 2, f"[DB] {msg}")
+
+            txt_path = service.export_carga(
                 empresa=empresa,
                 usuario=usuario,
                 produtos=produtos,
                 output_path=output_dir,
                 compress=compress,
-                progress_callback=progress_callback,
+                progress_callback=cb_txt,
             )
+            db_path = db_service.export_carga(
+                empresa=empresa,
+                usuario=usuario,
+                produtos=produtos,
+                output_path=output_dir,
+                progress_callback=cb_db,
+            )
+            self._last_db_export_path = db_path
+            return txt_path
 
         # 5. Cria worker
         if self._export_worker and self._export_worker.isRunning():
@@ -1275,20 +1435,107 @@ class MainWindowERP(QMainWindow):
         self._status_bar.show_message(f"✅ Exportação concluída: {os.path.basename(filepath)}", 8000)
         logger.info(f"Exportação concluída: {filepath}")
 
+        db_path = self._last_db_export_path
+        db_info = (
+            f"\n\n🗄️ DB: <b>{os.path.basename(db_path)}</b>"
+            if db_path else ""
+        )
+        detail_txt = f"TXT: {filepath}"
+        detail_db = f"\nDB:  {db_path}" if db_path else ""
+
         # Diálogo de sucesso com opção de abrir pasta
         msg = QMessageBox(self)
         msg.setWindowTitle("Exportação Concluída")
         msg.setIcon(QMessageBox.Icon.Information)
-        msg.setText("✅ Arquivo gerado com sucesso!")
-        msg.setInformativeText(f"<b>{os.path.basename(filepath)}</b>")
-        msg.setDetailedText(f"Caminho completo:\n{filepath}")
+        msg.setText("✅ Arquivos gerados com sucesso!")
+        msg.setInformativeText(
+            f"📄 TXT: <b>{os.path.basename(filepath)}</b>{db_info}"
+        )
+        msg.setDetailedText(f"Caminhos completos:\n{detail_txt}{detail_db}")
         btn_abrir = msg.addButton("Abrir Pasta", QMessageBox.ButtonRole.ActionRole)
         msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
         msg.exec()
 
         if msg.clickedButton() == btn_abrir:
             import subprocess
-            subprocess.Popen(f'explorer /select,"{filepath}"')
+            try:
+                # 1) Se o arquivo existe, selecione-o no Explorer
+                if filepath and os.path.exists(filepath):
+                    try:
+                        subprocess.run(["explorer", f"/select,{filepath}"], check=False)
+                    except Exception:
+                        # fallback: abrir pasta que contém o arquivo
+                        try:
+                            folder = os.path.dirname(filepath)
+                            if folder and os.path.isdir(folder):
+                                os.startfile(folder)
+                        except Exception:
+                            pass
+                else:
+                    # 2) Tentar abrir diretórios candidatos na ordem: pasta do arquivo, campo UI, último salvo
+                    candidates = []
+                    if filepath:
+                        candidates.append(os.path.dirname(filepath))
+                    txt_dir = (self._txt_export_dir.text() or "").strip()
+                    if txt_dir:
+                        candidates.append(txt_dir)
+                    try:
+                        from utils.config import AppConfig
+                        last = AppConfig.get_last_export_dir()
+                        if last:
+                            candidates.append(last)
+                    except Exception:
+                        pass
+
+                    opened = False
+                    for d in candidates:
+                        if d and os.path.isdir(d):
+                            try:
+                                try:
+                                    subprocess.run(["explorer", d], check=False)
+                                except Exception:
+                                    os.startfile(d)
+                            except Exception:
+                                try:
+                                    os.startfile(d)
+                                except Exception:
+                                    continue
+                            opened = True
+                            break
+
+                    if not opened:
+                        QMessageBox.information(self, "Abrir Pasta", "Não foi possível localizar a pasta de exportação.")
+            except Exception:
+                pass
+
+            # salva último diretório usado (se houver)
+            try:
+                from utils.config import AppConfig
+                out_dir = ""
+                if filepath:
+                    out_dir = os.path.dirname(filepath)
+                if not out_dir:
+                    out_dir = (self._txt_export_dir.text() or "").strip()
+                if out_dir:
+                    AppConfig.set_last_export_dir(out_dir)
+            except Exception:
+                pass
+
+        # Registra histórico de exportação (não bloqueante)
+        try:
+            from utils.config import AppConfig
+            hist_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "txt_path": filepath,
+                "db_path": self._last_db_export_path or "",
+                "empresa": self._last_export_empresa if hasattr(self, '_last_export_empresa') else {},
+                "usuario": self._last_export_usuario if hasattr(self, '_last_export_usuario') else {},
+                "total_produtos": getattr(self, '_last_export_count', 0),
+                "output_dir": getattr(self, '_last_export_output_dir', ""),
+            }
+            AppConfig.append_export_history(hist_entry)
+        except Exception:
+            pass
 
     def _on_export_error(self, error: Exception):
         """Callback de erro na exportação."""
