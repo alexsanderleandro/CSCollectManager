@@ -211,6 +211,13 @@ class AppStatusBar(QStatusBar):
         self.addPermanentWidget(self._database_label)
         
         self._add_separator(permanent=True)
+
+        # Validade da licença
+        self._license_label = QLabel("")
+        self._license_label.setStyleSheet("color: rgba(255,255,255,0.8); font-size: 9pt;")
+        self.addPermanentWidget(self._license_label)
+
+        self._add_separator(permanent=True)
         
         # Versão
         from utils.constants import APP_INFO
@@ -387,3 +394,43 @@ class AppStatusBar(QStatusBar):
     def clear_record_count(self):
         """Limpa contagem de registros."""
         self._records_label.setText("")
+
+    # ===== Licença =====
+
+    def set_license_validity(self, validade: str = ""):
+        """
+        Exibe a data de validade da licença no rodapé.
+
+        Args:
+            validade: String de validade vinda do payload .key (YYYY-MM-DD ou ISO).
+                      Vazio ou None exibe 'Sem data limite'.
+        """
+        from datetime import date, datetime
+
+        if not validade:
+            self._license_label.setText("🔑 Sem data limite")
+            self._license_label.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 9pt;")
+            return
+
+        try:
+            if "T" in validade or validade.endswith("Z"):
+                val_date = datetime.fromisoformat(validade.replace("Z", "+00:00")).date()
+            else:
+                val_date = date.fromisoformat(validade[:10])
+
+            label = val_date.strftime("%d/%m/%Y")
+            hoje = date.today()
+            dias = (val_date - hoje).days
+
+            if dias < 0:
+                self._license_label.setText(f"🔑 Licença expirada em: {label}")
+                self._license_label.setStyleSheet("color: #ef9a9a; font-size: 9pt; font-weight: bold;")
+            elif dias <= 30:
+                self._license_label.setText(f"🔑 Licença expira em: {label}")
+                self._license_label.setStyleSheet("color: #ffe082; font-size: 9pt; font-weight: bold;")
+            else:
+                self._license_label.setText(f"🔑 Licença expira em: {label}")
+                self._license_label.setStyleSheet("color: rgba(255,255,255,0.8); font-size: 9pt;")
+        except Exception:
+            self._license_label.setText(f"🔑 Validade: {validade}")
+            self._license_label.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 9pt;")

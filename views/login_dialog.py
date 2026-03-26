@@ -28,6 +28,9 @@ from PySide6.QtGui import QFont, QPixmap, QIcon, QCursor
 
 from utils.constants import APP_INFO
 from utils.logger import get_logger
+from utils.config import AppConfig
+from pathlib import Path
+import re
 
 # Importações para persistência e autenticação
 import login as login_module
@@ -218,6 +221,7 @@ class LoginDialog(QDialog):
         self._current_step = self.STEP_CONNECTION
         self._worker: Optional[ConnectionWorker] = None
         self._auth_worker: Optional[AuthWorker] = None
+        self._licenca_payload: dict = {}  # Payload do arquivo .key (dispositivos, cnpjs, etc.)
         
         self._setup_ui()
         self._connect_signals()
@@ -932,6 +936,105 @@ class LoginDialog(QDialog):
             return
         
         self._selected_empresa = empresa
+
+        # Validação do arquivo .key na pasta do aplicativo
+        cnpj_raw = (empresa.get('cnpj') or "").strip()
+        cnpj_clean = re.sub(r"\D", "", cnpj_raw)
+        if not cnpj_clean:
+            QMessageBox.critical(self, "Empresa sem CNPJ", "A empresa selecionada não possui CNPJ cadastrado. Não é possível validar autorização.")
+            return
+
+        # Procura arquivos .key em locais comuns: pasta do app, cwd e C:\ceosoftware
+        search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
+        key_files = []
+        for p in search_paths:
+            try:
+                if p.exists():
+                    key_files.extend(list(p.glob("*.key")))
+            except Exception:
+                continue
+        # Remover duplicatas mantendo ordem
+        seen = set()
+        key_files_unique = []
+        for k in key_files:
+            kp = str(k.resolve())
+            if kp not in seen:
+                seen.add(kp)
+                key_files_unique.append(k)
+        key_files = key_files_unique
+        if not key_files:
+            QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado (pesquisado em pasta do app, pasta atual e C:\\ceosoftware). O sistema não poderá ser aberto.")
+            return
+
+        # Lê e decodifica o token da licença (formato: base64url(json).base64url(hmac))
+        try:
+            import base64
+            import json as _json
+            from datetime import date as _date, datetime as _datetime
+
+            def _b64u_decode(s: str) -> bytes:
+                """Decodifica base64 URL-safe sem padding."""
+                padding = '=' * (-len(s) % 4)
+                return base64.urlsafe_b64decode((s + padding).encode('ascii'))
+
+            payload_dict = None
+            licenca_erro = None
+            for cand in key_files:
+                try:
+                    token = cand.read_text(encoding='utf-8').strip()
+                    parts = token.split('.')
+                    if len(parts) != 2:
+                        licenca_erro = f"Formato de token inválido em: {cand.name}"
+                        continue
+                    dados = _b64u_decode(parts[0])
+                    payload_dict = _json.loads(dados.decode('utf-8'))
+                    break  # Token decodificado com sucesso
+                except Exception as exc:
+                    licenca_erro = str(exc)
+                    continue
+
+            if payload_dict is None:
+                QMessageBox.critical(self, "Erro de licença",
+                    f"Não foi possível ler o arquivo de licença.\n{licenca_erro or ''}"
+                )
+                return
+
+            # Verificar validade da licença
+            validade = payload_dict.get('validade') or ''
+            if validade:
+                try:
+                    if 'T' in validade or validade.endswith('Z'):
+                        from datetime import timezone as _tz
+                        v = validade.replace('Z', '+00:00')
+                        val_dt = _datetime.fromisoformat(v)
+                        if val_dt.tzinfo is None:
+                            val_dt = val_dt.replace(tzinfo=_tz.utc)
+                        if val_dt < _datetime.now(_tz.utc):
+                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                            return
+                    else:
+                        if _date.fromisoformat(validade) < _date.today():
+                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                            return
+                except Exception:
+                    pass  # formato desconhecido — ignora validação de data
+
+            # Verifica CNPJ: o array 'cnpjs' já contém apenas dígitos
+            cnpjs_licenca = {re.sub(r'\D', '', c) for c in payload_dict.get('cnpjs', [])}
+            if cnpj_clean not in cnpjs_licenca:
+                QMessageBox.warning(self, "CNPJ não liberado",
+                    "O CNPJ da empresa selecionada não está liberado nesta licença.\n"
+                    "Contate o administrador do sistema."
+                )
+                return
+
+            # Armazena payload completo para uso na tela de exportação (dispositivos etc.)
+            self._licenca_payload = payload_dict
+
+        except Exception as e:
+            logger.error(f"Erro ao validar arquivo .key: {e}")
+            QMessageBox.critical(self, "Erro de licença", "Erro ao validar arquivo .key. O sistema não pode prosseguir.")
+            return
         
         # Atualiza contexto
         conn = self._selected_connection
@@ -1056,7 +1159,8 @@ class LoginDialog(QDialog):
                 "codigo": user_data.get("CodUsuario", 0),
                 "nome": user_data.get("NomeUsuario", ""),
                 "admin": user_data.get("PDVGerenteSN", 0) == 1
-            }
+            },
+            "licenca": self._licenca_payload or {}
         }
         
         self.login_successful.emit(login_data)

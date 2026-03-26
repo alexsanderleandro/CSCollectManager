@@ -52,6 +52,7 @@ class CSCollectManagerApp:
         logger.info("=" * 60)
         logger.info(f"Iniciando {APP_INFO.NAME} v{APP_INFO.VERSION}")
         logger.info("=" * 60)
+        # (Chaves não são geradas automaticamente no startup)
         
         # High DPI deve ser configurado ANTES de criar QApplication
         QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -74,6 +75,7 @@ class CSCollectManagerApp:
         self._connection_info = {}
         self._empresa_info = {}
         self._usuario_info = {}
+        self._licenca_info = {}  # Payload da licença (.key)
     
     def _setup_app(self):
         """Configura propriedades da aplicação."""
@@ -183,6 +185,7 @@ class CSCollectManagerApp:
         self._connection_info = login_data.get("connection", {})
         self._empresa_info = login_data.get("empresa", {})
         self._usuario_info = login_data.get("usuario", {})
+        self._licenca_info = login_data.get("licenca", {})
         
         # Configura conexão global do banco de dados
         server = self._connection_info.get("server", "localhost")
@@ -221,7 +224,8 @@ class CSCollectManagerApp:
         self._main_window.set_connection_info(
             empresa=self._empresa_info,
             usuario=self._usuario_info,
-            connection=self._connection_info
+            connection=self._connection_info,
+            licenca=self._licenca_info
         )
         
         # Conecta sinais

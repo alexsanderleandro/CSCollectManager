@@ -12,6 +12,9 @@ Pillow>=10.0.0
 
 # Utilitários (zipfile é builtin, não precisa instalar)
 
+# Criptografia (assinatura de arquivos)
+# Usamos HMAC-SHA256 (builtin) — cryptography não é mais necessária
+
 # Desenvolvimento (opcional)
 # black>=23.0.0
 # pylint>=3.0.0

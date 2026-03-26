@@ -108,12 +108,14 @@ class LazyProductTable(QWidget):
         toolbar = QToolBar()
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(20, 20))
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toolbar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
         # Pesquisa
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Pesquisar...")
-        self._search_input.setMinimumWidth(200)
-        self._search_input.setMaximumWidth(300)
+        self._search_input.setMinimumWidth(120)
+        self._search_input.setMaximumWidth(400)
         self._search_input.setClearButtonEnabled(True)
         self._search_input.textChanged.connect(self._on_search_changed)
         toolbar.addWidget(self._search_input)
@@ -139,25 +141,21 @@ class LazyProductTable(QWidget):
         
         toolbar.addSeparator()
         
-        # Botões de exportação
-        self._btn_export = QPushButton("Exportar Carga")
-        self._btn_export.clicked.connect(self._on_export_clicked)
-        toolbar.addWidget(self._btn_export)
-        
-        self._btn_export_photos = QPushButton("Exportar Fotos")
-        self._btn_export_photos.clicked.connect(self._on_export_photos_clicked)
-        toolbar.addWidget(self._btn_export_photos)
-        
+        # Ações de seleção (colocar antes para manter visíveis em telas estreitas)
+        self._act_select_all = QAction("Selecionar Todos", self)
+        self._act_select_all.triggered.connect(self._select_all)
+        toolbar.addAction(self._act_select_all)
+
+        self._act_clear_selection = QAction("Limpar Seleção", self)
+        self._act_clear_selection.triggered.connect(self._clear_selection)
+        toolbar.addAction(self._act_clear_selection)
+
         toolbar.addSeparator()
-        
-        # Seleção
-        self._btn_select_all = QPushButton("Selecionar Todos")
-        self._btn_select_all.clicked.connect(self._select_all)
-        toolbar.addWidget(self._btn_select_all)
-        
-        self._btn_clear_selection = QPushButton("Limpar Seleção")
-        self._btn_clear_selection.clicked.connect(self._clear_selection)
-        toolbar.addWidget(self._btn_clear_selection)
+
+        # Ação de exportação (mantida como ação única)
+        self._act_export = QAction("Exportar Carga", self)
+        self._act_export.triggered.connect(self._on_export_clicked)
+        toolbar.addAction(self._act_export)
         
         return toolbar
     

@@ -192,6 +192,7 @@ class MainWindowERP(QMainWindow):
         self._export_vendedor: Dict[str, Any] = {}  # Vendedor selecionado na tela de exportação
         self._connection_info = {}
         self._last_db_export_path: str = ""  # Caminho do último .db gerado
+        self._licenca_payload: Dict = {}  # Payload do arquivo .key (dispositivos liberados)
         
         # Serviços e Workers
         self._product_service = ProductService()
@@ -200,6 +201,7 @@ class MainWindowERP(QMainWindow):
         
         # Códigos selecionados para exportação (preenchidos em _on_export_selected)
         self._export_codprodutos: List = []
+        self._last_export_filters: Dict = {}  # Filtros ativos na última exportação
         
         # Setup
         self._setup_window()
@@ -330,12 +332,12 @@ class MainWindowERP(QMainWindow):
         user_layout.setContentsMargins(12, 8, 12, 8)
         user_layout.addStretch()
 
-        # Botão de troca de usuário
-        btn_logout = QPushButton("👤")
-        btn_logout.setToolTip("Trocar usuário")
-        btn_logout.setFixedSize(36, 36)
-        btn_logout.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_logout.setStyleSheet("""
+        # Botão de sair do aplicativo
+        btn_exit = QPushButton("⏻")
+        btn_exit.setToolTip("Sair")
+        btn_exit.setFixedSize(36, 36)
+        btn_exit.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_exit.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 border: none;
@@ -346,8 +348,8 @@ class MainWindowERP(QMainWindow):
                 background-color: #3e3e42;
             }
         """)
-        btn_logout.clicked.connect(self._on_logout)
-        user_layout.addWidget(btn_logout)
+        btn_exit.clicked.connect(self.close)
+        user_layout.addWidget(btn_exit)
 
         layout.addWidget(user_frame)
         
@@ -437,10 +439,10 @@ class MainWindowERP(QMainWindow):
         content_layout.setContentsMargins(24, 24, 24, 24)
         content_layout.setSpacing(20)
 
-        from PySide6.QtWidgets import QCheckBox, QLineEdit
+        from PySide6.QtWidgets import QCheckBox, QLineEdit, QComboBox
 
         # ===== GRUPO: DIRETÓRIO DE SAÍDA =====
-        dir_group = QGroupBox("📁 Diretório de Saída  (obrigatório)")
+        dir_group = QGroupBox("📁 Diretório de saída  (obrigatório)")
         dir_group.setStyleSheet("""
             QGroupBox {
                 color: #cccccc;
@@ -507,7 +509,7 @@ class MainWindowERP(QMainWindow):
         content_layout.addWidget(dir_group)
 
         # ===== GRUPO: VENDEDOR (obrigatório) =====
-        vendedor_group = QGroupBox("👤 Vendedor  (obrigatório)")
+        vendedor_group = QGroupBox("👤 Conferente  (obrigatório)")
         vendedor_group.setStyleSheet("""
             QGroupBox {
                 color: #cccccc;
@@ -564,8 +566,70 @@ class MainWindowERP(QMainWindow):
 
         content_layout.addWidget(vendedor_group)
 
+        # ===== GRUPO: DISPOSITIVO (obrigatório — vem da licença .key) =====
+        aparelho_group = QGroupBox("📱 Dispositivo móvel (obrigatório)")
+        aparelho_group.setStyleSheet("""
+            QGroupBox {
+                color: #cccccc;
+                font-weight: bold;
+                border: 2px solid #0078d4;
+                border-radius: 8px;
+                margin-top: 16px;
+                padding: 20px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+            }
+        """)
+        aparelho_layout = QVBoxLayout(aparelho_group)
+        aparelho_layout.setSpacing(8)
+
+        lbl_disp = QLabel("Selecione o dispositivo habilitado na licença (.key):")
+        lbl_disp.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
+        aparelho_layout.addWidget(lbl_disp)
+
+        self._cmb_dispositivo = QComboBox()
+        self._cmb_dispositivo.setMinimumHeight(36)
+        self._cmb_dispositivo.addItem("— Selecione o dispositivo —", None)
+        self._cmb_dispositivo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._cmb_dispositivo.setStyleSheet("""
+            QComboBox {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11pt;
+            }
+            QComboBox:focus { border-color: #0078d4; }
+            QComboBox::drop-down { border: none; width: 30px; }
+            QComboBox::down-arrow {
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #cccccc;
+                margin-right: 10px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #252526;
+                border: 1px solid #3e3e42;
+                selection-background-color: #094771;
+                color: #cccccc;
+            }
+        """)
+        aparelho_layout.addWidget(self._cmb_dispositivo)
+
+        self._lbl_dispositivo_info = QLabel(
+            "ℹ️  Os dispositivos disponíveis são carregados automaticamente da licença (.key)."
+        )
+        self._lbl_dispositivo_info.setStyleSheet("color: #666666; font-size: 9pt;")
+        aparelho_layout.addWidget(self._lbl_dispositivo_info)
+
+        content_layout.addWidget(aparelho_group)
+
         # ===== GRUPO: OPÇÕES =====
-        export_options = QGroupBox("📋 Opções de Exportação")
+        export_options = QGroupBox("📋 Opções de exportação")
         export_options.setStyleSheet("""
             QGroupBox {
                 color: #cccccc;
@@ -586,15 +650,9 @@ class MainWindowERP(QMainWindow):
 
         chk_style = "color: #cccccc; font-size: 11pt;"
 
-        self._chk_export_txt = QCheckBox("Exportar arquivo TXT de carga")
-        self._chk_export_txt.setChecked(True)
-        self._chk_export_txt.setEnabled(False)  # Sempre obrigatório
-        self._chk_export_txt.setStyleSheet(chk_style)
-        options_layout.addWidget(self._chk_export_txt, 0, 0)
-
-        self._chk_export_photos = QCheckBox("Incluir fotos dos produtos (ZIP)")
+        self._chk_export_photos = QCheckBox("Incluir fotos dos produtos no ZIP")
         self._chk_export_photos.setStyleSheet(chk_style)
-        options_layout.addWidget(self._chk_export_photos, 0, 1)
+        options_layout.addWidget(self._chk_export_photos, 0, 0)
 
         content_layout.addWidget(export_options)
 
@@ -763,7 +821,16 @@ class MainWindowERP(QMainWindow):
         except Exception:
             history = []
 
-        def parse_ts(e):
+        def parse_entry_dt(e):
+            # Primeiro tenta usar os campos date + time no formato dd-mm-aaaa e HH:MM
+            d = e.get('date')
+            t = e.get('time')
+            if d and t:
+                try:
+                    return datetime.strptime(f"{d} {t}", "%d-%m-%Y %H:%M")
+                except Exception:
+                    pass
+            # Fallback: timestamp ISO
             ts = e.get("timestamp")
             try:
                 return datetime.fromisoformat(ts)
@@ -771,42 +838,30 @@ class MainWindowERP(QMainWindow):
                 return datetime.min
 
         # Ordenar decrescente (mais recente primeiro)
-        history_sorted = sorted(history, key=parse_ts, reverse=True)
+        history_sorted = sorted(history, key=parse_entry_dt, reverse=True)
 
         self._history_list.clear()
         for entry in history_sorted:
-            empresa = entry.get("empresa", {})
-            usuario = entry.get("usuario", {})
-            total = entry.get("total_produtos", 0)
-            txt = entry.get("txt_path", "")
+            date_str = entry.get('date', '')
+            time_str = entry.get('time', '')
+            usuario_nome = entry.get('usuario', '')
+            vendedor = entry.get('vendedor', '')
+            aparelho = entry.get('aparelho', '')
+            total = entry.get('product_count', entry.get('total_produtos', 0))
 
-            # Apresentar apenas a hora HH:MM
-            try:
-                dt = parse_ts(entry)
-                time_str = dt.strftime("%H:%M") if dt and dt != datetime.min else ""
-            except Exception:
-                time_str = ""
-
-            local = empresa.get("local", "")
-            empresa_nome = empresa.get('nome', '')
-            usuario_nome = usuario.get('nome', '')
-
-            display = f"{time_str}  •  {empresa_nome}"
-            if local:
-                display += f" ({local})"
-            display += f"  •  {usuario_nome}  •  {total} produtos  •  {os.path.basename(txt)}"
+            display = f"{date_str} {time_str}  •  Usuário: {usuario_nome}  •  Conferente: {vendedor}  •  Aparelho: {aparelho}  •  {total} produtos"
 
             item = QListWidgetItem(display)
             item.setData(Qt.ItemDataRole.UserRole, entry)
             self._history_list.addItem(item)
 
     def _on_history_item_double_clicked(self, item: QListWidgetItem):
-        """Ao dar duplo-clique: tentar abrir pasta do TXT gerado."""
+        """Ao dar duplo-clique: tentar abrir pasta do arquivo ZIP gerado."""
         entry = item.data(Qt.ItemDataRole.UserRole)
         if not entry:
             return
-        txt = entry.get("txt_path") or ""
-        folder = os.path.dirname(txt) if txt else entry.get("output_dir", "")
+        zip_file = entry.get("zip_path") or entry.get("txt_path") or ""
+        folder = os.path.dirname(zip_file) if zip_file else entry.get("output_dir", "")
         if folder and os.path.isdir(folder):
             try:
                 os.startfile(folder)
@@ -920,11 +975,15 @@ class MainWindowERP(QMainWindow):
     # PUBLIC API
     # ==========================================
     
-    def set_connection_info(self, empresa: Dict, usuario: Dict, connection: Dict):
+    def set_connection_info(self, empresa: Dict, usuario: Dict, connection: Dict, licenca: Dict = None):
         """Define informações de conexão."""
         self._empresa_info = empresa
         self._usuario_info = usuario
         self._connection_info = connection
+
+        if licenca:
+            self._licenca_payload = licenca
+            self._populate_dispositivos_combo()
         
         # Atualiza UI
         empresa_nome = empresa.get("nome", "Empresa")
@@ -937,10 +996,57 @@ class MainWindowERP(QMainWindow):
         self._status_bar.set_user(usuario_nome, empresa_nome)
         self._status_bar.set_connected(servidor)
         self._status_bar.set_database_info(database, cnpj)
+        validade_licenca = (licenca or {}).get("validade", "")
+        self._status_bar.set_license_validity(validade_licenca)
         
         self.setWindowTitle(f"{APP_INFO.NAME} - {empresa_nome}")
         
         logger.info(f"Conexão configurada: {empresa_nome} / {usuario_nome}")
+
+    def _populate_dispositivos_combo(self):
+        """
+        Popula o combo de dispositivos a partir do payload da licença.
+
+        O campo 'ids_celular' no .key é uma lista de strings: ["ID001", "ID002"]
+        Suporta também lista de dicts (uso futuro):
+          [{"idcelular": "ID001", "nome": "Coletor 1"}, ...]
+        """
+        if not hasattr(self, '_cmb_dispositivo'):
+            return
+
+        self._cmb_dispositivo.clear()
+        self._cmb_dispositivo.addItem("— Selecione o dispositivo —", None)
+
+        # Campo real no payload gerado por licenca.py é 'ids_celular'
+        dispositivos = self._licenca_payload.get('ids_celular', [])
+        count = 0
+        for disp in dispositivos:
+            if isinstance(disp, dict):
+                id_cel = (disp.get('idcelular') or disp.get('id') or '').strip()
+                nome = (disp.get('nome') or '').strip()
+                label = f"{id_cel}  •  {nome}" if nome else id_cel
+            else:
+                id_cel = str(disp).strip()
+                label = id_cel
+
+            if id_cel:
+                self._cmb_dispositivo.addItem(label, id_cel)
+                count += 1
+
+        if hasattr(self, '_lbl_dispositivo_info'):
+            if count > 0:
+                self._lbl_dispositivo_info.setText(
+                    f"✅  {count} dispositivo(s) liberado(s) nesta licença."
+                )
+                self._lbl_dispositivo_info.setStyleSheet("color: #4caf50; font-size: 9pt;")
+            else:
+                self._lbl_dispositivo_info.setText(
+                    "⚠️  Nenhum dispositivo encontrado na licença. Verifique o arquivo .key."
+                )
+                self._lbl_dispositivo_info.setStyleSheet("color: #ff9800; font-size: 9pt;")
+
+        self._cmb_dispositivo.setCurrentIndex(0)
+        logger.debug(f"Dispositivos da licença carregados: {count}")
     
     def load_filter_data(self):
         """
@@ -1327,11 +1433,44 @@ class MainWindowERP(QMainWindow):
             self._txt_vendedor.setFocus()
             return
 
+        # 3b. Valida dispositivo (deve ser selecionado da licença)
+        aparelho_id = ""
+        if hasattr(self, '_cmb_dispositivo'):
+            aparelho_id = self._cmb_dispositivo.currentData() or ""
+        if not aparelho_id:
+            QMessageBox.warning(
+                self,
+                "Dispositivo não selecionado",
+                "Selecione o dispositivo que receberá a carga.\n\n"
+                "Os dispositivos disponíveis são definidos pela licença (.key)."
+            )
+            if hasattr(self, '_cmb_dispositivo'):
+                self._cmb_dispositivo.setFocus()
+            return
+
         # 4. Monta objetos de empresa e usuário
+        # Define CNPJ da empresa logada: prioriza valor vindo do login, se vazio tenta consultar o DB
+        empresa_cnpj = (self._empresa_info.get("cnpj") or "").strip()
+        if not empresa_cnpj:
+            try:
+                from database.connection import get_session
+                from sqlalchemy import text as sa_text
+                cod_empresa = int(self._empresa_info.get("codigo", 1) or 1)
+                with get_session() as session:
+                    result = session.execute(sa_text(
+                        "SELECT CNPJ FROM Empresas WHERE CodEmpresa = :cod_empresa"
+                    ), {"cod_empresa": cod_empresa})
+                    row = result.first()
+                    if row and row[0]:
+                        empresa_cnpj = str(row[0])
+            except Exception:
+                empresa_cnpj = ""
+
         empresa = EmpresaInfo(
             codempresa=int(self._empresa_info.get("codigo", 1) or 1),
             nomeempresa=self._empresa_info.get("nome", ""),
-            local="Depósito" if self._local_estoque == "deposito" else "Loja"
+            local="Depósito" if self._local_estoque == "deposito" else "Loja",
+            cnpj=empresa_cnpj,
         )
         # Busca nome do vendedor diretamente no banco para garantir consistência
         cod_vendedor = int(self._export_vendedor.get("codigo", 0) or 0)
@@ -1352,54 +1491,43 @@ class MainWindowERP(QMainWindow):
 
         usuario = UsuarioInfo(
             codusuario=cod_vendedor,
-            nomeusuario=nome_vendedor or ""
+            nomeusuario=nome_vendedor or "",
+            id_celular=aparelho_id
         )
 
-        compress = False
-
         # 4. Função de exportação a ser executada no worker
-        service = ExportService(output_dir=output_dir)
         db_service = DbExportService(output_dir=output_dir)
-        # Guarda metadados temporários para histórico
+        # Captura filtros ativos no momento da exportação (para log)
+        try:
+            self._last_export_filters = self._filter_panel.get_filters()
+        except Exception:
+            self._last_export_filters = {}
+        # Guarda metadados temporários para histórico e log
         self._last_export_count = len(produtos)
         self._last_export_empresa = {
             "codigo": str(empresa.codempresa),
             "nome": empresa.nomeempresa,
             "local": empresa.local,
+            "cnpj": empresa.cnpj,
         }
         self._last_export_usuario = {
             "codigo": str(usuario.codusuario),
             "nome": usuario.nomeusuario,
+            "id_celular": usuario.id_celular,
         }
         self._last_export_output_dir = output_dir
 
         def do_export(progress_callback=None):
-            # Wrapper de progresso: divide 0-49% para TXT e 50-100% para DB
-            def cb_txt(pct, msg):
-                if progress_callback:
-                    progress_callback(pct // 2, f"[TXT] {msg}")
-
-            def cb_db(pct, msg):
-                if progress_callback:
-                    progress_callback(50 + pct // 2, f"[DB] {msg}")
-
-            txt_path = service.export_carga(
+            zip_path = db_service.export_carga(
                 empresa=empresa,
                 usuario=usuario,
                 produtos=produtos,
                 output_path=output_dir,
-                compress=compress,
-                progress_callback=cb_txt,
+                progress_callback=progress_callback,
+                include_photos=self._chk_export_photos.isChecked() if hasattr(self, '_chk_export_photos') else False,
+                photos_output_dir=os.path.join(output_dir, 'Fotos') if hasattr(self, '_chk_export_photos') and self._chk_export_photos.isChecked() else None,
             )
-            db_path = db_service.export_carga(
-                empresa=empresa,
-                usuario=usuario,
-                produtos=produtos,
-                output_path=output_dir,
-                progress_callback=cb_db,
-            )
-            self._last_db_export_path = db_path
-            return txt_path
+            return zip_path
 
         # 5. Cria worker
         if self._export_worker and self._export_worker.isRunning():
@@ -1435,23 +1563,16 @@ class MainWindowERP(QMainWindow):
         self._status_bar.show_message(f"✅ Exportação concluída: {os.path.basename(filepath)}", 8000)
         logger.info(f"Exportação concluída: {filepath}")
 
-        db_path = self._last_db_export_path
-        db_info = (
-            f"\n\n🗄️ DB: <b>{os.path.basename(db_path)}</b>"
-            if db_path else ""
-        )
-        detail_txt = f"TXT: {filepath}"
-        detail_db = f"\nDB:  {db_path}" if db_path else ""
-
         # Diálogo de sucesso com opção de abrir pasta
         msg = QMessageBox(self)
         msg.setWindowTitle("Exportação Concluída")
         msg.setIcon(QMessageBox.Icon.Information)
-        msg.setText("✅ Arquivos gerados com sucesso!")
+        msg.setText("✅ Arquivo gerado com sucesso!")
         msg.setInformativeText(
-            f"📄 TXT: <b>{os.path.basename(filepath)}</b>{db_info}"
+            f"📦 ZIP: <b>{os.path.basename(filepath)}</b>\n\n"
+            "Contém: .db (carga de dados) + .sig (assinatura digital)"
         )
-        msg.setDetailedText(f"Caminhos completos:\n{detail_txt}{detail_db}")
+        msg.setDetailedText(f"Caminho completo:\n{filepath}")
         btn_abrir = msg.addButton("Abrir Pasta", QMessageBox.ButtonRole.ActionRole)
         msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
         msg.exec()
@@ -1524,18 +1645,106 @@ class MainWindowERP(QMainWindow):
         # Registra histórico de exportação (não bloqueante)
         try:
             from utils.config import AppConfig
+            now = datetime.now()
+            # Dados para histórico — formato solicitado: data dd-mm-aaaa, hora hh:mm,
+            # usuário logado, vendedor selecionado, aparelho (nome + id) e quantidade de produtos
+            usuario_logado = (self._usuario_info.get('nome') if hasattr(self, '_usuario_info') else None) or ""
+            vendedor = ""
+            aparelho = ""
+            if hasattr(self, '_last_export_usuario'):
+                lv = self._last_export_usuario
+                vendedor = lv.get('nome', '')
+                aparelho = lv.get('id_celular', '')
+
             hist_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "txt_path": filepath,
-                "db_path": self._last_db_export_path or "",
+                "date": now.strftime("%d-%m-%Y"),
+                "time": now.strftime("%H:%M"),
+                "usuario": usuario_logado,
+                "vendedor": vendedor,
+                "aparelho": aparelho,
+                "product_count": getattr(self, '_last_export_count', 0),
+                "zip_path": filepath,
                 "empresa": self._last_export_empresa if hasattr(self, '_last_export_empresa') else {},
-                "usuario": self._last_export_usuario if hasattr(self, '_last_export_usuario') else {},
-                "total_produtos": getattr(self, '_last_export_count', 0),
                 "output_dir": getattr(self, '_last_export_output_dir', ""),
             }
             AppConfig.append_export_history(hist_entry)
         except Exception:
             pass
+
+        # Grava log de exportação na pasta Logs
+        self._write_export_log(filepath)
+
+    def _write_export_log(self, zip_path: str):
+        """Grava arquivo de log na pasta Logs com resumo completo da exportação."""
+        try:
+            from utils.config import AppConfig
+            from pathlib import Path as _Path
+
+            log_dir = _Path(AppConfig.get_export_logs_dir())
+            now = datetime.now()
+            log_filename = f"EXPORTLOG-{now.strftime('%Y%m%d-%H%M%S')}.log"
+            log_path = log_dir / log_filename
+
+            # Dados do contexto
+            usuario_logado = (self._usuario_info.get('nome') if hasattr(self, '_usuario_info') else None) or ""
+            empresa_nome   = (self._empresa_info.get('nome') if hasattr(self, '_empresa_info') else None) or ""
+            lexp = getattr(self, '_last_export_empresa', {})
+            empresa_local  = lexp.get('local', '')
+            empresa_cnpj   = lexp.get('cnpj', '')
+            lv = getattr(self, '_last_export_usuario', {})
+            vendedor   = lv.get('nome', '')
+            aparelho   = lv.get('id_celular', '')
+            total_prod = getattr(self, '_last_export_count', 0)
+            filtros    = getattr(self, '_last_export_filters', {})
+
+            def _fmt(v):
+                if v is None or (isinstance(v, list) and not v):
+                    return "(todos / não filtrado)"
+                if isinstance(v, list):
+                    return ", ".join(str(x) for x in v)
+                return str(v)
+
+            map_local    = {"loja": "Loja", "deposito": "Depósito"}
+            map_loc      = {"com": "Com localização", "sem": "Sem localização", "ambos": "Ambos"}
+            map_estoque  = {"negativo": "Negativo", "positivo": "Positivo", "zerado": "Zerado", "todos": "Todos"}
+            map_encomenda = {"somente_encomenda": "Somente encomenda",
+                             "somente_nao_encomenda": "Somente não-encomenda",
+                             "ambos": "Ambos"}
+
+            lines = [
+                "=" * 72,
+                "  RELATÓRIO DE EXPORTAÇÃO DE CARGA — CSCollectManager",
+                "=" * 72,
+                f"  Data/Hora          : {now.strftime('%d/%m/%Y %H:%M:%S')}",
+                f"  Usuário logado      : {usuario_logado}",
+                f"  Empresa             : {empresa_nome}  (CNPJ: {empresa_cnpj})",
+                f"  Local estoque       : {empresa_local}",
+                f"  Vendedor            : {vendedor}",
+                f"  Dispositivo (ID)    : {aparelho}",
+                f"  Total exportado     : {total_prod} produto(s)",
+                f"  Arquivo gerado      : {zip_path}",
+                "-" * 72,
+                "  FILTROS APLICADOS NA CONSULTA",
+                "-" * 72,
+                f"  Produto(s)          : {_fmt(filtros.get('produtos'))}",
+                f"  Grupo(s)            : {_fmt(filtros.get('grupos'))}",
+                f"  Fornecedor(es)      : {_fmt(filtros.get('fornecedor'))}",
+                f"  Fabricante(s)       : {_fmt(filtros.get('fabricante'))}",
+                f"  Localização(ões)    : {_fmt(filtros.get('localizacoes'))}",
+                f"  Tipo produto(s)     : {_fmt(filtros.get('tipos_produto'))}",
+                f"  Local estoque       : {map_local.get(filtros.get('local_estoque',''), filtros.get('local_estoque',''))}",
+                f"  Filtro localização  : {map_loc.get(filtros.get('filtro_localizacao','ambos'), 'Ambos')}",
+                f"  Filtro estoque      : {map_estoque.get(filtros.get('filtro_estoque','todos'), 'Todos')}",
+                f"  Filtro encomenda    : {map_encomenda.get(filtros.get('filtro_encomenda','ambos'), 'Ambos')}",
+                f"  Somente peso variável: {'Sim' if filtros.get('somente_peso_variavel') else 'Não'}",
+                f"  Somente venda       : {'Sim' if filtros.get('somente_venda') else 'Não'}",
+                "=" * 72,
+            ]
+
+            log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            logger.info(f"Log de exportação gravado: {log_path}")
+        except Exception as exc:
+            logger.warning(f"Falha ao gravar log de exportação: {exc}")
 
     def _on_export_error(self, error: Exception):
         """Callback de erro na exportação."""

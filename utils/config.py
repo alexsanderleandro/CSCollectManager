@@ -107,6 +107,18 @@ class AppConfig:
         os.makedirs(log_dir, exist_ok=True)
         return str(log_dir / "app.log")
 
+    @classmethod
+    def get_export_logs_dir(cls) -> str:
+        """Retorna diretório de logs de exportação (cria se necessário). Padrão: C:\\ceosoftware\\Logs"""
+        default_dir = Path(r"C:\ceosoftware") / "Logs"
+        try:
+            os.makedirs(default_dir, exist_ok=True)
+            return str(default_dir)
+        except Exception:
+            fallback = cls.BASE_DIR / "Logs"
+            os.makedirs(fallback, exist_ok=True)
+            return str(fallback)
+
     # ---------------------------
     # Histórico de exportações
     # ---------------------------
@@ -126,6 +138,35 @@ class AppConfig:
             default_dir = cls.BASE_DIR
 
         return str(default_dir / "export_history.json")
+
+    # ---------------------------
+    # Assinatura (chaves)
+    # ---------------------------
+    @classmethod
+    def get_keys_dir(cls) -> str:
+        """
+        Retorna diretório onde as chaves de assinatura ficam (cria se necessário).
+
+        Padrão: C:\\ceosoftware\\keys
+        """
+        default_dir = Path(r"C:\ceosoftware") / "keys"
+        try:
+            os.makedirs(default_dir, exist_ok=True)
+        except Exception:
+            default_dir = cls.BASE_DIR / "keys"
+            os.makedirs(default_dir, exist_ok=True)
+        return str(default_dir)
+
+    @classmethod
+    def get_private_key_path(cls) -> str:
+        """Caminho para a chave privada (PEM)."""
+        # Para HMAC armazenamos uma secret key binária
+        return str(Path(cls.get_keys_dir()) / "hmac_key.bin")
+
+    @classmethod
+    def get_public_key_path(cls) -> str:
+        """Caminho para a chave pública (PEM)."""
+        return str(Path(cls.get_keys_dir()) / "public_key.pem")
 
     @classmethod
     def load_export_history(cls) -> list:
@@ -148,7 +189,8 @@ class AppConfig:
         path = cls.get_export_history_path()
         try:
             history = cls.load_export_history()
-            history.append(entry)
+            # Insere no início para manter o mais recente primeiro
+            history.insert(0, entry)
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(history, f, ensure_ascii=False, indent=2)
         except Exception:

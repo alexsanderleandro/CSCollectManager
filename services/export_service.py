@@ -23,6 +23,7 @@ class EmpresaInfo:
     codempresa: int
     nomeempresa: str
     local: str = ""
+    cnpj: str = ""
 
 
 @dataclass
@@ -30,6 +31,7 @@ class UsuarioInfo:
     """Informações do usuário para exportação."""
     codusuario: int
     nomeusuario: str
+    id_celular: str = ""
 
 
 @dataclass
@@ -197,6 +199,7 @@ class ExportService:
             str(empresa.codempresa),
             empresa.nomeempresa,
             empresa.local,
+            (empresa.cnpj or ""),
             ""   # Final com pipe
         ])
     
@@ -217,6 +220,7 @@ class ExportService:
             "V",
             str(usuario.codusuario).zfill(3),
             usuario.nomeusuario,
+            usuario.id_celular or "",
             ""   # Final com pipe
         ])
     

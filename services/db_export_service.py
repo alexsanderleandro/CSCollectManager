@@ -22,6 +22,8 @@ produtos    — registro P (uma linha por produto)
 """
 
 import os
+import zipfile
+from pathlib import Path
 import uuid
 import hashlib
 import sqlite3
@@ -29,6 +31,8 @@ from typing import Optional, List, Dict, Any, Callable
 from datetime import datetime
 
 from services.export_service import EmpresaInfo, UsuarioInfo, ProdutoExport, ExportService
+from utils.config import AppConfig
+from utils.crypto import ensure_keypair, sign_file
 
 # Versão do layout — incrementar se o esquema mudar
 LAYOUT_VERSION = 1
@@ -95,6 +99,8 @@ class DbExportService:
         produtos: List[Dict[str, Any]],
         output_path: str = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        include_photos: bool = False,
+        photos_output_dir: Optional[str] = None,
     ) -> str:
         """
         Gera o arquivo .db equivalente ao TXT de carga.
@@ -165,14 +171,14 @@ class DbExportService:
 
                 # --- empresa (registro E) ---
                 cur.execute(
-                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local) VALUES (?, ?, ?, ?)",
-                    ("E", str(empresa.codempresa), empresa.nomeempresa, empresa.local),
+                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local, cnpj) VALUES (?, ?, ?, ?, ?)",
+                    ("E", str(empresa.codempresa), empresa.nomeempresa, empresa.local, getattr(empresa, 'cnpj', '') or ''),
                 )
 
                 # --- vendedor (registro V) ---
                 cur.execute(
-                    "INSERT INTO vendedor (tipo, codusuario, nomeusuario) VALUES (?, ?, ?)",
-                    ("V", str(usuario.codusuario).zfill(3), usuario.nomeusuario),
+                    "INSERT INTO vendedor (tipo, codusuario, nomeusuario, id_celular) VALUES (?, ?, ?, ?)",
+                    ("V", str(usuario.codusuario).zfill(3), usuario.nomeusuario, getattr(usuario, 'id_celular', '') or ''),
                 )
 
                 if progress_callback:
@@ -242,6 +248,81 @@ class DbExportService:
         if progress_callback:
             progress_callback(100, "Exportação DB concluída!")
 
+        # Tenta assinar o arquivo DB gerado (arquivo .sig separado)
+        sig_path = None
+        try:
+            priv_path = AppConfig.get_private_key_path()
+            pub_path = AppConfig.get_public_key_path()
+            ensure_keypair(priv_path, pub_path)
+            sig_path = sign_file(priv_path, filepath)
+            # opcional: informar progresso sobre assinatura
+            if progress_callback:
+                progress_callback(95, f"Assinatura gravada: {os.path.basename(sig_path)}")
+        except Exception:
+            # Não interrompe o fluxo de exportação se a assinatura falhar
+            if progress_callback:
+                progress_callback(95, "Falha ao assinar arquivo (assinatura ignorada).")
+
+        # Empacota os arquivos gerados (.db e .sig se existir) em um ZIP
+        try:
+            zip_path = str(Path(filepath).with_suffix('.zip'))
+            with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.write(filepath, arcname=Path(filepath).name)
+                if sig_path and os.path.exists(sig_path):
+                    zf.write(sig_path, arcname=Path(sig_path).name)
+
+                # Se solicitado, inclui também as fotos extraídas (não compactadas junto com o DB,
+                # mas gravadas em pasta separada dentro do diretório de saída). Isso evita alterar
+                # o ZIP da carga (que é consumido pelo coletor) enquanto mantém as fotos disponíveis.
+                if include_photos:
+                    try:
+                        from services.extrair_imagens import exportar_imagens_para_pasta
+                        photos_dest = photos_output_dir or os.path.join(output_path, 'Fotos')
+                        # produtos é a lista de dicts originais; extrai codproduto
+                        cods = [str(p.get('codproduto')) for p in produtos if p.get('codproduto')]
+                        saved = exportar_imagens_para_pasta(cods, photos_dest)
+                        # Se houver fotos salvas, adiciona pasta compactada separadamente
+                        if saved:
+                            # Compacta a pasta de fotos em um ZIP auxiliar dentro do output
+                            photos_zip = os.path.join(output_path, 'Fotos.zip')
+                            with zipfile.ZipFile(photos_zip, 'w', zipfile.ZIP_DEFLATED) as pzf:
+                                for fpath in saved:
+                                    try:
+                                        pzf.write(fpath, arcname=os.path.basename(fpath))
+                                    except Exception:
+                                        continue
+                            # Inclui o Fotos.zip no ZIP final
+                            if os.path.exists(photos_zip):
+                                zf.write(photos_zip, arcname=os.path.basename(photos_zip))
+                                try:
+                                    os.remove(photos_zip)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        # Não interrompe a exportação se falhar a extração de fotos
+                        pass
+
+            # Remove arquivos originais para deixar apenas o zip (comportamento opcional)
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+            if sig_path and os.path.exists(sig_path):
+                try:
+                    os.remove(sig_path)
+                except Exception:
+                    pass
+
+            if progress_callback:
+                progress_callback(100, f"Exportação empacotada: {os.path.basename(zip_path)}")
+
+            return zip_path
+        except Exception:
+            # Se empacotamento falhar, retorna o .db original
+            if progress_callback:
+                progress_callback(100, "Falha ao empacotar arquivos (retornando .db).")
+            return filepath
+
         return filepath
 
     # ------------------------------------------------------------------
@@ -265,13 +346,15 @@ class DbExportService:
                 tipo        TEXT    NOT NULL,
                 codempresa  TEXT    NOT NULL,
                 nomeempresa TEXT    NOT NULL,
-                local       TEXT    NOT NULL
+                local       TEXT    NOT NULL,
+                cnpj        TEXT    NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS vendedor (
                 tipo        TEXT NOT NULL,
                 codusuario  TEXT NOT NULL,
-                nomeusuario TEXT NOT NULL
+                nomeusuario TEXT NOT NULL,
+                id_celular  TEXT    NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS produtos (

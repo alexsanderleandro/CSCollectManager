@@ -277,10 +277,8 @@ class FilterPanel(QWidget):
         
         self.chk_peso_variavel = QCheckBox("Somente peso variável")
         self.chk_produtos_venda = QCheckBox("Somente produtos para venda")
-        self.chk_exportar_fotos = QCheckBox("Exportar fotos")
-        
-        for chk in [self.chk_peso_variavel, self.chk_produtos_venda, 
-                    self.chk_exportar_fotos]:
+
+        for chk in [self.chk_peso_variavel, self.chk_produtos_venda]:
             self._style_checkbox(chk)
             group_opc_layout.addWidget(chk)
         
@@ -442,7 +440,6 @@ class FilterPanel(QWidget):
         # Checkboxes
         self.chk_peso_variavel.stateChanged.connect(self._on_filter_changed)
         self.chk_produtos_venda.stateChanged.connect(self._on_filter_changed)
-        self.chk_exportar_fotos.stateChanged.connect(self._on_filter_changed)
     
     def _on_filter_changed(self, *args):
         """Callback quando filtro muda."""
@@ -467,7 +464,6 @@ class FilterPanel(QWidget):
         # Desmarca checkboxes
         self.chk_peso_variavel.setChecked(False)
         self.chk_produtos_venda.setChecked(False)
-        self.chk_exportar_fotos.setChecked(False)
         
         self.clear_clicked.emit()
     
@@ -515,7 +511,6 @@ class FilterPanel(QWidget):
             # Opções
             "somente_peso_variavel": self.chk_peso_variavel.isChecked(),
             "somente_venda": self.chk_produtos_venda.isChecked(),
-            "exportar_fotos": self.chk_exportar_fotos.isChecked(),
         }
     
     def load_filter_data(

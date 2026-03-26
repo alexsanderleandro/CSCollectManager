@@ -104,13 +104,13 @@ class LazyTableModel(QAbstractTableModel):
     COLUMNS = [
         ("codproduto",        "Código",           80),
         ("descricaoproduto",  "Descrição",        300),
-        ("codeanunidade",     "Cód. EAN/Unidade", 130),
-        ("codgrupo",          "Cód. Grupo",        70),
+        ("codeanunidade",     "Cód. EAN", 130),
+        ("codgrupo",          "Cód. grupo",        110),
         ("nomegrupo",         "Grupo",             150),
-        ("nomeLocalEstoque",  "Local Estoque",     130),
+        ("nomeLocalEstoque",  "Local estoque",     130),
         ("numlote",           "Lote",              110),
-        ("datafabricacao",    "Dt. Fabricação",   100),
-        ("datavalidade",      "Dt. Validade",      100),
+        ("datafabricacao",    "Data fabricação",   120),
+        ("datavalidade",      "Data validade",      100),
     ]
     
     def __init__(self, parent=None):
@@ -209,10 +209,14 @@ class LazyTableModel(QAbstractTableModel):
             return self._get_display_value(product, column_key)
         
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            if column_key in ("codproduto", "codgrupo"):
+            if column_key == "codproduto":
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            elif column_key in ("datafabricacao", "datavalidade"):
-                return Qt.AlignmentFlag.AlignCenter
+            elif column_key in (
+                "codeanunidade", "codgrupo", "nomegrupo",
+                "nomeLocalEstoque", "numlote",
+                "datafabricacao", "datavalidade",
+            ):
+                return Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         
         elif role == Qt.ItemDataRole.ForegroundRole:
@@ -268,6 +272,19 @@ class LazyTableModel(QAbstractTableModel):
             else:
                 return str(section + 1)
         
+        elif role == Qt.ItemDataRole.TextAlignmentRole:
+            if orientation == Qt.Orientation.Horizontal and 0 <= section < self._col_count:
+                key = self._column_keys[section]
+                if key == "codproduto":
+                    return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                elif key in (
+                    "codeanunidade", "codgrupo", "nomegrupo",
+                    "nomeLocalEstoque", "numlote",
+                    "datafabricacao", "datavalidade",
+                ):
+                    return Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+                return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+
         elif role == Qt.ItemDataRole.FontRole:
             if orientation == Qt.Orientation.Horizontal:
                 font = QFont()
