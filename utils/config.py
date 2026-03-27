@@ -196,3 +196,91 @@ class AppConfig:
         except Exception:
             # Não interrompe fluxo de exportação se não conseguir gravar histórico
             pass
+
+    # ---------------------------
+    # Nomes amigáveis de dispositivos
+    # ---------------------------
+    @classmethod
+    def get_device_names_path(cls) -> str:
+        """Retorna o caminho do arquivo nome_device.json (pasta da aplicação)."""
+        return str(cls.BASE_DIR / "nome_device.json")
+
+    @classmethod
+    def load_device_names(cls) -> dict:
+        """
+        Carrega o mapa id_device -> nome_device do arquivo nome_device.json.
+
+        Returns:
+            Dict[str, str] mapeando id_device para nome_device
+        """
+        import json
+        path = cls.get_device_names_path()
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    # Converte lista [{id_device, nome_device}] para dict
+                    return {str(e["id_device"]): e["nome_device"] for e in data if "id_device" in e}
+                if isinstance(data, dict):
+                    return {str(k): v for k, v in data.items()}
+        except Exception:
+            pass
+        return {}
+
+    @classmethod
+    def save_device_name(cls, id_device: str, nome_device: str) -> None:
+        """
+        Salva ou atualiza o nome amigável de um dispositivo.
+
+        O arquivo é gravado como lista de objetos:
+        [{"id_device": "...", "nome_device": "..."}, ...]
+
+        Args:
+            id_device: ID do dispositivo (vem da licença .key)
+            nome_device: Nome amigável (string vazia remove a entrada)
+        """
+        import json
+        names = cls.load_device_names()
+        id_device = str(id_device).strip()
+        nome_device = (nome_device or "").strip()
+        if nome_device:
+            names[id_device] = nome_device
+        else:
+            names.pop(id_device, None)
+        # Grava como lista de objetos para melhor legibilidade
+        lista = [{"id_device": k, "nome_device": v} for k, v in sorted(names.items())]
+        path = cls.get_device_names_path()
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(lista, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    @classmethod
+    def remove_device_name(cls, id_device: str) -> None:
+        """Remove o nome amigável de um dispositivo."""
+        cls.save_device_name(id_device, "")
+
+    @classmethod
+    def purge_device_names(cls, valid_ids) -> None:
+        """
+        Remove do arquivo nome_device.json todas as entradas cujo id_device
+        não esteja em `valid_ids`.
+
+        Deve ser chamado após salvar um nome para manter o JSON limpo,
+        contendo apenas IDs presentes na licença atual.
+
+        Args:
+            valid_ids: Coleção (set, list, etc.) de IDs autorizados
+        """
+        import json
+        valid = {str(i) for i in (valid_ids or [])}
+        names = cls.load_device_names()
+        cleaned = {k: v for k, v in names.items() if k in valid}
+        lista = [{"id_device": k, "nome_device": v} for k, v in sorted(cleaned.items())]
+        path = cls.get_device_names_path()
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(lista, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass

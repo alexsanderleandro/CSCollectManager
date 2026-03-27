@@ -590,6 +590,12 @@ class MainWindowERP(QMainWindow):
         lbl_disp.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
         aparelho_layout.addWidget(lbl_disp)
 
+        # Linha: combo + botão de renomear
+        disp_row = QWidget()
+        disp_row_layout = QHBoxLayout(disp_row)
+        disp_row_layout.setContentsMargins(0, 0, 0, 0)
+        disp_row_layout.setSpacing(8)
+
         self._cmb_dispositivo = QComboBox()
         self._cmb_dispositivo.setMinimumHeight(36)
         self._cmb_dispositivo.addItem("— Selecione o dispositivo —", None)
@@ -618,7 +624,27 @@ class MainWindowERP(QMainWindow):
                 color: #cccccc;
             }
         """)
-        aparelho_layout.addWidget(self._cmb_dispositivo)
+        disp_row_layout.addWidget(self._cmb_dispositivo, 1)
+
+        btn_rename_disp = QPushButton("✏️")
+        btn_rename_disp.setToolTip("Definir nome amigável para este dispositivo")
+        btn_rename_disp.setFixedSize(40, 36)
+        btn_rename_disp.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_rename_disp.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42;
+                color: #cccccc;
+                border: none;
+                border-radius: 4px;
+                font-size: 14pt;
+            }
+            QPushButton:hover { background-color: #505050; }
+            QPushButton:pressed { background-color: #0078d4; }
+        """)
+        btn_rename_disp.clicked.connect(self._on_rename_dispositivo)
+        disp_row_layout.addWidget(btn_rename_disp)
+
+        aparelho_layout.addWidget(disp_row)
 
         self._lbl_dispositivo_info = QLabel(
             "ℹ️  Os dispositivos disponíveis são carregados automaticamente da licença (.key)."
@@ -1003,6 +1029,18 @@ class MainWindowERP(QMainWindow):
         
         logger.info(f"Conexão configurada: {empresa_nome} / {usuario_nome}")
 
+    def _get_licensed_ids(self) -> set:
+        """Retorna o conjunto de IDs de dispositivos presentes na licença atual."""
+        ids: set = set()
+        for disp in self._licenca_payload.get('ids_celular', []):
+            if isinstance(disp, dict):
+                id_cel = (disp.get('idcelular') or disp.get('id') or '').strip()
+            else:
+                id_cel = str(disp).strip()
+            if id_cel:
+                ids.add(id_cel)
+        return ids
+
     def _populate_dispositivos_combo(self):
         """
         Popula o combo de dispositivos a partir do payload da licença.
@@ -1010,6 +1048,9 @@ class MainWindowERP(QMainWindow):
         O campo 'ids_celular' no .key é uma lista de strings: ["ID001", "ID002"]
         Suporta também lista de dicts (uso futuro):
           [{"idcelular": "ID001", "nome": "Coletor 1"}, ...]
+
+        Nomes amigáveis opcionais são carregados de nome_device.json.
+        Apenas IDs presentes na licença são exibidos.
         """
         if not hasattr(self, '_cmb_dispositivo'):
             return
@@ -1017,21 +1058,40 @@ class MainWindowERP(QMainWindow):
         self._cmb_dispositivo.clear()
         self._cmb_dispositivo.addItem("— Selecione o dispositivo —", None)
 
+        # IDs autorizados pela licença atual
+        licensed_ids = self._get_licensed_ids()
+
+        # Nomes amigáveis salvos localmente — filtrados para IDs da licença atual
+        try:
+            from utils.config import AppConfig
+            all_names = AppConfig.load_device_names()
+            device_names = {k: v for k, v in all_names.items() if k in licensed_ids}
+        except Exception:
+            device_names = {}
+
         # Campo real no payload gerado por licenca.py é 'ids_celular'
         dispositivos = self._licenca_payload.get('ids_celular', [])
         count = 0
         for disp in dispositivos:
             if isinstance(disp, dict):
                 id_cel = (disp.get('idcelular') or disp.get('id') or '').strip()
-                nome = (disp.get('nome') or '').strip()
-                label = f"{id_cel}  •  {nome}" if nome else id_cel
+                nome_licenca = (disp.get('nome') or '').strip()
             else:
                 id_cel = str(disp).strip()
+                nome_licenca = ''
+
+            if not id_cel or id_cel not in licensed_ids:
+                continue
+
+            # Nome amigável local tem prioridade sobre o nome da licença
+            nome_amigavel = device_names.get(id_cel, nome_licenca)
+            if nome_amigavel:
+                label = f"{nome_amigavel}  ({id_cel})"
+            else:
                 label = id_cel
 
-            if id_cel:
-                self._cmb_dispositivo.addItem(label, id_cel)
-                count += 1
+            self._cmb_dispositivo.addItem(label, id_cel)
+            count += 1
 
         if hasattr(self, '_lbl_dispositivo_info'):
             if count > 0:
@@ -1047,6 +1107,89 @@ class MainWindowERP(QMainWindow):
 
         self._cmb_dispositivo.setCurrentIndex(0)
         logger.debug(f"Dispositivos da licença carregados: {count}")
+
+    def _on_rename_dispositivo(self):
+        """Abre diálogo para definir/editar o nome amigável do dispositivo selecionado."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QDialogButtonBox
+        from utils.config import AppConfig
+
+        id_cel = self._cmb_dispositivo.currentData() if hasattr(self, '_cmb_dispositivo') else None
+        if not id_cel:
+            QMessageBox.information(
+                self,
+                "Renomear dispositivo",
+                "Selecione um dispositivo na lista antes de definir o nome amigável."
+            )
+            return
+
+        device_names = AppConfig.load_device_names()
+        nome_atual = device_names.get(id_cel, "")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Nome amigável do dispositivo")
+        dlg.setFixedSize(420, 180)
+        dlg.setStyleSheet("""
+            QDialog { background-color: #1e1e1e; color: #cccccc; }
+            QLabel  { color: #cccccc; font-size: 10pt; }
+            QLineEdit {
+                background-color: #252526; color: #cccccc;
+                border: 1px solid #3e3e42; border-radius: 4px;
+                padding: 6px 10px; font-size: 11pt;
+            }
+            QLineEdit:focus { border-color: #0078d4; }
+            QPushButton {
+                background-color: #3e3e42; color: #cccccc;
+                border: none; border-radius: 4px;
+                padding: 6px 20px; font-size: 10pt; min-width: 80px;
+            }
+            QPushButton:hover { background-color: #505050; }
+            QPushButton[primary="true"] { background-color: #0078d4; color: white; font-weight: bold; }
+            QPushButton[primary="true"]:hover { background-color: #1e8ad4; }
+        """)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(12)
+
+        lay.addWidget(QLabel(f"Dispositivo ID: <b>{id_cel}</b>"))
+
+        lbl_nome = QLabel("Nome amigável (deixe vazio para remover):")
+        lay.addWidget(lbl_nome)
+
+        txt_nome = QLineEdit(nome_atual)
+        txt_nome.setPlaceholderText("Ex.: Coletor 1, Coletor Galpão...")
+        txt_nome.setClearButtonEnabled(True)
+        lay.addWidget(txt_nome)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        save_btn = btn_box.button(QDialogButtonBox.StandardButton.Save)
+        save_btn.setText("Salvar")
+        save_btn.setProperty("primary", "true")
+        btn_box.accepted.connect(dlg.accept)
+        btn_box.rejected.connect(dlg.reject)
+        lay.addWidget(btn_box)
+
+        txt_nome.setFocus()
+        txt_nome.selectAll()
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            novo_nome = txt_nome.text().strip()
+            # Salva o nome e remove do JSON qualquer ID que não esteja na licença atual
+            AppConfig.save_device_name(id_cel, novo_nome)
+            AppConfig.purge_device_names(self._get_licensed_ids())
+            # Recarrega o combo para refletir o novo nome
+            self._populate_dispositivos_combo()
+            # Restaura a seleção do mesmo dispositivo
+            for i in range(self._cmb_dispositivo.count()):
+                if self._cmb_dispositivo.itemData(i) == id_cel:
+                    self._cmb_dispositivo.setCurrentIndex(i)
+                    break
+            if novo_nome:
+                self._status_bar.show_message(f"✏️  Dispositivo renomeado para '{novo_nome}'", 3000)
+            else:
+                self._status_bar.show_message("❌  Nome amigável removido", 3000)
     
     def load_filter_data(self):
         """
