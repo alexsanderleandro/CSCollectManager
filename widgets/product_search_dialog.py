@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QHeaderView, QProgressBar, QMessageBox, QAbstractItemView,
     QFrame, QTableWidgetSelectionRange
 )
-from PySide6.QtCore import Qt, QThread, Signal, QItemSelectionModel, QItemSelection
+from PySide6.QtCore import Qt, QThread, Signal, QItemSelectionModel, QItemSelection, QTimer
 from PySide6.QtGui import QFont
 
 from services.product_service import ProductService
@@ -67,6 +67,14 @@ class ProductSearchDialog(QDialog):
         self.page_size = 50
         self.total_products = 0
         self.all_loaded_products = []
+
+        # Timer de debounce: aguarda 350ms após o usuário parar de digitar
+        # para disparar nova busca no servidor (evita uma query por tecla).
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(350)
+        self._search_timer.timeout.connect(self._perform_search)
+
         self._setup_ui()
         self._apply_theme()
         self._perform_search()
@@ -292,6 +300,8 @@ class ProductSearchDialog(QDialog):
         
         # Conecta sinais
         self.txt_search.textChanged.connect(self._on_search_text_changed)
+        # Enter no campo do diálogo dispara busca imediatamente (sem debounce)
+        self.txt_search.returnPressed.connect(self._perform_search)
         self.table.itemSelectionChanged.connect(self._update_count)
         self.table.verticalScrollBar().valueChanged.connect(self._on_scroll)
     
@@ -388,18 +398,10 @@ class ProductSearchDialog(QDialog):
                 self._load_next_page()
     
     def _on_search_text_changed(self):
-        """Refina os resultados conforme o usuário digita."""
-        # Aqui poderíamos fazer um filtro local sem nova query
-        # Por enquanto, apenas filtra a tabela existente
-        search_text = self.txt_search.text().lower()
-        
-        for row in range(self.table.rowCount()):
-            # Procura nas colunas Código e Descrição
-            codigo = self.table.item(row, 0).text().lower() if self.table.item(row, 0) else ""
-            descricao = self.table.item(row, 1).text().lower() if self.table.item(row, 1) else ""
-            
-            match = search_text in codigo or search_text in descricao
-            self.table.setRowHidden(row, not match)
+        """Dispara debounce para busca no servidor ao digitar."""
+        # Reinicia o timer a cada tecla; a busca real dispara após 350 ms
+        # de inatividade via self._search_timer.timeout → _perform_search.
+        self._search_timer.start()
     
     def _update_info_label(self):
         """Atualiza rótulo de informações."""

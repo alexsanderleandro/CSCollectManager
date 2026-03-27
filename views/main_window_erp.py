@@ -1415,6 +1415,25 @@ class MainWindowERP(QMainWindow):
 
         # 2. Obtém produtos selecionados como dicts completos
         produtos = self._product_table.get_selected_products_as_dicts()
+
+        # Se não há seleção na grid principal, tenta usar o filtro de produto
+        # presente no painel de filtros (ProductSearchCombo). O filtro mostrado
+        # na UI é o painel lateral — não confundir com o diálogo de busca.
+        if not produtos:
+            try:
+                filtros = self._filter_panel.get_filters()
+                selecionados = filtros.get("produtos") or []
+                if selecionados:
+                    # Busca os produtos completos via ProductService para manter
+                    # a mesma projeção usada pela UI (estoque, localizacao, etc.)
+                    from services.product_service import ProductService, ProductFilter
+
+                    svc = ProductService()
+                    pf = ProductFilter.from_dict({"produtos": selecionados})
+                    produtos = svc.get_products(pf)
+            except Exception:
+                produtos = []
+
         if not produtos:
             QMessageBox.warning(
                 self,

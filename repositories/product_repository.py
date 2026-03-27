@@ -45,29 +45,29 @@ class ProductRepository:
         """
         filters = filters or {}
         
-        # Monta query base
+        # Monta query base (ajustada para o esquema desta base)
         query = """
-            SELECT 
-                p.codproduto AS codigo,
-                p.referencia,
-                p.descricao,
-                p.unidade,
-                p.codgrupo,
-                g.descricao AS grupo_nome,
-                p.codtipo,
-                t.descricao AS tipo_nome,
-                pe.estoque,
-                pe.customedio AS custo,
-                pe.vendaatual AS venda,
-                pe.localizacao,
-                p.pesovariavel,
-                p.venda AS produto_venda,
-                p.encomenda
+            SELECT
+                p.CodProduto AS codigo,
+                COALESCE(p.CodOriginal, '') AS referencia,
+                p.DescricaoProduto AS descricao,
+                ISNULL(p.Unidade, p.UnidadeSaida) AS unidade,
+                p.CodGrupo AS codgrupo,
+                COALESCE(g.NomeGrupo, '') AS grupo_nome,
+                p.CodTipoProduto AS codtipo,
+                COALESCE(t.NomeTipoProduto, '') AS tipo_nome,
+                (COALESCE(pe.EstoqueLoja, 0) + COALESCE(pe.EstoqueDeposito, 0)) AS estoque,
+                COALESCE(pe.CustoMedio, pe.CustoMedioContabil, 0) AS custo,
+                COALESCE(pe.PrecoUnitario1, 0) AS venda,
+                COALESCE(pe.Localizacao, '') AS localizacao,
+                COALESCE(p.PesoVariavel, 0) AS pesovariavel,
+                COALESCE(pe.CompoeVenda, 0) AS produto_venda,
+                COALESCE(pe.EncomendaSN, 0) AS encomenda
             FROM produtos p
-            LEFT JOIN gruposestoque g ON g.codgrupo = p.codgrupo
-            LEFT JOIN tiposproduto t ON t.codtipo = p.codtipo
-            LEFT JOIN produtosestoque pe ON pe.codproduto = p.codproduto
-            WHERE p.ativo = 1
+            LEFT JOIN GrupoEstoque g ON g.CodGrupo = p.CodGrupo
+            LEFT JOIN TipoProduto t ON t.CodTipoProduto = p.CodTipoProduto
+            LEFT JOIN ProdutosEstoque pe ON pe.CodProduto = p.CodProduto
+            WHERE 1=1
         """
         
         params = {}
@@ -75,81 +75,144 @@ class ProductRepository:
         
         # Filtro por produtos específicos
         if filters.get("produtos"):
-            conditions.append("p.codproduto IN :produtos")
-            params["produtos"] = tuple(filters["produtos"])
+            prods = filters["produtos"]
+            if isinstance(prods, (list, tuple)):
+                if len(prods) == 1:
+                    conditions.append("p.CodProduto = :produto_0")
+                    params["produto_0"] = str(prods[0])
+                else:
+                    ph = []
+                    for i, v in enumerate(prods):
+                        k = f"produto_{i}"
+                        ph.append(":" + k)
+                        params[k] = str(v)
+                    conditions.append("p.CodProduto IN (" + ", ".join(ph) + ")")
+            else:
+                conditions.append("p.CodProduto = :produto_0")
+                params["produto_0"] = str(prods)
         
         # Filtro por grupos
         if filters.get("grupos"):
-            conditions.append("p.codgrupo IN :grupos")
-            params["grupos"] = tuple(filters["grupos"])
+            grupos = filters["grupos"]
+            if isinstance(grupos, (list, tuple)):
+                if len(grupos) == 1:
+                    conditions.append("p.CodGrupo = :grupo_0")
+                    params["grupo_0"] = grupos[0]
+                else:
+                    ph = []
+                    for i, v in enumerate(grupos):
+                        k = f"grupo_{i}"
+                        ph.append(":" + k)
+                        params[k] = v
+                    conditions.append("p.CodGrupo IN (" + ", ".join(ph) + ")")
+            else:
+                conditions.append("p.CodGrupo = :grupo_0")
+                params["grupo_0"] = grupos
         
         # Filtro por fornecedor
         if filters.get("fornecedor"):
-            conditions.append("p.codfornecedor = :fornecedor")
+            conditions.append("p.CodFornecedor = :fornecedor")
             params["fornecedor"] = filters["fornecedor"]
         
         # Filtro por fabricante
         if filters.get("fabricante"):
-            conditions.append("p.codfabricante = :fabricante")
+            conditions.append("p.CodFabricante = :fabricante")
             params["fabricante"] = filters["fabricante"]
         
         # Filtro por localizações
         if filters.get("localizacoes"):
-            conditions.append("pe.codlocal IN :localizacoes")
-            params["localizacoes"] = tuple(filters["localizacoes"])
+            locs = filters["localizacoes"]
+            if isinstance(locs, (list, tuple)):
+                if len(locs) == 1:
+                    conditions.append("pe.CodLocal = :local_0")
+                    params["local_0"] = locs[0]
+                else:
+                    ph = []
+                    for i, v in enumerate(locs):
+                        k = f"local_{i}"
+                        ph.append(":" + k)
+                        params[k] = v
+                    conditions.append("pe.CodLocal IN (" + ", ".join(ph) + ")")
+            else:
+                conditions.append("pe.CodLocal = :local_0")
+                params["local_0"] = locs
         
         # Filtro por tipos de produto
         if filters.get("tipos_produto"):
-            conditions.append("p.codtipo IN :tipos")
-            params["tipos"] = tuple(filters["tipos_produto"])
+            tipos = filters["tipos_produto"]
+            if isinstance(tipos, (list, tuple)):
+                if len(tipos) == 1:
+                    conditions.append("p.CodTipoProduto = :tipo_0")
+                    params["tipo_0"] = tipos[0]
+                else:
+                    ph = []
+                    for i, v in enumerate(tipos):
+                        k = f"tipo_{i}"
+                        ph.append(":" + k)
+                        params[k] = v
+                    conditions.append("p.CodTipoProduto IN (" + ", ".join(ph) + ")")
+            else:
+                conditions.append("p.CodTipoProduto = :tipo_0")
+                params["tipo_0"] = tipos
         
         # Filtro por local de estoque
-        local_estoque = filters.get("local_estoque", "loja")
-        if local_estoque == "loja":
-            conditions.append("pe.loja = 1")
-        elif local_estoque == "deposito":
-            conditions.append("pe.deposito = 1")
+        # Nota: alguns produtos não possuem linha em produtosestoque (LEFT JOIN).
+        # Para não excluir esses produtos, consideramos também os casos onde
+        # não existe registro em produtosestoque (pe.codproduto IS NULL).
+        # Aplica filtro por local de estoque apenas quando não estamos
+        # buscando por uma lista de produtos específicos.
+        if not filters.get("produtos"):
+            local_estoque = filters.get("local_estoque", "loja")
+            if local_estoque == "loja":
+                conditions.append("(COALESCE(pe.EstoqueLoja, 0) > 0 OR pe.CodProduto IS NULL)")
+            elif local_estoque == "deposito":
+                conditions.append("(COALESCE(pe.EstoqueDeposito, 0) > 0 OR pe.CodProduto IS NULL)")
         
         # Filtro por localização preenchida
         filtro_loc = filters.get("filtro_localizacao", "ambos")
         if filtro_loc == "com":
-            conditions.append("pe.localizacao IS NOT NULL AND pe.localizacao <> ''")
+            conditions.append("pe.Localizacao IS NOT NULL AND pe.Localizacao <> ''")
         elif filtro_loc == "sem":
-            conditions.append("(pe.localizacao IS NULL OR pe.localizacao = '')")
+            conditions.append("(pe.Localizacao IS NULL OR pe.Localizacao = '')")
         
         # Filtro por estoque
         filtro_estoque = filters.get("filtro_estoque", "todos")
         if filtro_estoque == "negativo":
-            conditions.append("pe.estoque < 0")
+            conditions.append("(COALESCE(pe.EstoqueLoja,0) + COALESCE(pe.EstoqueDeposito,0)) < 0")
         elif filtro_estoque == "positivo":
-            conditions.append("pe.estoque > 0")
+            conditions.append("(COALESCE(pe.EstoqueLoja,0) + COALESCE(pe.EstoqueDeposito,0)) > 0")
         elif filtro_estoque == "zerado":
-            conditions.append("pe.estoque = 0")
+            conditions.append("(COALESCE(pe.EstoqueLoja,0) + COALESCE(pe.EstoqueDeposito,0)) = 0")
         
         # Filtro por encomenda
         filtro_encomenda = filters.get("filtro_encomenda", "ambos")
         if filtro_encomenda == "somente_encomenda":
-            conditions.append("p.encomenda = 1")
+            conditions.append("COALESCE(pe.EncomendaSN, 0) = 1")
         elif filtro_encomenda == "somente_nao_encomenda":
-            conditions.append("(p.encomenda = 0 OR p.encomenda IS NULL)")
+            conditions.append("(COALESCE(pe.EncomendaSN, 0) = 0)")
         
         # Filtro peso variável
         if filters.get("somente_peso_variavel"):
-            conditions.append("p.pesovariavel = 1")
+            conditions.append("p.PesoVariavel = 1")
         
         # Filtro produtos para venda
         if filters.get("somente_venda"):
-            conditions.append("p.venda = 1")
+            conditions.append("COALESCE(pe.CompoeVenda, 0) = 1")
         
         # Adiciona condições à query
         if conditions:
             query += " AND " + " AND ".join(conditions)
         
         # Ordenação
-        query += " ORDER BY p.descricao"
+        query += " ORDER BY p.DescricaoProduto"
         
         # Executa query
         try:
+            # Debug: mostrar SQL e parâmetros executados (útil para entender filtros)
+            print("[ProductRepository] Executando SQL:")
+            print(query)
+            print("[ProductRepository] Params:", params)
+
             with get_session() as session:
                 result = session.execute(text(query), params)
                 
@@ -188,10 +251,10 @@ class ProductRepository:
             Lista de (codigo, descricao)
         """
         query = """
-            SELECT codgrupo, descricao 
-            FROM gruposestoque 
-            WHERE ativo = 1
-            ORDER BY descricao
+            SELECT codgrupo, NomeGrupo AS descricao
+            FROM GrupoEstoque
+            WHERE ISNULL(Ativo, 1) = 1
+            ORDER BY NomeGrupo
         """
         
         try:
@@ -210,9 +273,9 @@ class ProductRepository:
             Lista de (codigo, descricao)
         """
         query = """
-            SELECT codtipo, descricao 
-            FROM tiposproduto 
-            ORDER BY descricao
+            SELECT codtipoproduto AS codtipo, nometipoproduto AS descricao
+            FROM TipoProduto
+            ORDER BY nometipoproduto
         """
         
         try:
@@ -231,10 +294,10 @@ class ProductRepository:
             Lista de (codigo, descricao)
         """
         query = """
-            SELECT codlocal, descricao 
-            FROM locaisestoque 
-            WHERE ativo = 1
-            ORDER BY descricao
+            SELECT codlocal, NomeLocalEstoque AS descricao
+            FROM LocalEstoque
+            WHERE ISNULL(Ativo, 1) = 1
+            ORDER BY NomeLocalEstoque
         """
         
         try:

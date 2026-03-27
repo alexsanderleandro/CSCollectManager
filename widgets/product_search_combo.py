@@ -33,6 +33,19 @@ class ProductSearchCombo(MultiSelectCombo):
         # Sobrescreve o keyPressEvent do txt_search
         self._setup_search_key_handler()
     
+    def clear_selection(self):
+        """Remove todos os produtos adicionados dinamicamente e limpa o campo."""
+        # Limpa a lista interna de itens
+        self._items.clear()
+        # Limpa o widget de lista (checkboxes dinâmicos)
+        self.list_widget.clear()
+        # Limpa o campo de busca
+        self.txt_search.blockSignals(True)
+        self.txt_search.clear()
+        self.txt_search.blockSignals(False)
+        self._update_count()
+        self.selection_changed.emit([])
+
     def _setup_search_key_handler(self):
         """Configura handler customizado para teclas no campo de busca."""
         # Salva a referência ao keyPressEvent original

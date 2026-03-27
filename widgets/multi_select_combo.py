@@ -283,7 +283,15 @@ class MultiSelectCombo(QWidget):
         self.selection_changed.emit(self.get_selected_values())
     
     def clear_selection(self):
-        """Limpa seleção."""
+        """Limpa seleção e campo de busca."""
+        # Limpa o texto digitado no campo de filtro
+        self.txt_search.blockSignals(True)
+        self.txt_search.clear()
+        self.txt_search.blockSignals(False)
+        # Exibe todos os itens (desfaz filtro local)
+        for i in range(self.list_widget.count()):
+            self.list_widget.setRowHidden(i, False)
+        # Desmarca todos os checkboxes
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             checkbox = self.list_widget.itemWidget(item)
@@ -458,8 +466,15 @@ class SingleSelectCombo(QWidget):
         return self._selected_value
     
     def clear_selection(self):
-        """Limpa seleção."""
+        """Limpa seleção e campo de busca."""
         self._selected_value = None
+        # Limpa o texto digitado no campo de filtro
+        self.txt_search.blockSignals(True)
+        self.txt_search.clear()
+        self.txt_search.blockSignals(False)
+        # Exibe todos os itens (desfaz filtro local)
+        for i in range(self.list_widget.count()):
+            self.list_widget.setRowHidden(i, False)
         self.list_widget.clearSelection()
         self.selection_changed.emit(None)
     
