@@ -312,7 +312,21 @@ class ProductService:
         # ----- Filtros adicionais -----
 
         # Local de estoque + filtro de estoque combinados
-        stock_col = "pe.estoqueloja" if (filters.local_estoque or "loja") == "loja" else "pe.estoquedeposito"
+        local_est = filters.local_estoque or "loja"
+        if local_est == "loja":
+            stock_col = "pe.estoqueloja"
+        elif local_est == "deposito":
+            stock_col = "pe.estoquedeposito"
+        else:
+            # Modo "T" (ENDLOCALESTOQUE): usa soma de ambos os estoques
+            stock_col = "(COALESCE(pe.estoqueloja, 0) + COALESCE(pe.estoquedeposito, 0))"
+            # Filtra por CodLocal correspondente ao ENDLOCALESTOQUE selecionado
+            if not filters.produtos:
+                conditions.append(
+                    "(pe.localizacao IN (SELECT NomeLocalEstoque FROM LocalEstoque "
+                    "WHERE ENDLOCALESTOQUE = :endlocalestoque) "
+                    "OR pe.codproduto IS NULL)"
+                )
         filtro_est = filters.filtro_estoque or "todos"
         if filtro_est == "negativo":
             conditions.append(f"{stock_col} < 0")
@@ -398,7 +412,12 @@ class ProductService:
         if filters.tipos_produto:
             for i, cod in enumerate(filters.tipos_produto):
                 params[f"tipo_{i}"] = str(cod)
-        
+
+        # Parâmetro para ENDLOCALESTOQUE (modo "T")
+        local_est = filters.local_estoque or "loja"
+        if local_est not in ("loja", "deposito", ""):
+            params["endlocalestoque"] = local_est
+
         return params
     
     def _row_to_dict(self, row) -> Dict[str, Any]:
@@ -606,12 +625,14 @@ class ProductService:
             print(f"Erro ao carregar produtos: {e}")
             return []
     
-    def get_all_filter_data(self) -> Dict[str, List[Tuple[int, str]]]:
+    def get_all_filter_data(self) -> Dict[str, Any]:
         """
         Carrega todos os dados para os filtros de uma vez.
-        
+
         Returns:
-            Dicionário com todos os dados de filtros
+            Dicionário com todos os dados de filtros, incluindo a configuração
+            de locais de estoque (locais_estoque_config) e a lista de
+            ENDLOCALESTOQUE (end_locais_estoque) para o modo "T".
         """
         return {
             "grupos": self.get_grupos(),
@@ -619,7 +640,29 @@ class ProductService:
             "localizacoes": self.get_localizacoes(),
             "fornecedores": self.get_fornecedores(),
             "fabricantes": self.get_fabricantes(),
+            "locais_estoque_config": self.get_config_locais_estoque(),
+            "end_locais_estoque": self.get_end_locais_estoque(),
         }
+
+    def get_config_locais_estoque(self) -> str:
+        """
+        Retorna a configuração de locais de estoque.
+
+        Returns:
+            "L"=Loja, "D"=Depósito, "A"=Loja e Depósito, "T"=lista ENDLOCALESTOQUE
+        """
+        from repositories.product_repository import ProductRepository
+        return ProductRepository().get_config_locais_estoque()
+
+    def get_end_locais_estoque(self) -> List[str]:
+        """
+        Retorna a lista de ENDLOCALESTOQUE para o modo "T".
+
+        Returns:
+            Lista de strings ENDLOCALESTOQUE
+        """
+        from repositories.product_repository import ProductRepository
+        return ProductRepository().get_end_locais_estoque()
     
     def search_products(self, search_text: str = "", limit: int = 50, offset: int = 0) -> tuple[List[Dict[str, Any]], int]:
         """

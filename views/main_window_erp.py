@@ -1064,6 +1064,13 @@ class MainWindowERP(QMainWindow):
                 localizacoes=filter_data.get("localizacoes", []),
                 tipos_produto=filter_data.get("tipos_produto", []),
             )
+
+            # Configura o grupo Local Estoque conforme a configuração do banco
+            # L=Loja, D=Depósito, A=Loja+Depósito, T=Lista ENDLOCALESTOQUE
+            modo_local = (filter_data.get("locais_estoque_config") or "A").upper()
+            end_locais = filter_data.get("end_locais_estoque") or []
+            self._filter_panel.configure_local_estoque(modo_local, end_locais)
+
             self._status_bar.show_message("Filtros carregados", 3000)
             logger.info("Dados dos filtros carregados com sucesso")
         except Exception as e:
@@ -1488,7 +1495,11 @@ class MainWindowERP(QMainWindow):
         empresa = EmpresaInfo(
             codempresa=int(self._empresa_info.get("codigo", 1) or 1),
             nomeempresa=self._empresa_info.get("nome", ""),
-            local="Depósito" if self._local_estoque == "deposito" else "Loja",
+            local=(
+                "Depósito" if self._local_estoque == "deposito"
+                else "Loja" if self._local_estoque in ("loja", "")
+                else self._local_estoque  # valor ENDLOCALESTOQUE (modo "T")
+            ),
             cnpj=empresa_cnpj,
         )
         # Busca nome do vendedor diretamente no banco para garantir consistência

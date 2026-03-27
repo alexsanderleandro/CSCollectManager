@@ -181,22 +181,16 @@ class FilterPanel(QWidget):
         
         # ===== GRUPO: LOCAL ESTOQUE =====
         group_local = self._create_group_box("Local Estoque")
-        group_local_layout = QVBoxLayout(group_local)
-        group_local_layout.setSpacing(8)
-        
+        self._group_local_layout = QVBoxLayout(group_local)
+        self._group_local_layout.setSpacing(8)
+
         self.radio_local_group = QButtonGroup(self)
-        
-        self.radio_loja = QRadioButton("Loja")
-        self.radio_loja.setChecked(True)
-        self.radio_deposito = QRadioButton("Depósito")
-        
-        self.radio_local_group.addButton(self.radio_loja, 1)
-        self.radio_local_group.addButton(self.radio_deposito, 2)
-        
-        for radio in [self.radio_loja, self.radio_deposito]:
-            self._style_radio(radio)
-            group_local_layout.addWidget(radio)
-        
+        self._locais_estoque_mode: str = "A"
+
+        # Inicializa com modo padrão "A" (Loja e Depósito) — será reconfigurado
+        # após a conexão ao banco via configure_local_estoque()
+        self._rebuild_local_estoque_options("A", None)
+
         filter_layout.addWidget(group_local)
         
         # ===== GRUPO: LOCALIZAÇÃO =====
@@ -344,6 +338,74 @@ class FilterPanel(QWidget):
         
         main_layout.addWidget(btn_container)
     
+    # ------------------------------------------------------------------
+    # Local Estoque — configuração dinâmica
+    # ------------------------------------------------------------------
+
+    def _rebuild_local_estoque_options(
+        self,
+        modo: str,
+        locais_list: Optional[List[str]]
+    ):
+        """
+        Reconstrói os radio buttons do grupo Local Estoque.
+
+        Args:
+            modo: "L"=Loja, "D"=Depósito, "A"=Loja e Depósito, "T"=lista
+            locais_list: Lista de ENDLOCALESTOQUE (usado apenas no modo "T")
+        """
+        # Remove botões existentes do grupo e do layout
+        for btn in list(self.radio_local_group.buttons()):
+            self.radio_local_group.removeButton(btn)
+            self._group_local_layout.removeWidget(btn)
+            btn.deleteLater()
+
+        self._locais_estoque_mode = modo
+
+        # Define as opções conforme o modo
+        if modo == "L":
+            options: List[tuple] = [("Loja", "loja")]
+        elif modo == "D":
+            options = [("Depósito", "deposito")]
+        elif modo == "T" and locais_list:
+            options = [(val, val) for val in locais_list]
+        else:  # "A" ou default
+            options = [("Loja", "loja"), ("Depósito", "deposito")]
+
+        for i, (label, value) in enumerate(options):
+            radio = QRadioButton(label)
+            radio.setProperty("local_value", value)
+            if i == 0:
+                radio.setChecked(True)
+            self._style_radio(radio)
+            self.radio_local_group.addButton(radio, i + 1)
+            self._group_local_layout.addWidget(radio)
+
+    def configure_local_estoque(
+        self,
+        modo: str,
+        locais_list: Optional[List[str]] = None
+    ):
+        """
+        Configura o grupo Local Estoque conforme configuração do sistema.
+
+        Deve ser chamado após a conexão com o banco, passando os dados
+        retornados por ProductService.get_all_filter_data().
+
+        Args:
+            modo: "L"=somente Loja, "D"=somente Depósito,
+                  "A"=Loja e Depósito, "T"=lista ENDLOCALESTOQUE
+            locais_list: Lista de valores ENDLOCALESTOQUE (modo "T" apenas)
+        """
+        self._rebuild_local_estoque_options(modo, locais_list)
+
+    def _get_local_estoque_selected(self) -> str:
+        """Retorna o valor do radio de local de estoque selecionado."""
+        checked = self.radio_local_group.checkedButton()
+        if checked:
+            return checked.property("local_value") or "loja"
+        return "loja"
+
     def _create_group_box(self, title: str) -> QGroupBox:
         """Cria um GroupBox estilizado."""
         group = QGroupBox(title)
@@ -456,7 +518,9 @@ class FilterPanel(QWidget):
         self.filter_tipo_produto.clear_selection()
         
         # Reset radio buttons para defaults
-        self.radio_loja.setChecked(True)
+        btns = self.radio_local_group.buttons()
+        if btns:
+            btns[0].setChecked(True)
         self.radio_ambas_localizacao.setChecked(True)
         self.radio_estoque_todos.setChecked(True)
         self.radio_ambas_encomenda.setChecked(True)
@@ -484,7 +548,7 @@ class FilterPanel(QWidget):
             "tipos_produto": self.filter_tipo_produto.get_selected_values(),
             
             # Local estoque
-            "local_estoque": "loja" if self.radio_loja.isChecked() else "deposito",
+            "local_estoque": self._get_local_estoque_selected(),
             
             # Localização
             "filtro_localizacao": (

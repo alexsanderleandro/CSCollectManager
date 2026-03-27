@@ -167,6 +167,14 @@ class ProductRepository:
                 conditions.append("(COALESCE(pe.EstoqueLoja, 0) > 0 OR pe.CodProduto IS NULL)")
             elif local_estoque == "deposito":
                 conditions.append("(COALESCE(pe.EstoqueDeposito, 0) > 0 OR pe.CodProduto IS NULL)")
+            elif local_estoque not in ("", None):
+                # Modo "T": filtra por ENDLOCALESTOQUE na tabela LocalEstoque
+                conditions.append(
+                    "(pe.Localizacao IN (SELECT NomeLocalEstoque FROM LocalEstoque "
+                    "WHERE ENDLOCALESTOQUE = :endlocalestoque) "
+                    "OR pe.CodProduto IS NULL)"
+                )
+                params["endlocalestoque"] = local_estoque
         
         # Filtro por localização preenchida
         filtro_loc = filters.get("filtro_localizacao", "ambos")
@@ -286,6 +294,41 @@ class ProductRepository:
             print(f"Erro ao carregar tipos: {e}")
             return []
     
+    def get_config_locais_estoque(self) -> str:
+        """
+        Retorna a configuração de locais de estoque da tabela configuracao.
+
+        Returns:
+            "L"=Loja, "D"=Depósito, "A"=Loja e Depósito, "T"=Lista (LocalEstoque)
+        """
+        query = "SELECT TOP 1 locaisestoque FROM configuracao"
+        try:
+            with get_session() as session:
+                result = session.execute(text(query))
+                row = result.first()
+                return (row[0] or "A").strip().upper() if row and row[0] else "A"
+        except Exception as e:
+            print(f"Erro ao carregar configuração de locais de estoque: {e}")
+            return "A"
+
+    def get_end_locais_estoque(self) -> List[str]:
+        """
+        Retorna a lista de ENDLOCALESTOQUE da tabela LocalEstoque.
+
+        Usada quando locaisestoque = 'T' na configuração.
+
+        Returns:
+            Lista de strings ENDLOCALESTOQUE ordenadas alfabeticamente
+        """
+        query = "SELECT ENDLOCALESTOQUE FROM LocalEstoque ORDER BY ENDLOCALESTOQUE"
+        try:
+            with get_session() as session:
+                result = session.execute(text(query))
+                return [row[0] for row in result if row[0]]
+        except Exception as e:
+            print(f"Erro ao carregar lista de locais de estoque: {e}")
+            return []
+
     def get_localizacoes(self) -> List[Tuple[int, str]]:
         """
         Carrega localizações de estoque.
