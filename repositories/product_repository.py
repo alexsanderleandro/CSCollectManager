@@ -157,9 +157,9 @@ class ProductRepository:
         
         # Filtro por local de estoque
         # Nota: alguns produtos não possuem linha em produtosestoque (LEFT JOIN).
-        # Para não excluir esses produtos, consideramos também os casos onde
+        # Para não excluir esses produtos, considera também os casos onde
         # não existe registro em produtosestoque (pe.codproduto IS NULL).
-        # Aplica filtro por local de estoque apenas quando não estamos
+        # Aplica filtro por local de estoque apenas quando está
         # buscando por uma lista de produtos específicos.
         if not filters.get("produtos"):
             local_estoque = filters.get("local_estoque", "loja")

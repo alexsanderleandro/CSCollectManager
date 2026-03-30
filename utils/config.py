@@ -197,6 +197,27 @@ class AppConfig:
             # Não interrompe fluxo de exportação se não conseguir gravar histórico
             pass
 
+    @classmethod
+    def clear_export_history(cls) -> None:
+        """
+        Limpa o histórico de exportações persistido no JSON.
+
+        Escreve uma lista vazia no arquivo `export_history.json`. Em caso de falha
+        ao escrever, tenta remover o arquivo.
+        """
+        import json
+        import os
+        path = cls.get_export_history_path()
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+        except Exception:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
+
     # ---------------------------
     # Nomes amigáveis de dispositivos
     # ---------------------------

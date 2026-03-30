@@ -676,7 +676,7 @@ class MainWindowERP(QMainWindow):
 
         chk_style = "color: #cccccc; font-size: 11pt;"
 
-        self._chk_export_photos = QCheckBox("Incluir fotos dos produtos no ZIP")
+        self._chk_export_photos = QCheckBox("Incluir fotos dos produtos")
         self._chk_export_photos.setStyleSheet(chk_style)
         options_layout.addWidget(self._chk_export_photos, 0, 0)
 
@@ -791,6 +791,12 @@ class MainWindowERP(QMainWindow):
         btn_open.clicked.connect(self._on_open_history_item)
         controls_layout.addWidget(btn_open)
 
+        btn_clear = QPushButton("🗑️ Limpar Histórico")
+        btn_clear.setMinimumHeight(36)
+        btn_clear.setToolTip("Apaga todo o histórico de exportações (arquivo JSON)")
+        btn_clear.clicked.connect(self._clear_export_history)
+        controls_layout.addWidget(btn_clear)
+
         controls_layout.addStretch()
         content_layout.addWidget(controls)
 
@@ -903,6 +909,30 @@ class MainWindowERP(QMainWindow):
             QMessageBox.information(self, "Abrir Pasta", "Selecione um item do histórico primeiro.")
             return
         self._on_history_item_double_clicked(item)
+
+    def _clear_export_history(self):
+        """Limpa o arquivo de histórico após confirmação do usuário."""
+        from utils.config import AppConfig
+
+        resp = QMessageBox.question(
+            self,
+            "Limpar Histórico",
+            "Deseja apagar todo o histórico de exportações? Esta ação não pode ser desfeita.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            AppConfig.clear_export_history()
+            self._refresh_history()
+            # Feedback na status bar
+            try:
+                self._status_bar.show_message("Histórico de exportações limpo", 3000)
+            except Exception:
+                pass
+        except Exception:
+            QMessageBox.information(self, "Limpar Histórico", "Não foi possível limpar o histórico.")
     
     def _setup_menus(self):
         """Configura menus."""
