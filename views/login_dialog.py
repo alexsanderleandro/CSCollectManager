@@ -963,7 +963,7 @@ class LoginDialog(QDialog):
                 key_files_unique.append(k)
         key_files = key_files_unique
         if not key_files:
-            QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado (pesquisado em pasta do app, pasta atual e C:\\ceosoftware). O sistema não poderá ser aberto.")
+            QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado, o sistema não poderá ser aberto.\nEntre em contato com o suporte para obter uma licença válida.")
             return
 
         # Lê e decodifica o token da licença (formato: base64url(json).base64url(hmac))
