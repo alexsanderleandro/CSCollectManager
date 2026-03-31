@@ -134,7 +134,7 @@ class AppLogger:
         console_handler.setLevel(logging.INFO)
         
         # Usa formatter colorido se terminal suporta
-        if sys.stdout.isatty():
+        if sys.stdout and sys.stdout.isatty():
             console_handler.setFormatter(ColoredFormatter(
                 LoggerConfig.LOG_FORMAT,
                 LoggerConfig.DATE_FORMAT
