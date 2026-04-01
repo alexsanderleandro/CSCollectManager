@@ -479,9 +479,9 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "Sobre CSCollectManager",
             "<h3>CSCollectManager</h3>"
-            "<p>Sistema de Exportação de Carga para Coletores de Dados</p>"
+            "<p>Sistema de exportação de carga para CSCollect</p>"
             "<p>Versão 1.0.0</p>"
-            "<p>© 2024 CEO Software</p>"
+            "<p>© 2026 CEOsoftware</p>"
         )
     
     @Slot(list)

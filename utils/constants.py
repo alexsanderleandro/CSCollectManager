@@ -18,10 +18,10 @@ class AppInfo:
     NAME: str = "CSCollectManager"
     VERSION: str = VERSION
     BUILD: str = BUILD
-    AUTHOR: str = "CEO Software"
-    COMPANY: str = "CEO Software"
-    DESCRIPTION: str = "Sistema de Gestão de Coletas para Coletores de Dados"
-    COPYRIGHT: str = "© 2026 CEO Software. Todos os direitos reservados."
+    AUTHOR: str = "CEOsoftware"
+    COMPANY: str = "CEOsoftware"
+    DESCRIPTION: str = "Sistema de gestão de cargas para o aplicativo CSCollect"
+    COPYRIGHT: str = "© 2026 CEOOsoftware. Todos os direitos reservados."
     WEBSITE: str = "https://www.ceosoftware.com.br"
     EMAIL: str = "suporte@ceosoftware.com.br"
 

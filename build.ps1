@@ -60,6 +60,7 @@ $revMatch = [regex]::Match($versionStr, 'rev\.?\s*(?<r>\d+)', 'IgnoreCase')
 if ($revMatch.Success) { $parts[3] = [int]$revMatch.Groups['r'].Value }
 
 # Cria o conteúdo de version.txt com os valores extraídos
+$copyright = [char]0x00A9
 $versionTxt = @"
 VSVersionInfo(
     ffi=FixedFileInfo(
@@ -87,7 +88,7 @@ VSVersionInfo(
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('LegalTrademarks', ''),
                         StringStruct('ProductVersion', '$versionStr'),
-                        StringStruct('LegalCopyright', '© 2026 CEOsoftware')
+                        StringStruct('LegalCopyright', 'Copyright $copyright 2026 CEOsoftware')
                     ]
                 )
             ]

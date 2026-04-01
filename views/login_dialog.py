@@ -42,8 +42,8 @@ logger = get_logger(__name__)
 # Caminho padrão do arquivo de conexões
 CSLOGIN_PATH = r"C:\CEOSoftware\CSLogin.xml"
 
-# Caminho do logo
-LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
+# Caminho do logo (usa o ícone da aplicação)
+LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.ico")
 
 
 class ConnectionWorker(QThread):
@@ -377,32 +377,8 @@ class LoginDialog(QDialog):
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # Logo
-        logo_label = QLabel()
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Carrega logo da pasta assets
-        if os.path.exists(LOGO_PATH):
-            pixmap = QPixmap(LOGO_PATH)
-            if not pixmap.isNull():
-                # Redimensiona mantendo proporção (max 128x128)
-                scaled = pixmap.scaled(
-                    128, 128,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                logo_label.setPixmap(scaled)
-            else:
-                # Fallback para emoji se logo não carregar
-                logo_label.setText("📦")
-                logo_label.setFont(QFont("Segoe UI", 40))
-        else:
-            # Fallback para emoji se arquivo não existir
-            logo_label.setText("📦")
-            logo_label.setFont(QFont("Segoe UI", 40))
-            logger.warning(f"Logo não encontrado: {LOGO_PATH}")
-        
-        layout.addWidget(logo_label)
+        # Logo removido (não exibido)
+        layout.addSpacing(8)
         
         # Título
         title = QLabel(APP_INFO.NAME)
@@ -412,7 +388,7 @@ class LoginDialog(QDialog):
         layout.addWidget(title)
         
         # Subtítulo
-        subtitle = QLabel("Sistema de Exportação para Coletores")
+        subtitle = QLabel("Sistema de exportação de carga para o aplicativo CSCollect")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
         layout.addWidget(subtitle)
@@ -427,7 +403,7 @@ class LoginDialog(QDialog):
         layout.setContentsMargins(0, 16, 0, 0)
         
         # Grupo de conexão
-        group = QGroupBox("🔌 Selecione a Base de Dados")
+        group = QGroupBox("🔌 Selecione a base de dados")
         group_layout = QVBoxLayout(group)
         group_layout.setSpacing(12)
         group_layout.setContentsMargins(16, 20, 16, 16)
@@ -438,7 +414,7 @@ class LoginDialog(QDialog):
         group_layout.addWidget(xml_info)
         
         # Combo de conexões
-        lbl_connection = QLabel("Base de Dados:")
+        lbl_connection = QLabel("Base de dados:")
         group_layout.addWidget(lbl_connection)
         
         self._cmb_connection = QComboBox()
@@ -472,7 +448,7 @@ class LoginDialog(QDialog):
         # Botões
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        
+
         self._btn_connect = QPushButton("🔗  Conectar")
         self._btn_connect.setMinimumSize(160, 44)
         self._btn_connect.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -496,6 +472,7 @@ class LoginDialog(QDialog):
             }
         """)
         btn_layout.addWidget(self._btn_connect)
+        btn_layout.addStretch()
         layout.addLayout(btn_layout)
         
         return widget

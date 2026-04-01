@@ -52,19 +52,8 @@ class LoginView(BaseView):
         main_layout.setContentsMargins(30, 30, 30, 30)
         main_layout.setSpacing(20)
         
-        # Logo
-        logo_layout = QHBoxLayout()
-        logo_label = QLabel()
-        logo_path = AppConfig.get_asset_path("logo.png")
-        pixmap = QPixmap(logo_path)
-        if not pixmap.isNull():
-            logo_label.setPixmap(
-                pixmap.scaled(120, 120, Qt.AspectRatioMode.KeepAspectRatio, 
-                             Qt.TransformationMode.SmoothTransformation)
-            )
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo_layout.addWidget(logo_label)
-        main_layout.addLayout(logo_layout)
+        # Logo removido (não exibido)
+        main_layout.addSpacing(8)
         
         # Título
         title_label = QLabel("CSCollectManager")
