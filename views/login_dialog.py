@@ -31,6 +31,7 @@ from utils.logger import get_logger
 from utils.config import AppConfig
 from pathlib import Path
 import re
+import cscollectmanager_verify
 
 # Importações para persistência e autenticação
 import login as login_module
@@ -763,6 +764,112 @@ class LoginDialog(QDialog):
         except Exception as e:
             logger.error(f"Erro ao carregar conexões: {e}")
             self._lbl_connection_status.setText(f"❌ Erro ao ler arquivo: {str(e)}")
+    
+    def _validate_license_for_connection(self, connection: dict) -> bool:
+        """
+        Lê e valida o arquivo .key contra a conexão fornecida.
+        Valida presença de `sql_servidor` e `sql_banco` (<=30 chars), verifica assinatura HMAC
+        e se os campos batem com a conexão selecionada. Armazena payload em
+        `self._licenca_payload` quando válido.
+        """
+        try:
+            # Procura arquivos .key em locais comuns: pasta do app, cwd e C:\ceosoftware
+            search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
+            key_files = []
+            for p in search_paths:
+                try:
+                    if p.exists():
+                        key_files.extend(list(p.glob("*.key")))
+                except Exception:
+                    continue
+            # Remover duplicatas mantendo ordem
+            seen = set()
+            key_files_unique = []
+            for k in key_files:
+                kp = str(k.resolve())
+                if kp not in seen:
+                    seen.add(kp)
+                    key_files_unique.append(k)
+            key_files = key_files_unique
+            if not key_files:
+                QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado, o sistema não poderá ser aberto.\nEntre em contato com o suporte para obter uma licença válida.")
+                return False
+
+            # Tenta verificar cada arquivo .key usando a biblioteca utilitária,
+            # que espera uma MASTER_KEY (via argumento ou env MASTER_KEY).
+            payload_dict = None
+            licenca_erro = None
+            # Obtém MASTER_KEY centralmente (env -> .env -> AppConfig file)
+            try:
+                from utils.master_key import load_master_key
+                master_key, mk_source = load_master_key()
+            except Exception:
+                master_key = None
+
+            for cand in key_files:
+                try:
+                    # Se master_key for None, a função utilitária tentará usar env internamente
+                    if master_key is not None:
+                        payload = cscollectmanager_verify.load_and_verify_file(str(cand), master_key)
+                    else:
+                        payload = cscollectmanager_verify.load_and_verify_file(str(cand))
+                    payload_dict = payload
+                    break
+                except Exception as exc:
+                    licenca_erro = str(exc)
+                    continue
+
+            if payload_dict is None:
+                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}")
+                return False
+
+            # Validação de campos obrigatórios: sql_servidor / sql_banco
+            sql_servidor = (payload_dict.get('sql_servidor') or '').strip()
+            sql_banco = (payload_dict.get('sql_banco') or '').strip()
+            if not sql_servidor or not sql_banco:
+                QMessageBox.critical(self, "Campo de licença ausente", "Arquivo de licença inválido: campo 'sql_servidor' ou 'sql_banco' ausente.")
+                return False
+
+            if len(sql_servidor) > 30 or len(sql_banco) > 30:
+                QMessageBox.critical(self, "Campo inválido", "Arquivo de licença inválido: 'sql_servidor' ou 'sql_banco' excede 30 caracteres.")
+                return False
+
+            # A assinatura já foi verificada por cscollectmanager_verify.load_and_verify_file.
+            # Verificar validade da licença (data)
+            validade = payload_dict.get('validade') or ''
+            try:
+                if validade:
+                    if 'T' in validade or validade.endswith('Z'):
+                        from datetime import datetime, timezone
+                        v = validade.replace('Z', '+00:00')
+                        val_dt = datetime.fromisoformat(v)
+                        if val_dt.tzinfo is None:
+                            val_dt = val_dt.replace(tzinfo=timezone.utc)
+                        if val_dt < datetime.now(timezone.utc):
+                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                            return False
+                    else:
+                        from datetime import date
+                        if date.fromisoformat(validade) < date.today():
+                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                            return False
+            except Exception:
+                pass
+
+            # Verifica se os campos sql_servidor/sql_banco batem com a conexão selecionada
+            conn_srv = (connection.get('server') or '').strip()
+            conn_db = (connection.get('database') or '').strip()
+            if (conn_srv.lower() != sql_servidor.lower()) or (conn_db.lower() != sql_banco.lower()):
+                QMessageBox.critical(self, "Servidor/Banco inválidos", "O servidor ou banco informado na licença não corresponde à conexão selecionada.")
+                return False
+
+            # Tudo OK: armazena payload
+            self._licenca_payload = payload_dict
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao validar arquivo .key: {e}")
+            QMessageBox.critical(self, "Erro de licença", "Erro ao validar arquivo .key. O sistema não pode prosseguir.")
+            return False
             self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
     
     def _on_connection_changed(self, index: int):
@@ -820,7 +927,16 @@ class LoginDialog(QDialog):
             self._lbl_connection_status.setStyleSheet("color: #4caf50; font-size: 9pt;")
             
             self._empresas = empresas
-            
+            # Ao conectar com sucesso, validaremos o arquivo .key contra a conexão
+            try:
+                valid = self._validate_license_for_connection(self._selected_connection)
+            except Exception:
+                valid = False
+
+            if not valid:
+                # Mensagem já exibida em _validate_license_for_connection
+                return
+
             if empresas:
                 # Avança para seleção de empresa
                 QTimer.singleShot(500, self._show_empresa_step)
@@ -913,101 +1029,32 @@ class LoginDialog(QDialog):
             return
         
         self._selected_empresa = empresa
-
-        # Validação do arquivo .key na pasta do aplicativo
-        cnpj_raw = (empresa.get('cnpj') or "").strip()
-        cnpj_clean = re.sub(r"\D", "", cnpj_raw)
-        if not cnpj_clean:
-            QMessageBox.critical(self, "Empresa sem CNPJ", "A empresa selecionada não possui CNPJ cadastrado. Não é possível validar autorização.")
-            return
-
-        # Procura arquivos .key em locais comuns: pasta do app, cwd e C:\ceosoftware
-        search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
-        key_files = []
-        for p in search_paths:
-            try:
-                if p.exists():
-                    key_files.extend(list(p.glob("*.key")))
-            except Exception:
-                continue
-        # Remover duplicatas mantendo ordem
-        seen = set()
-        key_files_unique = []
-        for k in key_files:
-            kp = str(k.resolve())
-            if kp not in seen:
-                seen.add(kp)
-                key_files_unique.append(k)
-        key_files = key_files_unique
-        if not key_files:
-            QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado, o sistema não poderá ser aberto.\nEntre em contato com o suporte para obter uma licença válida.")
-            return
-
-        # Lê e decodifica o token da licença (formato: base64url(json).base64url(hmac))
+        # Validação de CNPJ usando payload já validado para a conexão
         try:
-            import base64
-            import json as _json
-            from datetime import date as _date, datetime as _datetime
-
-            def _b64u_decode(s: str) -> bytes:
-                """Decodifica base64 URL-safe sem padding."""
-                padding = '=' * (-len(s) % 4)
-                return base64.urlsafe_b64decode((s + padding).encode('ascii'))
-
-            payload_dict = None
-            licenca_erro = None
-            for cand in key_files:
-                try:
-                    token = cand.read_text(encoding='utf-8').strip()
-                    parts = token.split('.')
-                    if len(parts) != 2:
-                        licenca_erro = f"Formato de token inválido em: {cand.name}"
-                        continue
-                    dados = _b64u_decode(parts[0])
-                    payload_dict = _json.loads(dados.decode('utf-8'))
-                    break  # Token decodificado com sucesso
-                except Exception as exc:
-                    licenca_erro = str(exc)
-                    continue
-
-            if payload_dict is None:
-                QMessageBox.critical(self, "Erro de licença",
-                    f"Não foi possível ler o arquivo de licença.\n{licenca_erro or ''}"
-                )
+            cnpj_raw = (empresa.get('cnpj') or "").strip()
+            cnpj_clean = re.sub(r"\D", "", cnpj_raw)
+            if not cnpj_clean:
+                QMessageBox.critical(self, "Empresa sem CNPJ", "A empresa selecionada não possui CNPJ cadastrado. Não é possível validar autorização.")
                 return
 
-            # Verificar validade da licença
-            validade = payload_dict.get('validade') or ''
-            if validade:
-                try:
-                    if 'T' in validade or validade.endswith('Z'):
-                        from datetime import timezone as _tz
-                        v = validade.replace('Z', '+00:00')
-                        val_dt = _datetime.fromisoformat(v)
-                        if val_dt.tzinfo is None:
-                            val_dt = val_dt.replace(tzinfo=_tz.utc)
-                        if val_dt < _datetime.now(_tz.utc):
-                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
-                            return
-                    else:
-                        if _date.fromisoformat(validade) < _date.today():
-                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
-                            return
-                except Exception:
-                    pass  # formato desconhecido — ignora validação de data
+            # Se por algum motivo o payload não foi carregado ao conectar, tenta carregar agora
+            if not self._licenca_payload:
+                ok = self._validate_license_for_connection(self._selected_connection)
+                if not ok:
+                    return
 
-            # Verifica CNPJ: o array 'cnpjs' já contém apenas dígitos
-            cnpjs_licenca = {re.sub(r'\D', '', c) for c in payload_dict.get('cnpjs', [])}
+            payload_dict = self._licenca_payload or {}
+            raw_cnpjs = payload_dict.get('cnpjs', []) or []
+            cnpjs_licenca = {re.sub(r"\D", "", str(c)) for c in raw_cnpjs}
+            cnpjs_licenca = {c for c in cnpjs_licenca if len(c) == 14}
+
+            if not cnpjs_licenca:
+                QMessageBox.critical(self, "CNPJ não autorizado", "Nenhum CNPJ válido encontrado na licença. Contate o administrador do sistema.")
+                return
+
             if cnpj_clean not in cnpjs_licenca:
-                QMessageBox.warning(self, "CNPJ não liberado",
-                    "O CNPJ da empresa selecionada não está liberado nesta licença.\n"
-                    "Contate o administrador do sistema."
-                )
+                QMessageBox.warning(self, "CNPJ não liberado", "O CNPJ da empresa selecionada não está liberado nesta licença.\nContate o administrador do sistema.")
                 return
-
-            # Armazena payload completo para uso na tela de exportação (dispositivos etc.)
-            self._licenca_payload = payload_dict
-
         except Exception as e:
             logger.error(f"Erro ao validar arquivo .key: {e}")
             QMessageBox.critical(self, "Erro de licença", "Erro ao validar arquivo .key. O sistema não pode prosseguir.")
