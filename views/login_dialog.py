@@ -32,6 +32,7 @@ from utils.config import AppConfig
 from pathlib import Path
 import re
 import cscollectmanager_verify
+import sys
 
 # Importações para persistência e autenticação
 import login as login_module
@@ -227,6 +228,11 @@ class LoginDialog(QDialog):
         self._setup_ui()
         self._connect_signals()
         self._load_connections()
+        # Carrega/verifica o arquivo de licença imediatamente ao abrir a tela
+        try:
+            self._load_license_on_start()
+        except Exception:
+            pass
     
     def _setup_ui(self):
         """Configura interface."""
@@ -413,7 +419,7 @@ class LoginDialog(QDialog):
         xml_info = QLabel(f"📄 Arquivo: {CSLOGIN_PATH}")
         xml_info.setStyleSheet("color: #666666; font-size: 9pt;")
         group_layout.addWidget(xml_info)
-        
+
         # Combo de conexões
         lbl_connection = QLabel("Base de dados:")
         group_layout.addWidget(lbl_connection)
@@ -435,10 +441,17 @@ class LoginDialog(QDialog):
         self._lbl_connection_details.setWordWrap(True)
         self._lbl_connection_details.hide()
         group_layout.addWidget(self._lbl_connection_details)
+
+        # Label para exibir o caption da licença. O caminho completo aparecerá em tooltip ao passar o mouse.
+        self._lbl_license_file = QLabel("Licença")
+        self._lbl_license_file.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+        self._lbl_license_file.setToolTip("")
+        self._lbl_license_file.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        group_layout.addWidget(self._lbl_license_file)
         
         # Status de conexão
         self._lbl_connection_status = QLabel("")
-        self._lbl_connection_status.setStyleSheet("font-size: 9pt;")
+        self._lbl_connection_status.setStyleSheet("font-size: 8pt;")
         self._lbl_connection_status.setWordWrap(True)
         group_layout.addWidget(self._lbl_connection_status)
         
@@ -773,8 +786,23 @@ class LoginDialog(QDialog):
         `self._licenca_payload` quando válido.
         """
         try:
+            # Esconde label de licença até encontrarmos um arquivo válido
+            try:
+                self._lbl_license_file.hide()
+            except Exception:
+                pass
             # Procura arquivos .key em locais comuns: pasta do app, cwd e C:\ceosoftware
+            # Quando empacotado, inclui o _MEIPASS e a pasta do executável
             search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
+            try:
+                if getattr(sys, 'frozen', False):
+                    meipass = getattr(sys, '_MEIPASS', None)
+                    if meipass:
+                        search_paths.insert(0, Path(meipass))
+                    exe_dir = Path(sys.executable).parent
+                    search_paths.insert(0, exe_dir)
+            except Exception:
+                pass
             key_files = []
             for p in search_paths:
                 try:
@@ -800,6 +828,7 @@ class LoginDialog(QDialog):
             payload_dict = None
             licenca_erro = None
             # Obtém MASTER_KEY centralmente (env -> .env -> AppConfig file)
+            mk_source = None
             try:
                 from utils.master_key import load_master_key
                 master_key, mk_source = load_master_key()
@@ -814,13 +843,29 @@ class LoginDialog(QDialog):
                     else:
                         payload = cscollectmanager_verify.load_and_verify_file(str(cand))
                     payload_dict = payload
+                    # Mostrar caminho do arquivo de licença verificado na UI (tela de conexão)
+                    try:
+                        # atualiza tooltip com caminho completo; inclui origem da MASTER_KEY
+                        try:
+                            tip = str(cand)
+                            if mk_source:
+                                tip += f"\nMASTER_KEY source: {mk_source}"
+                            self._lbl_license_file.setToolTip(tip)
+                            self._lbl_license_file.setText("Licença")
+                            self._lbl_license_file.show()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
                     break
                 except Exception as exc:
                     licenca_erro = str(exc)
                     continue
 
             if payload_dict is None:
-                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}")
+                # Exibe origem da MASTER_KEY (se conhecida) para ajudar diagnóstico
+                extra = f"\nMASTER_KEY source: {mk_source}" if mk_source else ""
+                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}{extra}")
                 return False
 
             # Validação de campos obrigatórios: sql_servidor / sql_banco
@@ -860,7 +905,7 @@ class LoginDialog(QDialog):
             conn_srv = (connection.get('server') or '').strip()
             conn_db = (connection.get('database') or '').strip()
             if (conn_srv.lower() != sql_servidor.lower()) or (conn_db.lower() != sql_banco.lower()):
-                QMessageBox.critical(self, "Servidor/Banco inválidos", "O servidor ou banco informado na licença não corresponde à conexão selecionada.")
+                QMessageBox.critical(self, "Servidor ou banco inválidos", "O servidor ou banco informado na licença não corresponde à conexão selecionada.")
                 return False
 
             # Tudo OK: armazena payload
@@ -871,6 +916,109 @@ class LoginDialog(QDialog):
             QMessageBox.critical(self, "Erro de licença", "Erro ao validar arquivo .key. O sistema não pode prosseguir.")
             return False
             self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
+    
+    def _load_license_on_start(self) -> bool:
+        """Carrega e verifica um arquivo .key imediatamente após abrir a tela de login.
+
+        Esta rotina apenas verifica assinatura e validade, e armazena o payload em
+        `self._licenca_payload`. A correspondência com a conexão selecionada será
+        feita quando o usuário tentar conectar (via `_validate_license_for_connection`).
+        """
+        try:
+            # Procura arquivos .key em locais comuns (AppConfig, cwd, C:\ceosoftware)
+            # e, quando empacotado, também em sys._MEIPASS e na pasta do executável
+            search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
+            try:
+                if getattr(sys, 'frozen', False):
+                    meipass = getattr(sys, '_MEIPASS', None)
+                    if meipass:
+                        search_paths.insert(0, Path(meipass))
+                    exe_dir = Path(sys.executable).parent
+                    search_paths.insert(0, exe_dir)
+            except Exception:
+                pass
+            key_files = []
+            for p in search_paths:
+                try:
+                    if p.exists():
+                        key_files.extend(list(p.glob("*.key")))
+                except Exception:
+                    continue
+
+            # Remover duplicatas mantendo ordem
+            seen = set()
+            key_files_unique = []
+            for k in key_files:
+                kp = str(k.resolve())
+                if kp not in seen:
+                    seen.add(kp)
+                    key_files_unique.append(k)
+            key_files = key_files_unique
+
+            if not key_files:
+                QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado. O sistema não poderá ser aberto sem uma licença válida.")
+                return False
+
+            # Obtém MASTER_KEY (registra a origem em mk_source para debug)
+            mk_source = None
+            try:
+                from utils.master_key import load_master_key
+                master_key, mk_source = load_master_key()
+            except Exception:
+                master_key = None
+
+            payload_dict = None
+            last_error = None
+            for cand in key_files:
+                try:
+                    if master_key is not None:
+                        payload = cscollectmanager_verify.load_and_verify_file(str(cand), master_key)
+                    else:
+                        payload = cscollectmanager_verify.load_and_verify_file(str(cand))
+                    payload_dict = payload
+                    try:
+                        self._lbl_license_file.setToolTip(str(cand))
+                        self._lbl_license_file.setText("Licença")
+                        self._lbl_license_file.show()
+                    except Exception:
+                        pass
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    continue
+
+            if payload_dict is None:
+                extra = f"\nMASTER_KEY source: {mk_source}" if mk_source else ""
+                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença. {last_error or ''}{extra}")
+                return False
+
+            # Verifica validade
+            validade = payload_dict.get('validade') or ''
+            try:
+                if validade:
+                    if 'T' in validade or validade.endswith('Z'):
+                        from datetime import datetime, timezone
+                        v = validade.replace('Z', '+00:00')
+                        val_dt = datetime.fromisoformat(v)
+                        if val_dt.tzinfo is None:
+                            val_dt = val_dt.replace(tzinfo=timezone.utc)
+                        if val_dt < datetime.now(timezone.utc):
+                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                            return False
+                    else:
+                        from datetime import date
+                        if date.fromisoformat(validade) < date.today():
+                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                            return False
+            except Exception:
+                pass
+
+            self._licenca_payload = payload_dict
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao carregar licença na inicialização: {e}")
+            QMessageBox.critical(self, "Erro de licença", "Erro ao carregar arquivo de licença na inicialização.")
+            return False
     
     def _on_connection_changed(self, index: int):
         """Quando conexão é alterada."""

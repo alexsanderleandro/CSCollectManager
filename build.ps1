@@ -38,6 +38,16 @@ $utilsDest = "utils"
 $addDataAssets = "--add-data=${assetsSrc}:${assetsDest}"
 $addDataApp = "--add-data=${appSrc}:${appDest}"
 $addDataUtils = "--add-data=${utilsSrc}:${utilsDest}"
+# Incluir .env e keys no bundle para que EXE extraído em _MEIPASS possa ler MASTER_KEY e hmac_key.bin
+$addDataEnv = "--add-data=.env:."
+# somente adicionar keys se a pasta existir (evita erro quando não há keys no projeto)
+$addDataKeys = ""
+if (Test-Path "keys") {
+    $addDataKeys = "--add-data=keys:keys"
+    Write-Host "Incluindo pasta 'keys' no bundle"
+} else {
+    Write-Host "Pasta 'keys' não encontrada — não será adicionada ao bundle"
+}
 
 # Executa PyInstaller (usa ícone apenas se existir)
 Write-Host "Executando PyInstaller..."
@@ -103,10 +113,10 @@ Write-Host "Arquivo $verFile atualizado com versão: $versionStr"
 
 if (Test-Path $icon) {
     Write-Host "Ícone encontrado: $icon"
-    & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed --icon $icon $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils --version-file $verFile $entry
+    & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed --icon $icon $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
 } else {
     Write-Host "Ícone não encontrado em $icon - executando sem ícone"
-    & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils --version-file $verFile $entry
+    & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
 }
 
 Write-Host "Build finalizado. Artefatos em dist\\$outName or dist\\$outName.exe"

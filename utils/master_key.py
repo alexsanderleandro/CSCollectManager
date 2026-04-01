@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover - optional dependency
     load_dotenv = None
 
 from .config import AppConfig
+import sys
 
 
 MasterKeyType = Union[str, bytes]
@@ -68,12 +69,23 @@ def load_master_key(dotenv_path: Optional[str] = None) -> Tuple[Optional[MasterK
     else:
         # Sem python-dotenv disponível: tentar ler um arquivo .env simples em locais comuns
         try:
+            # incluir locais comuns e, quando congelado, o _MEIPASS e pasta do executável
             candidates = [
                 Path('.') / '.env',
                 Path.cwd() / '.env',
                 Path(AppConfig.BASE_DIR) / '.env',
                 Path(r"C:\ceosoftware") / '.env',
             ]
+            try:
+                if getattr(sys, 'frozen', False):
+                    meipass = getattr(sys, '_MEIPASS', None)
+                    if meipass:
+                        candidates.insert(0, Path(meipass) / '.env')
+                    # pasta do executável
+                    exe_dir = Path(sys.executable).parent
+                    candidates.insert(0, exe_dir / '.env')
+            except Exception:
+                pass
             for cand in candidates:
                 try:
                     if cand.exists():
