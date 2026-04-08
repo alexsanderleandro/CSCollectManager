@@ -22,6 +22,7 @@ produtos    — registro P (uma linha por produto)
 """
 
 import os
+import shutil
 import zipfile
 from pathlib import Path
 import uuid
@@ -298,6 +299,11 @@ class DbExportService:
                                     os.remove(photos_zip)
                                 except Exception:
                                     pass
+                            # Remove a pasta descompactada de fotos
+                            try:
+                                shutil.rmtree(photos_dest, ignore_errors=True)
+                            except Exception:
+                                pass
                     except Exception:
                         # Não interrompe a exportação se falhar a extração de fotos
                         pass
