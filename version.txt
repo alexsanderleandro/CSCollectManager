@@ -1,7 +1,7 @@
 ﻿VSVersionInfo(
     ffi=FixedFileInfo(
-        filevers=(26,4,1,0),
-        prodvers=(26,4,1,0),
+        filevers=(26,4,10,0),
+        prodvers=(26,4,10,0),
         mask=0x3f,
         flags=0x0,
         OS=0x40004,
@@ -17,13 +17,13 @@
                     [
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('FileDescription', 'CSCollect Manager'),
-                        StringStruct('FileVersion', '26.04.01 rev. 4'),
+                        StringStruct('FileVersion', '26.04.10 rev. 1'),
                         StringStruct('InternalName', 'CSCollectManager.exe'),
                         StringStruct('OriginalFilename', 'CSCollectManager.exe'),
                         StringStruct('ProductName', 'CSCollect Manager'),
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('LegalTrademarks', ''),
-                        StringStruct('ProductVersion', '26.04.01 rev. 4'),
+                        StringStruct('ProductVersion', '26.04.10 rev. 1'),
                         StringStruct('LegalCopyright', 'Copyright © 2026 CEOsoftware')
                     ]
                 )

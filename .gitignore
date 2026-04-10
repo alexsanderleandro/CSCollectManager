@@ -129,3 +129,5 @@ nome_device.json
 # Misc caches and temp
 *.cache
 *.tmp
+
+.env

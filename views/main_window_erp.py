@@ -1780,68 +1780,50 @@ class MainWindowERP(QMainWindow):
         msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
         msg.exec()
 
+        # Salva último diretório sempre (independente do botão clicado)
+        try:
+            from utils.config import AppConfig
+            out_dir = ""
+            if filepath:
+                out_dir = os.path.dirname(filepath)
+            if not out_dir:
+                out_dir = (self._txt_export_dir.text() or "").strip()
+            if out_dir:
+                AppConfig.set_last_export_dir(out_dir)
+        except Exception:
+            pass
+
         if msg.clickedButton() == btn_abrir:
             import subprocess
             try:
-                # 1) Se o arquivo existe, selecione-o no Explorer
+                # Determina a pasta a abrir
+                folder = ""
                 if filepath and os.path.exists(filepath):
-                    try:
-                        subprocess.run(["explorer", f"/select,{filepath}"], check=False)
-                    except Exception:
-                        # fallback: abrir pasta que contém o arquivo
-                        try:
-                            folder = os.path.dirname(filepath)
-                            if folder and os.path.isdir(folder):
-                                os.startfile(folder)
-                        except Exception:
-                            pass
-                else:
-                    # 2) Tentar abrir diretórios candidatos na ordem: pasta do arquivo, campo UI, último salvo
-                    candidates = []
-                    if filepath:
-                        candidates.append(os.path.dirname(filepath))
-                    txt_dir = (self._txt_export_dir.text() or "").strip()
-                    if txt_dir:
-                        candidates.append(txt_dir)
+                    folder = os.path.dirname(filepath)
+                if not folder:
+                    folder = (self._txt_export_dir.text() or "").strip()
+                if not folder:
                     try:
                         from utils.config import AppConfig
-                        last = AppConfig.get_last_export_dir()
-                        if last:
-                            candidates.append(last)
+                        folder = AppConfig.get_last_export_dir()
                     except Exception:
                         pass
 
-                    opened = False
-                    for d in candidates:
-                        if d and os.path.isdir(d):
-                            try:
-                                try:
-                                    subprocess.run(["explorer", d], check=False)
-                                except Exception:
-                                    os.startfile(d)
-                            except Exception:
-                                try:
-                                    os.startfile(d)
-                                except Exception:
-                                    continue
-                            opened = True
-                            break
-
-                    if not opened:
-                        QMessageBox.information(self, "Abrir Pasta", "Não foi possível localizar a pasta de exportação.")
-            except Exception:
-                pass
-
-            # salva último diretório usado (se houver)
-            try:
-                from utils.config import AppConfig
-                out_dir = ""
-                if filepath:
-                    out_dir = os.path.dirname(filepath)
-                if not out_dir:
-                    out_dir = (self._txt_export_dir.text() or "").strip()
-                if out_dir:
-                    AppConfig.set_last_export_dir(out_dir)
+                if folder and os.path.isdir(folder):
+                    # Usa explorer /select,"filepath" para destacar o arquivo.
+                    # Passa como STRING (não lista) para preservar espaços no caminho.
+                    if filepath and os.path.exists(filepath):
+                        try:
+                            subprocess.Popen(f'explorer /select,"{filepath}"')
+                        except Exception:
+                            os.startfile(folder)
+                    else:
+                        try:
+                            os.startfile(folder)
+                        except Exception:
+                            pass
+                else:
+                    QMessageBox.information(self, "Abrir Pasta", "Não foi possível localizar a pasta de exportação.")
             except Exception:
                 pass
 

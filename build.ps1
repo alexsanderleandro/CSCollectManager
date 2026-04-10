@@ -1,5 +1,5 @@
-# Build script para Windows PowerShell
-# Usa o virtualenv ativo para instalar pyinstaller e gerar o executável
+﻿# Build script para Windows PowerShell
+# Usa o virtualenv ativo para instalar pyinstaller e gerar o executÃ¡vel
 
 Set-StrictMode -Version Latest
 
@@ -11,18 +11,18 @@ Write-Host "Iniciando build do CSCollectManager..."
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $root
 
-# Instala PyInstaller no venv ativo (se não estiver instalado)
+# Instala PyInstaller no venv ativo (se nÃ£o estiver instalado)
 Write-Host "Instalando/atualizando PyInstaller..."
 & .\.venv\Scripts\pip.exe install --upgrade pyinstaller
 
-# Adiciona os imports escondidos necessários (variáveis separadas para evitar concatenação)
+# Adiciona os imports escondidos necessÃ¡rios (variÃ¡veis separadas para evitar concatenaÃ§Ã£o)
 $hiddenImportHandlers = "--hidden-import=logging.handlers"
 $hiddenImportVersion = "--hidden-import=version"
 
-# Garante que o diretório do projeto seja adicionado ao caminho de busca do PyInstaller
+# Garante que o diretÃ³rio do projeto seja adicionado ao caminho de busca do PyInstaller
 $paths = "--paths=."
 
-# Definições
+# DefiniÃ§Ãµes
 $entry = "run.py"
 $outName = "CSCollectManager"
 $icon = "assets/icon.ico"
@@ -34,26 +34,26 @@ $appDest = "app"
 $utilsSrc = "utils"
 $utilsDest = "utils"
 
-# Corrige o formato do parâmetro --add-data para SOURCE:DEST
+# Corrige o formato do parÃ¢metro --add-data para SOURCE:DEST
 $addDataAssets = "--add-data=${assetsSrc}:${assetsDest}"
 $addDataApp = "--add-data=${appSrc}:${appDest}"
 $addDataUtils = "--add-data=${utilsSrc}:${utilsDest}"
-# Incluir .env e keys no bundle para que EXE extraído em _MEIPASS possa ler MASTER_KEY e hmac_key.bin
+# Incluir .env e keys no bundle para que EXE extraÃ­do em _MEIPASS possa ler MASTER_KEY e hmac_key.bin
 $addDataEnv = "--add-data=.env:."
-# somente adicionar keys se a pasta existir (evita erro quando não há keys no projeto)
+# somente adicionar keys se a pasta existir (evita erro quando nÃ£o hÃ¡ keys no projeto)
 $addDataKeys = ""
 if (Test-Path "keys") {
     $addDataKeys = "--add-data=keys:keys"
     Write-Host "Incluindo pasta 'keys' no bundle"
 } else {
-    Write-Host "Pasta 'keys' não encontrada — não será adicionada ao bundle"
+    Write-Host "Pasta 'keys' nao encontrada - nao sera adicionada ao bundle"
 }
 
-# Executa PyInstaller (usa ícone apenas se existir)
+# Executa PyInstaller (usa Ã­cone apenas se existir)
 Write-Host "Executando PyInstaller..."
 
-# --- Sincroniza versão: lê `version.py` e atualiza `version.txt` usado pelo PyInstaller
-Write-Host "Sincronizando versão de version.py para $verFile"
+# --- Sincroniza versÃ£o: lÃª `version.py` e atualiza `version.txt` usado pelo PyInstaller
+Write-Host "Sincronizando versÃ£o de version.py para $verFile"
 $verPy = Get-Content -Raw -Path "version.py"
 $versionMatch = [regex]::Match($verPy, 'VERSION\s*=\s*"(?<v>[^"]+)"')
 $buildMatch = [regex]::Match($verPy, 'BUILD\s*=\s*"(?<b>[^"]+)"')
@@ -65,11 +65,11 @@ $parts = $buildStr -split '\.' | ForEach-Object { [int]($_ -replace '\D','') }
 while ($parts.Count -lt 4) { $parts += 0 }
 $fileVers = "({0},{1},{2},{3})" -f $parts[0], $parts[1], $parts[2], $parts[3]
 
-# tenta capturar revisão em VERSION (ex: 'rev. 1') para usar como quarto número
+# tenta capturar revisÃ£o em VERSION (ex: 'rev. 1') para usar como quarto nÃºmero
 $revMatch = [regex]::Match($versionStr, 'rev\.?\s*(?<r>\d+)', 'IgnoreCase')
 if ($revMatch.Success) { $parts[3] = [int]$revMatch.Groups['r'].Value }
 
-# Cria o conteúdo de version.txt com os valores extraídos
+# Cria o conteÃºdo de version.txt com os valores extraÃ­dos
 $copyright = [char]0x00A9
 $versionTxt = @"
 VSVersionInfo(
@@ -87,7 +87,7 @@ VSVersionInfo(
         StringFileInfo(
             [
                 StringTable(
-                    '041604B0',  # Português Brasil
+                    '041604B0',  # PortuguÃªs Brasil
                     [
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('FileDescription', 'CSCollect Manager'),
@@ -109,13 +109,13 @@ VSVersionInfo(
 "@
 
 Set-Content -Path $verFile -Value $versionTxt -Encoding UTF8
-Write-Host "Arquivo $verFile atualizado com versão: $versionStr"
+Write-Host "Arquivo $verFile atualizado com versÃ£o: $versionStr"
 
 if (Test-Path $icon) {
-    Write-Host "Ícone encontrado: $icon"
+    Write-Host "Ãcone encontrado: $icon"
     & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed --icon $icon $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
 } else {
-    Write-Host "Ícone não encontrado em $icon - executando sem ícone"
+    Write-Host "Ãcone nÃ£o encontrado em $icon - executando sem Ã­cone"
     & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
 }
 

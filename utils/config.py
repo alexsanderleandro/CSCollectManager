@@ -32,8 +32,35 @@ class AppConfig:
     DEFAULT_FONT_FAMILY = "Segoe UI"
     DEFAULT_FONT_SIZE = 10
     
-    # Exportação
+    # Exportação (mantido por compatibilidade; use get_default_export_path())
     DEFAULT_EXPORT_PATH = str(Path.home() / "Documents" / "CSCollectManager" / "Exports")
+
+    @classmethod
+    def get_app_dir(cls) -> Path:
+        """
+        Retorna o diretório da aplicação.
+
+        - Executável PyInstaller: pasta onde o .exe está (sys.executable).
+        - Script Python normal:   BASE_DIR (pasta raiz do projeto).
+        """
+        import sys
+        if getattr(sys, 'frozen', False):
+            return Path(sys.executable).parent
+        return cls.BASE_DIR
+
+    @classmethod
+    def get_default_export_path(cls) -> str:
+        """
+        Retorna o caminho padrão de exportação: <pasta_do_exe>/Cargas.
+
+        Garante que a pasta é criada ao ser acessada pela primeira vez.
+        """
+        path = cls.get_app_dir() / "Cargas"
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception:
+            pass
+        return str(path)
     
     @classmethod
     def get_asset_path(cls, filename: str) -> str:
@@ -56,15 +83,16 @@ class AppConfig:
         Returns:
             Caminho do diretório
         """
-        os.makedirs(cls.DEFAULT_EXPORT_PATH, exist_ok=True)
-        return cls.DEFAULT_EXPORT_PATH
+        path = cls.get_default_export_path()
+        os.makedirs(path, exist_ok=True)
+        return path
 
     # ---------------------------
     # Persistência de preferências
     # ---------------------------
     @classmethod
     def _settings_path(cls) -> str:
-        p = cls.BASE_DIR / "user_settings.json"
+        p = cls.get_app_dir() / "user_settings.json"
         return str(p)
 
     @classmethod
@@ -82,6 +110,7 @@ class AppConfig:
         import json
         path = cls._settings_path()
         try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -89,9 +118,9 @@ class AppConfig:
 
     @classmethod
     def get_last_export_dir(cls) -> str:
-        """Retorna o último diretório de exportação salvo ou o padrão."""
+        """Retorna o último diretório de exportação salvo ou o padrão (Cargas na pasta do exe)."""
         settings = cls._load_settings()
-        return settings.get("last_export_dir", cls.DEFAULT_EXPORT_PATH)
+        return settings.get("last_export_dir", cls.get_default_export_path())
 
     @classmethod
     def set_last_export_dir(cls, path: str) -> None:
@@ -223,8 +252,8 @@ class AppConfig:
     # ---------------------------
     @classmethod
     def get_device_names_path(cls) -> str:
-        """Retorna o caminho do arquivo nome_device.json (pasta da aplicação)."""
-        return str(cls.BASE_DIR / "nome_device.json")
+        """Retorna o caminho do arquivo nome_device.json (pasta do executável/aplicação)."""
+        return str(cls.get_app_dir() / "nome_device.json")
 
     @classmethod
     def load_device_names(cls) -> dict:
@@ -272,6 +301,7 @@ class AppConfig:
         lista = [{"id_device": k, "nome_device": v} for k, v in sorted(names.items())]
         path = cls.get_device_names_path()
         try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(lista, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -301,6 +331,7 @@ class AppConfig:
         lista = [{"id_device": k, "nome_device": v} for k, v in sorted(cleaned.items())]
         path = cls.get_device_names_path()
         try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(lista, f, ensure_ascii=False, indent=2)
         except Exception:
