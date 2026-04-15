@@ -22,6 +22,15 @@ class CollapsibleSection(QWidget):
     """Seção expansível (expand/collapse) com header clicável."""
 
     def __init__(self, title: str, content: QWidget, expanded: bool = True, parent: Optional[QWidget] = None):
+        """
+        Inicializa a seção expansível.
+
+        Args:
+            title: Rótulo exibido no botão de expansão.
+            content: Widget de conteúdo que será mostrado/oculto.
+            expanded: Estado inicial da seção (``True`` = expandida).
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         self._title = title
         self._content = content
@@ -58,6 +67,12 @@ class CollapsibleSection(QWidget):
         self._on_toggled(expanded)
 
     def _on_toggled(self, checked: bool):
+        """
+        Alterna a visibilidade do conteúdo e atualiza o símbolo do botão.
+
+        Args:
+            checked: ``True`` se a seção deve ficar expandida.
+        """
         self._wrap.setVisible(checked)
         self._btn.setText(("\u25BC "+ self._title) if checked else ("\u25BA "+ self._title))
 
@@ -78,6 +93,15 @@ class FilterPanel(QWidget):
     clear_clicked = Signal()
     
     def __init__(self, parent: Optional[QWidget] = None):
+        """
+        Inicializa o painel de filtros.
+
+        Configura todos os combos de seleção múltipla, grupos de rádios
+        e botões de ação, conectando os sinais de mudança.
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         self._setup_ui()
         self._connect_signals()

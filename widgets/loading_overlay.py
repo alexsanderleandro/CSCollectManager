@@ -17,6 +17,16 @@ class LoadingOverlay(QWidget):
     """
     
     def __init__(self, parent=None):
+        """
+        Inicializa o overlay de carregamento.
+
+        Cria a interface com rótulo de mensagem e barra de progresso
+        indeterminada. O widget começa oculto e deve ser exibido via
+        :meth:`show_loading`.
+
+        Args:
+            parent: Widget pai sobre o qual o overlay será sobreposto.
+        """
         super().__init__(parent)
         self._setup_ui()
         self.hide()

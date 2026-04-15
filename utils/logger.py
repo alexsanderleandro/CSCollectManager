@@ -64,6 +64,18 @@ class ColoredFormatter(logging.Formatter):
     RESET = '\033[0m'
     
     def format(self, record):
+        """
+        Formata o registro de log adicionando códigos ANSI de cor.
+
+        A cor é aplicada ao campo ``levelname`` antes de formatar e
+        restaurada logo em seguida para não afetar outros handlers.
+
+        Args:
+            record: Registro de log a ser formatado.
+
+        Returns:
+            String de log formatada com cores ANSI.
+        """
         # Adiciona cor ao nível
         levelname = record.levelname
         if levelname in self.COLORS:
@@ -90,11 +102,23 @@ class AppLogger:
     _initialized = False
     
     def __new__(cls):
+        """
+        Garante que apenas uma instância de ``AppLogger`` exista (Singleton).
+
+        Returns:
+            Única instância da classe.
+        """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
     
     def __init__(self):
+        """
+        Inicializa o logger centralizado (executado apenas uma vez).
+
+        Configura o logger raiz com handlers de arquivo (com rotação),
+        console colorido e arquivo de erros críticos separado.
+        """
         if AppLogger._initialized:
             return
         

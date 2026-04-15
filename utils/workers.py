@@ -600,6 +600,15 @@ class WorkerManager(QObject):
     """
     
     def __init__(self, parent=None):
+        """
+        Inicializa o gerenciador de workers.
+
+        Cria a lista interna de workers ativos e obtém a instância
+        global do thread pool para execução de tarefas rápidas.
+
+        Args:
+            parent: QObject pai (opcional).
+        """
         super().__init__(parent)
         
         self._workers: List[QThread] = []

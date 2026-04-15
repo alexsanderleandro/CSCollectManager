@@ -43,6 +43,15 @@ class LazyProductTable(QWidget):
     export_photos_requested = Signal(list)
     
     def __init__(self, parent=None):
+        """
+        Inicializa a tabela de produtos com lazy loading.
+
+        Cria o :class:`LazyTableModel`, o proxy de ordenação/filtragem
+        e monta a interface com toolbar, tabela e barra de status.
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         # Model

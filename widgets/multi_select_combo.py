@@ -46,6 +46,14 @@ class MultiSelectCombo(QWidget):
         placeholder: str = "Buscar...",
         parent: Optional[QWidget] = None
     ):
+        """
+        Inicializa o combo de seleção múltipla.
+
+        Args:
+            title: Rótulo exibido acima da lista (vazio = sem rótulo).
+            placeholder: Texto-dica do campo de busca.
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         self._title = title
         self._placeholder = placeholder

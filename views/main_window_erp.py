@@ -46,6 +46,14 @@ class SidebarButton(QPushButton):
     """Botão estilizado para sidebar."""
     
     def __init__(self, icon: str, text: str, parent=None):
+        """
+        Inicializa o botão da barra lateral.
+
+        Args:
+            icon: Emoji ou carácter unicode usado como ícone.
+            text: Texto exibido ao lado do ícone.
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         self.setText(f"  {icon}  {text}")
         self.setCheckable(True)
@@ -77,10 +85,27 @@ class ModuleHeader(QFrame):
     """Cabeçalho de módulo com título e ações."""
     
     def __init__(self, icon: str, title: str, subtitle: str = "", parent=None):
+        """
+        Inicializa o cabeçalho do módulo.
+
+        Args:
+            icon: Emoji ou carácter unicode representando o módulo.
+            title: Título principal exibido em negrito.
+            subtitle: Subtexto descritivo abaixo do título (opcional).
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         self._setup_ui(icon, title, subtitle)
     
     def _setup_ui(self, icon: str, title: str, subtitle: str):
+        """
+        Monta o layout visual do cabeçalho.
+
+        Args:
+            icon: Ícone do módulo.
+            title: Título principal.
+            subtitle: Subtexto descritivo.
+        """
         self.setStyleSheet("""
             QFrame {
                 background-color: #252526;
@@ -182,6 +207,16 @@ class MainWindowERP(QMainWindow):
     MODULE_SETTINGS = "settings"
     
     def __init__(self, parent=None):
+        """
+        Inicializa a janela principal ERP.
+
+        Configura estado interno, serviços, workers e monta toda a
+        interface gráfica (sidebar, menus, filtros, tabela de produtos
+        e barra de status).
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         # Estado

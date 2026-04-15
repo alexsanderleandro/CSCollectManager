@@ -46,6 +46,20 @@ DEFAULT_ENCRYPT = os.getenv("MSSQL_ENCRYPT", "no")  # ajuste conforme seu ambien
 
 @dataclass(frozen=True)
 class DBConfig:
+    """
+    Configuração imutável de conexão com o SQL Server.
+
+    Attributes:
+        server: Nome ou IP do servidor SQL Server.
+        database: Nome do banco de dados.
+        auth: Tipo de autenticação: ``"trusted"`` (Windows Auth) ou ``"sql"``.
+        username: Usuário SQL (somente quando ``auth="sql"``).
+        password: Senha SQL (somente quando ``auth="sql"``).
+        driver: Nome do driver ODBC instalado.
+        encrypt: Habilita criptografia de tráfego (``"yes"`` | ``"no"``).
+        trust_server_certificate: Confiar no certificado do servidor (``"yes"`` | ``"no"``).
+        timeout_seconds: Timeout de conexão em segundos.
+    """
     server: str
     database: str
     auth: str = "trusted"  # "trusted" (Windows Auth) | "sql" (SQL Login)
@@ -68,6 +82,12 @@ def set_db_config(cfg: DBConfig) -> None:
 
 
 def get_db_config() -> DBConfig:
+    """
+    Retorna a configuração global de conexão.
+
+    Returns:
+        Instância de :class:`DBConfig` atualmente ativa.
+    """
     return _DB_CONFIG
 
 

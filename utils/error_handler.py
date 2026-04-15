@@ -155,6 +155,15 @@ class CriticalErrorDialog(QDialog):
         traceback_text: str,
         parent: QWidget = None
     ):
+        """
+        Inicializa o diálogo de erro crítico.
+
+        Args:
+            error_type: Nome da exceção (ex.: ``"RuntimeError"``).
+            error_message: Mensagem descritiva do erro.
+            traceback_text: Traceback completo para exibir nos detalhes.
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         self.setWindowTitle("Erro Crítico")

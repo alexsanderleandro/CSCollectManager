@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, date, timezone
 
 
-# Tenta carregar variáveis de ambiente a partir de um arquivo .env, se disponível
+# Tenta carregar variáveis de ambiente a partir de um arquivo .env
 try:
     from dotenv import load_dotenv
     import sys

@@ -131,3 +131,5 @@ nome_device.json
 *.tmp
 
 .env
+
+*.key

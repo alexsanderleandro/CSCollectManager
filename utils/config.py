@@ -92,11 +92,29 @@ class AppConfig:
     # ---------------------------
     @classmethod
     def _settings_path(cls) -> str:
+        """
+        Retorna o caminho completo do arquivo de preferências do usuário.
+
+        O arquivo ``user_settings.json`` é sempre criado ao lado do
+        executável (em produção) ou na raiz do projeto (em desenvolvimento).
+
+        Returns:
+            Caminho absoluto para ``user_settings.json``.
+        """
         p = cls.get_app_dir() / "user_settings.json"
         return str(p)
 
     @classmethod
     def _load_settings(cls) -> dict:
+        """
+        Carrega e retorna o dicionário de preferências salvas em disco.
+
+        Retorna um dicionário vazio caso o arquivo não exista ou ocorra
+        qualquer erro de leitura/decodificação.
+
+        Returns:
+            Dicionário com as preferências do usuário.
+        """
         import json
         path = cls._settings_path()
         try:
@@ -107,6 +125,15 @@ class AppConfig:
 
     @classmethod
     def _save_settings(cls, data: dict) -> None:
+        """
+        Persiste o dicionário de preferências em disco.
+
+        Falhas de escrita são ignoradas silenciosamente para não
+        interromper o fluxo da aplicação.
+
+        Args:
+            data: Dicionário com as preferências a salvar.
+        """
         import json
         path = cls._settings_path()
         try:

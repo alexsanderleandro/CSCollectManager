@@ -28,6 +28,17 @@ class ProductSearchCombo(MultiSelectCombo):
     """
     
     def __init__(self, title: str = "", placeholder: str = "Buscar produto...", parent: Optional[QWidget] = None):
+        """
+        Inicializa o combo de busca de produtos.
+
+        Herda de :class:`MultiSelectCombo` e adiciona tratamento especial
+        da tecla Enter para abrir o diálogo de busca de produtos.
+
+        Args:
+            title: Rótulo exibido acima da lista.
+            placeholder: Texto-dica do campo de busca.
+            parent: Widget pai (opcional).
+        """
         super().__init__(title=title, placeholder=placeholder, parent=parent)
         
         # Sobrescreve o keyPressEvent do txt_search

@@ -114,6 +114,15 @@ class LazyTableModel(QAbstractTableModel):
     ]
     
     def __init__(self, parent=None):
+        """
+        Inicializa o modelo de tabela com lazy loading.
+
+        Configura as estruturas internas de dados, as cores de destaque
+        para validade dos produtos e os parâmetros de paginação.
+
+        Args:
+            parent: QObject pai (opcional).
+        """
         super().__init__(parent)
         
         # Dados

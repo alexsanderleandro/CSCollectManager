@@ -19,6 +19,12 @@ class AuthService:
     """
     
     def __init__(self):
+        """
+        Inicializa o serviço de autenticação.
+
+        Instância o gerenciador de conexão utilizado internamente
+        para validação de credenciais contra o banco de dados.
+        """
         self._connection_manager = ConnectionManager()
     
     def authenticate(

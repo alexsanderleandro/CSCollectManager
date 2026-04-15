@@ -30,6 +30,12 @@ class ConnectionManager:
         return cls._instance
     
     def __init__(self):
+        """
+        Inicializa o gerenciador de conexões (Singleton).
+
+        A lógica de inicialização real é executada apenas na primeira
+        chamada; chamadas subsequentes retornam imediatamente.
+        """
         if self._initialized:
             return
         self._initialized = True

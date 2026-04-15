@@ -54,6 +54,13 @@ class ConnectionWorker(QThread):
     finished = Signal(bool, str, list)  # sucesso, mensagem, empresas
     
     def __init__(self, connection_data: dict):
+        """
+        Inicializa o worker de conexão.
+
+        Args:
+            connection_data: Dicionário com as chaves ``server``, ``database``
+                e ``type`` (tipo do banco, ex.: ``"MSSQL"``).
+        """
         super().__init__()
         self._connection_data = connection_data
     
@@ -167,6 +174,14 @@ class AuthWorker(QThread):
     finished = Signal(bool, str, dict)  # sucesso, mensagem, dados_usuario
     
     def __init__(self, username: str, password: str, db_config: DBConfig):
+        """
+        Inicializa o worker de autenticação.
+
+        Args:
+            username: Nome de usuário para autenticar.
+            password: Senha do usuário.
+            db_config: Configuração de conexão com o banco de dados.
+        """
         super().__init__()
         self._username = username
         self._password = password
@@ -213,6 +228,16 @@ class LoginDialog(QDialog):
     STEP_AUTH = 2
     
     def __init__(self, parent=None):
+        """
+        Inicializa o diálogo de login.
+
+        Carrega as conexões disponíveis a partir do arquivo ``CSLogin.xml``,
+        configura a interface em três etapas (conexão, empresa e autenticação)
+        e verifica a licença do sistema na inicialização.
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         # Estado

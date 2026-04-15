@@ -19,6 +19,13 @@ class StatusIndicator(QLabel):
     """Indicador de status com ícone."""
     
     def __init__(self, text: str = "", parent=None):
+        """
+        Inicializa o indicador de status.
+
+        Args:
+            text: Texto inicial exibido no label.
+            parent: Widget pai (opcional).
+        """
         super().__init__(text, parent)
         self.setStyleSheet("padding: 0 8px;")
     
@@ -35,6 +42,15 @@ class ConnectionIndicator(QWidget):
     """Indicador de conexão com o banco."""
     
     def __init__(self, parent=None):
+        """
+        Inicializa o indicador de conexão.
+
+        Exibe um ícone colorido e um texto que refletem o estado atual
+        da conexão: desconectado, conectando ou conectado.
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         layout = QHBoxLayout(self)
@@ -76,6 +92,15 @@ class ProgressIndicator(QWidget):
     cancelled = Signal()
     
     def __init__(self, parent=None):
+        """
+        Inicializa o indicador de progresso.
+
+        Cria label de mensagem, barra de progresso e botão de cancelamento,
+        dispostos horizontalmente na barra de status.
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         layout = QHBoxLayout(self)
@@ -149,6 +174,16 @@ class AppStatusBar(QStatusBar):
     """
     
     def __init__(self, parent=None):
+        """
+        Inicializa a barra de status avançada.
+
+        Monta todos os indicadores (mensagem, progresso, conexão, usuário,
+        banco de dados, licença e versão) e configura o timer de limpeza
+        automática de mensagens temporárias.
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         self._setup_ui()

@@ -53,6 +53,13 @@ class DbExportService:
     """
 
     def __init__(self, output_dir: str = None):
+        """
+        Inicializa o serviço de exportação SQLite.
+
+        Args:
+            output_dir: Diretório de saída dos arquivos ``.db``.
+                Se ``None``, utiliza ``~/Documents/CSCollectManager/Exports``.
+        """
         if output_dir:
             self._output_dir = output_dir
         else:
@@ -65,10 +72,17 @@ class DbExportService:
 
     @property
     def output_dir(self) -> str:
+        """Retorna o diretório de saída configurado."""
         return self._output_dir
 
     @output_dir.setter
     def output_dir(self, value: str):
+        """
+        Define o diretório de saída dos arquivos exportados.
+
+        Args:
+            value: Caminho absoluto do diretório de destino.
+        """
         self._output_dir = value
 
     # ------------------------------------------------------------------

@@ -21,6 +21,13 @@ class DataLoaderWorker(QObject):
     progress = Signal(int, str)
     
     def __init__(self, inventory_service: InventoryService):
+        """
+        Inicializa o worker de carregamento de dados.
+
+        Args:
+            inventory_service: Serviço de inventário usado para buscar
+                grupos, tipos de produto, localizações e produtos.
+        """
         super().__init__()
         self._service = inventory_service
         self._filters = {}

@@ -4,8 +4,7 @@ login.py
 Leitura padronizada de conexões (cslogin.xml) + persistência de seleção padrão,
 último login e última empresa selecionada.
 
-Este módulo é *agnóstico de UI* (serve para PySide6, Streamlit, CLI, etc.).
-Ele apenas:
+Este módulo apenas:
 - Descobre/abre cslogin.xml (em paths padrão ou fornecido).
 - Retorna lista de configurações (servidor/banco/tipo).
 - Persiste seleção padrão e último login em JSON (padrão C:\\CEOSoftware\\login.json).

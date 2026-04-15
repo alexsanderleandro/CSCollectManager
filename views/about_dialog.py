@@ -22,6 +22,12 @@ class AboutDialog(QDialog):
     """Diálogo com informações sobre o sistema."""
     
     def __init__(self, parent=None):
+        """
+        Inicializa o diálogo "Sobre".
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         self.setWindowTitle(f"Sobre - {APP_INFO.NAME}")
@@ -148,6 +154,15 @@ class SystemInfoDialog(QDialog):
     """Diálogo com informações detalhadas do sistema."""
     
     def __init__(self, parent=None):
+        """
+        Inicializa o diálogo de informações do sistema.
+
+        Exibe versões do Python, PySide6, SQLAlchemy e informações
+        do sistema operacional em execução.
+
+        Args:
+            parent: Widget pai (opcional).
+        """
         super().__init__(parent)
         
         self.setWindowTitle("Informações do Sistema")

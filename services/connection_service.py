@@ -24,6 +24,12 @@ class ConnectionService:
     """
     
     def __init__(self):
+        """
+        Inicializa o serviço de gerenciamento de conexões.
+
+        Instância o gerenciador de conexão e inicializa o estado
+        interno de conexão ativa como ``None``.
+        """
         self._connection_manager = ConnectionManager()
         self._active_connection: Optional[Connection] = None
     
