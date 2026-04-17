@@ -341,6 +341,7 @@ class MainWindowERP(QMainWindow):
             (self.MODULE_PRODUCTS, "📦", "Produtos"),
             (self.MODULE_EXPORT, "📤", "Exportar Carga"),
             (self.MODULE_HISTORY, "📋", "Histórico"),
+            (self.MODULE_SETTINGS, "⚙️", "Configurações"),
         ]
         
         for module_id, icon, text in modules:
@@ -851,31 +852,231 @@ class MainWindowERP(QMainWindow):
     
     def _create_settings_page(self):
         """Cria página de configurações."""
+        from PySide6.QtWidgets import QLineEdit, QScrollArea
+
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
+
         # Header
         header = ModuleHeader("⚙️", "Configurações", "Configurações do sistema")
         layout.addWidget(header)
-        
-        # Conteúdo
+
+        # Área de scroll
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background-color: #1e1e1e; border: none; }")
+
         content = QWidget()
         content.setStyleSheet("background-color: #1e1e1e;")
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(24, 24, 24, 24)
-        
-        # Placeholder
-        placeholder = QLabel("⚙️\n\nConfigurações do sistema\n\nEm desenvolvimento...")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet("color: #666666; font-size: 14pt;")
-        content_layout.addWidget(placeholder)
-        
-        layout.addWidget(content)
-        
+        content_layout.setContentsMargins(32, 32, 32, 32)
+        content_layout.setSpacing(24)
+
+        _field_style = """
+            QLineEdit {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 11pt;
+            }
+            QLineEdit:focus { border-color: #0078d4; }
+        """
+        _group_style = """
+            QGroupBox {
+                color: #cccccc;
+                font-weight: bold;
+                border: 2px solid #0078d4;
+                border-radius: 8px;
+                margin-top: 16px;
+                padding: 20px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+            }
+        """
+
+        # ── Grupo: API CSCollect ──────────────────────────────────────────
+        api_group = QGroupBox("🌐 API CSCollect")
+        api_group.setStyleSheet(_group_style)
+        api_form = QVBoxLayout(api_group)
+        api_form.setSpacing(12)
+
+        lbl_api_info = QLabel(
+            "Configure a URL e o token de autorização para envio automático das cargas para a API."
+        )
+        lbl_api_info.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
+        lbl_api_info.setWordWrap(True)
+        api_form.addWidget(lbl_api_info)
+
+        # URL
+        lbl_url = QLabel("URL da API:")
+        lbl_url.setStyleSheet("color: #cccccc; font-size: 10pt;")
+        api_form.addWidget(lbl_url)
+
+        self._settings_api_url = QLineEdit()
+        self._settings_api_url.setPlaceholderText("https://cscollectapi.onrender.com")
+        self._settings_api_url.setMinimumHeight(36)
+        self._settings_api_url.setStyleSheet(_field_style)
+        api_form.addWidget(self._settings_api_url)
+
+        # Token
+        lbl_token = QLabel("Token de Autorização:")
+        lbl_token.setStyleSheet("color: #cccccc; font-size: 10pt;")
+        api_form.addWidget(lbl_token)
+
+        token_row = QHBoxLayout()
+        self._settings_api_token = QLineEdit()
+        self._settings_api_token.setPlaceholderText("Token fornecido pelo servidor CSCollect")
+        self._settings_api_token.setMinimumHeight(36)
+        self._settings_api_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self._settings_api_token.setStyleSheet(_field_style)
+        token_row.addWidget(self._settings_api_token, 1)
+
+        btn_toggle_token = QPushButton("👁")
+        btn_toggle_token.setFixedSize(36, 36)
+        btn_toggle_token.setToolTip("Mostrar/ocultar token")
+        btn_toggle_token.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_toggle_token.setCheckable(True)
+        btn_toggle_token.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42; color: #cccccc;
+                border: none; border-radius: 4px; font-size: 14pt;
+            }
+            QPushButton:hover { background-color: #505050; }
+            QPushButton:checked { background-color: #0078d4; }
+        """)
+        btn_toggle_token.toggled.connect(
+            lambda checked: self._settings_api_token.setEchoMode(
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+            )
+        )
+        token_row.addWidget(btn_toggle_token)
+        api_form.addLayout(token_row)
+
+        # Botões salvar / testar
+        api_btns = QHBoxLayout()
+        api_btns.addStretch()
+
+        btn_test_api = QPushButton("🔗  Testar Conexão")
+        btn_test_api.setMinimumSize(160, 36)
+        btn_test_api.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_test_api.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42; color: #cccccc;
+                border: none; border-radius: 4px;
+                padding: 6px 16px; font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #505050; }
+        """)
+        btn_test_api.clicked.connect(self._on_test_api_connection)
+        api_btns.addWidget(btn_test_api)
+
+        btn_save_api = QPushButton("💾  Salvar")
+        btn_save_api.setMinimumSize(120, 36)
+        btn_save_api.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_save_api.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4; color: white;
+                border: none; border-radius: 4px;
+                font-weight: bold; padding: 6px 16px; font-size: 11pt;
+            }
+            QPushButton:hover { background-color: #1e8ad4; }
+            QPushButton:pressed { background-color: #005a9e; }
+        """)
+        btn_save_api.clicked.connect(self._on_save_api_settings)
+        api_btns.addWidget(btn_save_api)
+
+        api_form.addLayout(api_btns)
+        content_layout.addWidget(api_group)
+
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
         self._module_stack.addWidget(page)
         self._pages[self.MODULE_SETTINGS] = self._module_stack.count() - 1
+
+        # Carrega valores salvos
+        self._load_api_settings_fields()
+
+    def _load_api_settings_fields(self):
+        """Preenche os campos de configuração da API com os valores persistidos."""
+        try:
+            from utils.config import AppConfig
+            if hasattr(self, '_settings_api_url'):
+                self._settings_api_url.setText(AppConfig.get_api_url())
+            if hasattr(self, '_settings_api_token'):
+                self._settings_api_token.setText(AppConfig.get_api_authorization())
+        except Exception:
+            pass
+
+    def _on_save_api_settings(self):
+        """Salva as configurações da API."""
+        from utils.config import AppConfig
+
+        url = self._settings_api_url.text().strip() if hasattr(self, '_settings_api_url') else ""
+        token = self._settings_api_token.text().strip() if hasattr(self, '_settings_api_token') else ""
+
+        AppConfig.set_api_url(url)
+        AppConfig.set_api_authorization(token)
+
+        if url and token:
+            msg = "✅ Configurações da API salvas.\nAs cargas serão enviadas automaticamente após a exportação."
+        elif url or token:
+            msg = "⚠️ Configurações salvas.\nPreencha tanto a URL quanto o token para habilitar o envio automático."
+        else:
+            msg = "ℹ️ Configurações limpas. O envio automático para a API está desabilitado."
+
+        QMessageBox.information(self, "Configurações da API", msg)
+        try:
+            self._status_bar.show_message("Configurações da API salvas", 3000)
+        except Exception:
+            pass
+
+    def _on_test_api_connection(self):
+        """Testa a conexão com a API usando os valores dos campos."""
+        from services.api_service import ApiService
+
+        url = self._settings_api_url.text().strip() if hasattr(self, '_settings_api_url') else ""
+        token = self._settings_api_token.text().strip() if hasattr(self, '_settings_api_token') else ""
+
+        if not url or not token:
+            QMessageBox.warning(
+                self,
+                "Teste de Conexão",
+                "Preencha a URL e o token antes de testar a conexão."
+            )
+            return
+
+        try:
+            import requests
+            resp = requests.get(url.rstrip("/"), timeout=10)
+            if resp.ok:
+                try:
+                    data = resp.json()
+                    status = data.get("status", "OK")
+                except Exception:
+                    status = f"HTTP {resp.status_code}"
+                QMessageBox.information(
+                    self, "Teste de Conexão",
+                    f"✅ API acessível!\n\nResposta: {status}"
+                )
+            else:
+                QMessageBox.warning(
+                    self, "Teste de Conexão",
+                    f"⚠️ API respondeu com HTTP {resp.status_code}."
+                )
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Teste de Conexão",
+                f"❌ Não foi possível conectar:\n\n{exc}"
+            )
 
     # -------------------------
     # Histórico helpers
@@ -1893,6 +2094,82 @@ class MainWindowERP(QMainWindow):
 
         # Grava log de exportação na pasta Logs
         self._write_export_log(filepath)
+
+        # ── Envio para a API CSCollect ──────────────────────────────────
+        self._send_to_api(filepath)
+
+    def _send_to_api(self, filepath: str):
+        """
+        Envia o arquivo ZIP para a API CSCollect em thread separada (não bloqueante).
+
+        Exibe feedback na status bar e, em caso de falha, abre um diálogo
+        com a opção de tentar novamente.
+        """
+        try:
+            from utils.config import AppConfig
+            if not AppConfig.is_api_configured():
+                # API não configurada — nada a fazer
+                return
+        except Exception:
+            return
+
+        try:
+            from utils.config import AppConfig
+            from services.api_service import ApiService
+            from PySide6.QtCore import QThread
+
+            url = AppConfig.get_api_url()
+            token = AppConfig.get_api_authorization()
+            api = ApiService(base_url=url, authorization=token)
+
+            self._status_bar.show_message("📡  Enviando carga para a API...", 0)
+
+            # Executa em thread para não bloquear a UI
+            class _ApiUploadThread(QThread):
+                def __init__(self, api_svc, path, parent=None):
+                    super().__init__(parent)
+                    self._api = api_svc
+                    self._path = path
+                    self.success = False
+                    self.message = ""
+
+                def run(self):
+                    self.success, self.message = self._api.upload_file(self._path)
+
+            thread = _ApiUploadThread(api, filepath, self)
+
+            def _on_upload_done():
+                if thread.success:
+                    logger.info(f"Carga enviada para API: {thread.message}")
+                    try:
+                        self._status_bar.show_message(f"✅ API: {thread.message}", 6000)
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Falha ao enviar para API: {thread.message}")
+                    try:
+                        self._status_bar.show_message(f"⚠️ API: falha no envio", 6000)
+                    except Exception:
+                        pass
+                    # Pergunta se deseja tentar novamente
+                    reply = QMessageBox.warning(
+                        self,
+                        "Falha no Envio para API",
+                        f"Não foi possível enviar a carga para a API:\n\n{thread.message}\n\n"
+                        "Deseja tentar novamente?",
+                        QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Ignore,
+                    )
+                    if reply == QMessageBox.StandardButton.Retry:
+                        self._send_to_api(filepath)
+
+            thread.finished.connect(_on_upload_done)
+            thread.start()
+
+            # Mantém referência para não ser coletado pelo GC
+            self._api_upload_thread = thread
+
+        except Exception as exc:
+            logger.error(f"Erro inesperado ao iniciar envio para API: {exc}")
 
     def _write_export_log(self, zip_path: str):
         """Grava arquivo de log na pasta Logs com resumo completo da exportação."""

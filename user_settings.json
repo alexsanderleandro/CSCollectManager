@@ -1,3 +1,5 @@
 {
-  "last_export_dir": "C:\\CEOSoftware\\Cargas"
+  "last_export_dir": "C:\\CEOSoftware\\Cargas",
+  "api_url": "https://cscollectapi.onrender.com",
+  "api_authorization": "abc123"
 }

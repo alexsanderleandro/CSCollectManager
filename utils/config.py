@@ -155,6 +155,41 @@ class AppConfig:
         settings = cls._load_settings()
         settings["last_export_dir"] = path
         cls._save_settings(settings)
+
+    # ---------------------------
+    # Configurações da API CSCollect
+    # ---------------------------
+
+    @classmethod
+    def get_api_url(cls) -> str:
+        """Retorna a URL base da API CSCollect (ex.: https://cscollectapi.onrender.com)."""
+        settings = cls._load_settings()
+        return settings.get("api_url", "").strip()
+
+    @classmethod
+    def set_api_url(cls, url: str) -> None:
+        """Salva a URL base da API CSCollect."""
+        settings = cls._load_settings()
+        settings["api_url"] = url.strip()
+        cls._save_settings(settings)
+
+    @classmethod
+    def get_api_authorization(cls) -> str:
+        """Retorna o token de autorização da API CSCollect."""
+        settings = cls._load_settings()
+        return settings.get("api_authorization", "").strip()
+
+    @classmethod
+    def set_api_authorization(cls, token: str) -> None:
+        """Salva o token de autorização da API CSCollect."""
+        settings = cls._load_settings()
+        settings["api_authorization"] = token.strip()
+        cls._save_settings(settings)
+
+    @classmethod
+    def is_api_configured(cls) -> bool:
+        """Retorna True se URL e token da API estiverem preenchidos."""
+        return bool(cls.get_api_url() and cls.get_api_authorization())
     
     @classmethod
     def get_log_path(cls) -> str:

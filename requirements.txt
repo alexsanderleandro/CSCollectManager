@@ -10,6 +10,9 @@ pyodbc>=5.0.0
 # Processamento de Imagens
 Pillow>=10.0.0
 
+# HTTP (envio de cargas para a API CSCollect)
+requests>=2.31.0
+
 # Utilitários (zipfile é builtin, não precisa instalar)
 
 # Criptografia (assinatura de arquivos)
