@@ -18,6 +18,7 @@ from views.login_view import LoginView
 from views.main_window import MainWindow
 from controllers.login_controller import LoginController
 from utils.config import Config
+from services.license_validator import validar_licenca_completa, obter_device_id
 
 
 class CSCollectManagerApp:
@@ -76,6 +77,10 @@ class CSCollectManagerApp:
             Código de saída
         """
         try:
+            # Valida licença antes de iniciar
+            if not self._validar_licenca():
+                return 1
+            
             # Inicia com tela de login
             self._show_login()
             return self.app.exec()
@@ -86,6 +91,136 @@ class CSCollectManagerApp:
                 f"Ocorreu um erro crítico:\n\n{str(e)}"
             )
             return 1
+    
+    def _validar_licenca(self) -> bool:
+        """
+        Valida a licença do sistema antes de iniciar.
+        
+        Returns:
+            True se licença válida, False caso contrário
+        """
+        caminho_licenca = os.path.join(os.path.dirname(__file__), "licenca.key")
+        
+        # Verifica se arquivo de licença existe
+        if not os.path.exists(caminho_licenca):
+            QMessageBox.critical(
+                None, "Licença Não Encontrada",
+                "Arquivo de licença (licenca.key) não encontrado.\n\n"
+                "A aplicação não pode ser iniciada sem uma licença válida.\n"
+                "Entre em contato com o fornecedor."
+            )
+            return False
+        
+        try:
+            # Obtém CNPJ do arquivo nome_device.json se existir
+            cnpj_atual = self._obter_cnpj_configurado()
+            if not cnpj_atual:
+                # Se não houver CNPJ configurado, solicita ao usuário
+                from PySide6.QtWidgets import QInputDialog
+                cnpj_atual, ok = QInputDialog.getText(
+                    None, "CNPJ Necessário",
+                    "Digite o CNPJ da empresa (apenas números):"
+                )
+                if not ok or not cnpj_atual:
+                    QMessageBox.warning(
+                        None, "CNPJ Necessário",
+                        "O CNPJ é necessário para validar a licença."
+                    )
+                    return False
+                
+                # Limpa CNPJ (apenas dígitos)
+                cnpj_atual = ''.join(ch for ch in cnpj_atual if ch.isdigit())
+            
+            # Obtém Device ID (apenas informativo, não valida)
+            device_id = obter_device_id()
+            
+            # Valida licença (offline + online se disponível)
+            # IMPORTANTE: validar_device_id=False - valida apenas CNPJ
+            resultado = validar_licenca_completa(
+                caminho_key=caminho_licenca,
+                cnpj_atual=cnpj_atual,
+                device_id_atual=device_id,
+                validar_online=True,  # Tenta validação online
+                obrigar_online=False,  # Não obriga validação online (permite offline)
+                validar_device_id=False  # NÃO valida device ID (apenas CNPJ)
+            )
+            
+            # Exibe informações da licença
+            info_msg = "✅ Licença Válida\n\n"
+            info_msg += f"Cliente: {resultado.get('nome_cliente', 'N/A')}\n"
+            info_msg += f"Servidor: {resultado.get('sql_servidor', 'N/A')}\n"
+            info_msg += f"Banco: {resultado.get('sql_banco', 'N/A')}\n"
+            
+            validade = resultado.get('validade')
+            if validade:
+                info_msg += f"Validade: {validade}\n"
+            else:
+                info_msg += "Validade: Sem expiração\n"
+            
+            if resultado.get('validacao_online'):
+                info_msg += "\nValidação online: ✓ Realizada"
+            else:
+                info_msg += "\nValidação online: ○ Não disponível (offline)"
+            
+            # Mostra mensagem informativa (opcional - pode comentar para não mostrar toda vez)
+            # QMessageBox.information(None, "Licença Validada", info_msg)
+            
+            print(info_msg)  # Log no console
+            return True
+            
+        except FileNotFoundError as e:
+            QMessageBox.critical(
+                None, "Arquivo Não Encontrado",
+                f"Erro ao carregar licença:\n\n{str(e)}"
+            )
+            return False
+            
+        except ValueError as e:
+            QMessageBox.critical(
+                None, "Licença Inválida",
+                f"A licença não é válida:\n\n{str(e)}\n\n"
+                "Entre em contato com o fornecedor para obter uma licença válida."
+            )
+            return False
+            
+        except Exception as e:
+            erro_msg = str(e)
+            if "online" in erro_msg.lower():
+                # Erro na validação online - permite continuar com offline
+                QMessageBox.warning(
+                    None, "Aviso de Validação",
+                    f"Não foi possível validar online:\n\n{erro_msg}\n\n"
+                    "Continuando com validação offline..."
+                )
+                return True
+            else:
+                QMessageBox.critical(
+                    None, "Erro na Validação",
+                    f"Erro ao validar licença:\n\n{erro_msg}"
+                )
+                return False
+    
+    def _obter_cnpj_configurado(self) -> str:
+        """
+        Obtém o CNPJ configurado do arquivo nome_device.json.
+        
+        Returns:
+            CNPJ (apenas dígitos) ou string vazia se não encontrado
+        """
+        try:
+            import json
+            caminho_config = os.path.join(os.path.dirname(__file__), "nome_device.json")
+            
+            if os.path.exists(caminho_config):
+                with open(caminho_config, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    cnpj = config.get('cnpj', '')
+                    # Retorna apenas dígitos
+                    return ''.join(ch for ch in str(cnpj) if ch.isdigit())
+        except Exception:
+            pass
+        
+        return ""
     
     def _show_login(self):
         """Mostra tela de login."""

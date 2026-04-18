@@ -49,6 +49,10 @@ def verify_token(token: str, master_key: str) -> Dict[str, Any]:
 
 def load_and_verify_file(path: str, master_key: Optional[str] = None) -> Dict[str, Any]:
     """Lê um arquivo contendo o token e verifica sua assinatura.
+    
+    Suporta dois formatos:
+    1. Formato antigo: arquivo contém apenas o token (string)
+    2. Formato novo (JSON): arquivo contém JSON com campo "token"
 
     Se `master_key` for None, a função tenta ler a variável de ambiente
     `MASTER_KEY`. Lança exceções em caso de erro (arquivo não encontrado,
@@ -56,11 +60,29 @@ def load_and_verify_file(path: str, master_key: Optional[str] = None) -> Dict[st
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
+    
     with open(path, 'r', encoding='utf-8') as f:
-        token = f.read().strip()
+        conteudo = f.read().strip()
+    
+    # Tenta detectar se é JSON (novo formato) ou token simples (formato antigo)
+    token = None
+    try:
+        # Tenta parsear como JSON
+        licenca_json = json.loads(conteudo)
+        if isinstance(licenca_json, dict) and 'token' in licenca_json:
+            # Formato novo (JSON)
+            token = licenca_json['token']
+        else:
+            # JSON mas sem campo "token" - usa o conteúdo direto
+            token = conteudo
+    except json.JSONDecodeError:
+        # Não é JSON - formato antigo (token direto)
+        token = conteudo
+    
     mk = master_key or os.environ.get('MASTER_KEY')
     if not mk:
         raise ValueError('MASTER_KEY não fornecida (passar master_key ou definir variável de ambiente).')
+    
     return verify_token(token, mk)
 
 

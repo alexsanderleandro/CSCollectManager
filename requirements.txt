@@ -6,12 +6,16 @@ PySide6>=6.6.0
 # Banco de Dados
 SQLAlchemy>=2.0.0
 pyodbc>=5.0.0
+psycopg2-binary>=2.9.0  # Para validação online de licença (PostgreSQL)
 
 # Processamento de Imagens
 Pillow>=10.0.0
 
 # HTTP (envio de cargas para a API CSCollect)
 requests>=2.31.0
+
+# Configuração (variáveis de ambiente)
+python-dotenv>=1.0.0
 
 # Utilitários (zipfile é builtin, não precisa instalar)
 

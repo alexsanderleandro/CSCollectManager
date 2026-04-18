@@ -178,7 +178,7 @@ def verificar_licenca(token, validar_validade=True):
 
 
 def salvar_licenca(token, caminho="licenca.key"):
-    """Salva o token de licença no arquivo especificado.
+    """Salva o token de licença no arquivo especificado (formato antigo - apenas token).
 
     Parâmetros:
     - token: string do token gerado por `gerar_licenca`.
@@ -186,6 +186,38 @@ def salvar_licenca(token, caminho="licenca.key"):
     """
     with open(caminho, "w", encoding='utf-8') as f:
         f.write(token)
+
+
+def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=None, caminho="licenca.key"):
+    """Salva a licença no novo formato JSON conforme especificação.
+    
+    Formato do arquivo .key:
+    {
+      "cnpjs": ["12345678000199", "98765432000188"],
+      "ids": ["a3e9e3a0a4659652", "device-123"],
+      "token": "base64url(payload).base64url(signature)",
+      "validade": "2026-12-31" ou null,
+      "database_url": "postgresql://user:pass@host:port/db" ou null
+    }
+
+    Parâmetros:
+    - token: string do token gerado por `gerar_licenca`.
+    - cnpjs: lista de CNPJs autorizados.
+    - ids_celular: lista de IDs de dispositivos autorizados.
+    - validade: data de validade (YYYY-MM-DD) ou None.
+    - database_url: connection string PostgreSQL para validação online ou None.
+    - caminho: caminho do arquivo onde a licença será gravada.
+    """
+    licenca_data = {
+        "cnpjs": cnpjs,
+        "ids": ids_celular,
+        "token": token,
+        "validade": validade,
+        "database_url": database_url
+    }
+    
+    with open(caminho, "w", encoding='utf-8') as f:
+        json.dump(licenca_data, f, ensure_ascii=False, indent=2)
 
 
 def carregar_licenca_de_arquivo(caminho="licenca.key"):
@@ -295,8 +327,20 @@ if __name__ == "__main__":
                 payload.get('sql_servidor', ''),
                 payload.get('sql_banco', ''),
             )
-            salvar_licenca(novo_token, caminho)
-            print('Licença atualizada e salva em', caminho)
+            
+            # Solicita database_url (opcional)
+            database_url = input('Database URL PostgreSQL (opcional, Enter para pular): ').strip() or None
+            
+            # Salva no novo formato JSON
+            salvar_licenca_json(
+                novo_token,
+                payload.get('cnpjs', []),
+                payload.get('ids_celular', []),
+                payload.get('validade'),
+                database_url,
+                caminho
+            )
+            print('Licença atualizada e salva em', caminho, '(formato JSON)')
         else:
             cnpjs = _input_cnpjs_inicial()
             ids_celular = []
@@ -344,14 +388,20 @@ if __name__ == "__main__":
                 break
 
             token = gerar_licenca(cnpjs, ids_celular, validade, nome_cliente, sql_servidor, sql_banco)
+            
+            # Solicita database_url (opcional)
+            database_url = input('Database URL PostgreSQL para validação online (opcional, Enter para pular): ').strip() or None
+            
             # nome padrão do arquivo
             safe = ''.join(ch for ch in nome_cliente if (ch.isalnum() or ch in (' ', '_', '-'))).strip().replace(' ', '_')
             if not safe:
                 safe = 'cliente'
             default_name = f"Licenca_CSCollectManager_{safe}.key"
             caminho = input(f"Salvar em (padrão '{default_name}'): ").strip() or default_name
-            salvar_licenca(token, caminho)
-            print('Licença gerada e salva em', caminho)
+            
+            # Salva no novo formato JSON
+            salvar_licenca_json(token, cnpjs, ids_celular, validade, database_url, caminho)
+            print('Licença gerada e salva em', caminho, '(formato JSON)')
     except KeyboardInterrupt:
         print('\nOperação cancelada.')
     except Exception as err:
