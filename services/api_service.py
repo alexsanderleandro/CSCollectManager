@@ -40,7 +40,7 @@ class ApiService:
     # API pública
     # ------------------------------------------------------------------
 
-    def upload_file(self, filepath: str) -> Tuple[bool, str]:
+    def upload_file(self, filepath: str, cnpj: Optional[str] = None, codvendedor: Optional[str] = None, idcelular: Optional[str] = None) -> Tuple[bool, str]:
         """
         Envia um arquivo ZIP para o endpoint ``/upload`` da API.
 
@@ -66,12 +66,44 @@ class ApiService:
 
         try:
             with open(filepath, "rb") as fh:
+                # Monta payload multipart/form-data com campos adicionais
+                data = {}
+                if cnpj:
+                    data["cnpj"] = cnpj
+                if codvendedor:
+                    data["codvendedor"] = codvendedor
+                if idcelular:
+                    data["idcelular"] = idcelular
+
+                # Log de depuração: mostrar payload que será enviado
+                try:
+                    import logging
+                    logger = logging.getLogger("ApiService")
+                    logger.debug("Enviando POST %s", url)
+                    logger.debug("Headers: %s", {k: (v[:8] + '...' if k.lower()=='authorization' and v else v) for k,v in headers.items()})
+                    logger.debug("Form fields: %s", data)
+                except Exception:
+                    pass
+
                 resp = requests.post(
                     url,
                     files={"file": (filename, fh)},
+                    data=data if data else None,
                     headers=headers,
                     timeout=self.TIMEOUT,
                 )
+
+                # Log resposta bruta para diagnóstico
+                try:
+                    import logging
+                    logger = logging.getLogger("ApiService")
+                    logger.debug("API response status: %s", resp.status_code)
+                    try:
+                        logger.debug("API response json: %s", resp.json())
+                    except Exception:
+                        logger.debug("API response text: %s", resp.text[:1000])
+                except Exception:
+                    pass
 
             if resp.ok:
                 try:

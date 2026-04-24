@@ -1276,6 +1276,10 @@ class MainWindowERP(QMainWindow):
         if licenca:
             self._licenca_payload = licenca
             self._populate_dispositivos_combo()
+
+        # Atualiza campos de configuração da API com os valores persistidos
+        # (inclui token salvo automaticamente pelo login)
+        self._load_api_settings_fields()
         
         # Atualiza UI
         empresa_nome = empresa.get("nome", "Empresa")
@@ -2125,18 +2129,30 @@ class MainWindowERP(QMainWindow):
             self._status_bar.show_message("📡  Enviando carga para a API...", 0)
 
             # Executa em thread para não bloquear a UI
+            # coleta dados de empresa/usuario da última exportação
+            lexp = getattr(self, '_last_export_empresa', {})
+            lusr = getattr(self, '_last_export_usuario', {})
+            cnpj = lexp.get('cnpj', '')
+            codvendedor = lusr.get('codigo', '')
+            idcelular = lusr.get('id_celular', '')
+            if codvendedor is not None:
+                codvendedor = str(codvendedor).zfill(3)
+
             class _ApiUploadThread(QThread):
-                def __init__(self, api_svc, path, parent=None):
+                def __init__(self, api_svc, path, cnpj_val=None, codvend_val=None, idcel_val=None, parent=None):
                     super().__init__(parent)
                     self._api = api_svc
                     self._path = path
+                    self._cnpj = cnpj_val
+                    self._codv = codvend_val
+                    self._idcel = idcel_val
                     self.success = False
                     self.message = ""
 
                 def run(self):
-                    self.success, self.message = self._api.upload_file(self._path)
+                    self.success, self.message = self._api.upload_file(self._path, cnpj=self._cnpj, codvendedor=self._codv, idcelular=self._idcel)
 
-            thread = _ApiUploadThread(api, filepath, self)
+            thread = _ApiUploadThread(api, filepath, cnpj, codvendedor, idcelular, self)
 
             def _on_upload_done():
                 if thread.success:

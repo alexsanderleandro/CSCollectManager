@@ -249,6 +249,7 @@ class LoginDialog(QDialog):
         self._worker: Optional[ConnectionWorker] = None
         self._auth_worker: Optional[AuthWorker] = None
         self._licenca_payload: dict = {}  # Payload do arquivo .key (dispositivos, cnpjs, etc.)
+        self._licenca_token_raw: str = ""  # Token bruto do arquivo .key (para api_authorization)
         
         self._setup_ui()
         self._connect_signals()
@@ -933,8 +934,19 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, "Servidor ou banco inválidos", "O servidor ou banco informado na licença não corresponde à conexão selecionada.")
                 return False
 
-            # Tudo OK: armazena payload
+            # Tudo OK: armazena payload e token raw
             self._licenca_payload = payload_dict
+            try:
+                import json as _json
+                with open(str(cand), 'r', encoding='utf-8') as _kf:
+                    _kraw = _kf.read().strip()
+                try:
+                    _kdata = _json.loads(_kraw)
+                    self._licenca_token_raw = _kdata.get('token', _kraw)
+                except Exception:
+                    self._licenca_token_raw = _kraw
+            except Exception:
+                pass
             return True
         except Exception as e:
             logger.error(f"Erro ao validar arquivo .key: {e}")
@@ -1039,6 +1051,17 @@ class LoginDialog(QDialog):
                 pass
 
             self._licenca_payload = payload_dict
+            try:
+                import json as _json
+                with open(str(cand), 'r', encoding='utf-8') as _kf:
+                    _kraw = _kf.read().strip()
+                try:
+                    _kdata = _json.loads(_kraw)
+                    self._licenca_token_raw = _kdata.get('token', _kraw)
+                except Exception:
+                    self._licenca_token_raw = _kraw
+            except Exception:
+                pass
             return True
         except Exception as e:
             logger.error(f"Erro ao carregar licença na inicialização: {e}")
@@ -1357,7 +1380,8 @@ class LoginDialog(QDialog):
                 "nome": user_data.get("NomeUsuario", ""),
                 "admin": user_data.get("PDVGerenteSN", 0) == 1
             },
-            "licenca": self._licenca_payload or {}
+            "licenca": self._licenca_payload or {},
+            "licenca_token": self._licenca_token_raw
         }
         
         self.login_successful.emit(login_data)
