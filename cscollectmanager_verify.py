@@ -47,43 +47,151 @@ def verify_token(token: str, master_key: str) -> Dict[str, Any]:
     return payload
 
 
-def load_and_verify_file(path: str, master_key: Optional[str] = None) -> Dict[str, Any]:
-    """Lê um arquivo contendo o token e verifica sua assinatura.
-    
-    Suporta dois formatos:
-    1. Formato antigo: arquivo contém apenas o token (string)
-    2. Formato novo (JSON): arquivo contém JSON com campo "token"
+def _is_signed_token(token: str) -> bool:
+    """Retorna True apenas se o token está no formato HMAC assinado (base64url_json.base64url_sig).
 
-    Se `master_key` for None, a função tenta ler a variável de ambiente
-    `MASTER_KEY`. Lança exceções em caso de erro (arquivo não encontrado,
-    formato inválido, assinatura inválida).
+    Verifica se a primeira parte, ao ser decodificada de base64url, resulta em JSON válido.
+    Isso evita falso-positivo com tokens no formato 'api_token.neon_signature'.
+    """
+    parts = token.strip().split('.')
+    if len(parts) != 2 or not all(p for p in parts):
+        return False
+    try:
+        payload_bytes = _b64u_decode(parts[0])
+        json.loads(payload_bytes.decode('utf-8'))
+        return True
+    except Exception:
+        return False
+
+
+def _verify_token_online(licenca_json: Dict[str, Any]) -> Dict[str, Any]:
+    """Valida o token puro contra o banco Neon (database_url) e retorna o payload completo.
+
+    Conecta à tabela `clientes`, verifica se o token está registrado e ativo,
+    e monta um payload compatível com o restante do sistema a partir dos dados
+    retornados pelo banco.
+
+    Raises:
+        ImportError: se psycopg2 não estiver instalado.
+        ValueError: se database_url não estiver presente no arquivo.
+        Exception: se a validação falhar (token inválido, expirado, inativo, etc.).
+    """
+    database_url = licenca_json.get('database_url')
+    if not database_url:
+        # Sem database_url: aceita apenas com os dados locais do arquivo
+        return licenca_json
+
+    try:
+        import psycopg2
+    except ImportError:
+        raise ImportError("psycopg2 não instalado. Execute: pip install psycopg2-binary")
+
+    token = licenca_json.get('token', '')
+    cnpjs_local = licenca_json.get('cnpjs', [])
+    cnpjs_str = ','.join(sorted(cnpjs_local))
+
+    try:
+        conn = psycopg2.connect(database_url, connect_timeout=10)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT cnpj, idcelular, token, validade, ativo, nome_cliente,
+                   sql_servidor, sql_banco
+            FROM clientes
+            WHERE cnpj = %s
+            """,
+            (cnpjs_str,)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        raise Exception(f"Erro ao conectar ao banco de licenças: {e}")
+
+    if not row:
+        raise Exception(f"CNPJ não registrado ou não autorizado no servidor de licenças: {cnpjs_str}")
+
+    cnpj_db, idcelular_db, token_db, validade_db, ativo_db, nome_cliente_db, sql_srv_db, sql_banco_db = row
+
+    if not ativo_db:
+        raise Exception("Licença desativada no servidor")
+
+    if token_db != token:
+        raise Exception("Token não corresponde ao registrado no servidor")
+
+    # Monta payload compatível com o restante do sistema
+    from datetime import date as _date
+    if validade_db:
+        try:
+            if _date.fromisoformat(str(validade_db)) < _date.today():
+                raise Exception(f"Licença expirada no servidor em {validade_db}")
+        except Exception as e:
+            if "expirada" in str(e):
+                raise
+
+    return {
+        **licenca_json,
+        'nome_cliente': nome_cliente_db or licenca_json.get('nome_cliente', ''),
+        'sql_servidor': sql_srv_db or licenca_json.get('sql_servidor', ''),
+        'sql_banco': sql_banco_db or licenca_json.get('sql_banco', ''),
+        'validade': str(validade_db) if validade_db else licenca_json.get('validade', ''),
+        'ids_celular': idcelular_db.split(',') if idcelular_db else licenca_json.get('ids', []),
+        'cnpjs': cnpj_db.split(',') if cnpj_db else cnpjs_local,
+    }
+
+
+def load_and_verify_file(path: str, master_key: Optional[str] = None) -> Dict[str, Any]:
+    """Lê um arquivo .key e valida a licença.
+
+    Suporta três formatos:
+    1. Formato legado (string simples): arquivo contém apenas o token HMAC assinado.
+    2. Formato JSON assinado: JSON com campo ``token`` no formato
+       ``base64url(payload).base64url(signature)`` — valida HMAC com MASTER_KEY.
+    3. Formato JSON puro: JSON com campo ``token`` como string simples (token da API)
+       — valida online contra o banco Neon via ``database_url``.
+
+    ``master_key`` é necessário apenas para o formato assinado.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
-    
-    with open(path, 'r', encoding='utf-8') as f:
-        conteudo = f.read().strip()
-    
-    # Tenta detectar se é JSON (novo formato) ou token simples (formato antigo)
-    token = None
+
+    conteudo = None
+    for _enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
+        try:
+            with open(path, 'r', encoding=_enc) as f:
+                conteudo = f.read().strip()
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    if conteudo is None:
+        raise ValueError(f"Não foi possível decodificar o arquivo de licença: {path}")
+
+    # Tenta parsear como JSON
+    licenca_json = None
     try:
-        # Tenta parsear como JSON
         licenca_json = json.loads(conteudo)
-        if isinstance(licenca_json, dict) and 'token' in licenca_json:
-            # Formato novo (JSON)
-            token = licenca_json['token']
-        else:
-            # JSON mas sem campo "token" - usa o conteúdo direto
-            token = conteudo
     except json.JSONDecodeError:
-        # Não é JSON - formato antigo (token direto)
+        pass
+
+    if licenca_json is not None and isinstance(licenca_json, dict):
+        token = licenca_json.get('token', '')
+        if _is_signed_token(token):
+            # Formato JSON assinado — verifica HMAC
+            mk = master_key or os.environ.get('MASTER_KEY')
+            if not mk:
+                raise ValueError('MASTER_KEY não fornecida (passar master_key ou definir variável de ambiente).')
+            return verify_token(token, mk)
+        else:
+            # Formato JSON puro — token da API, valida online contra Neon
+            return _verify_token_online(licenca_json)
+    else:
+        # Formato legado: conteúdo é o token diretamente
         token = conteudo
-    
-    mk = master_key or os.environ.get('MASTER_KEY')
-    if not mk:
-        raise ValueError('MASTER_KEY não fornecida (passar master_key ou definir variável de ambiente).')
-    
-    return verify_token(token, mk)
+        mk = master_key or os.environ.get('MASTER_KEY')
+        if not mk:
+            raise ValueError('MASTER_KEY não fornecida (passar master_key ou definir variável de ambiente).')
+        return verify_token(token, mk)
 
 
 def get_relevant_fields(payload: Dict[str, Any]) -> Dict[str, Any]:

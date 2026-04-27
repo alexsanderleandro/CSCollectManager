@@ -34,6 +34,21 @@ import re
 import cscollectmanager_verify
 import sys
 
+
+def _extract_api_token(token: str) -> str:
+    """Retorna apenas a parte do token da API (antes do '.' da assinatura Neon).
+
+    Formato no .key: 'api_token.neon_signature'  ->  retorna 'api_token'
+    Formato HMAC assinado ou token simples       ->  retorna o token inteiro
+    """
+    if not token:
+        return token
+    parts = token.split('.')
+    # Token puro com assinatura Neon: primeira parte é hex MD5 (32 chars), segunda é base64url
+    if len(parts) == 2 and len(parts[0]) == 32 and parts[0].isalnum():
+        return parts[0]
+    return token
+
 # Importações para persistência e autenticação
 import login as login_module
 from authentication import DBConfig, verify_user, get_connection
@@ -871,13 +886,11 @@ class LoginDialog(QDialog):
                     payload_dict = payload
                     # Mostrar caminho do arquivo de licença verificado na UI (tela de conexão)
                     try:
-                        # atualiza tooltip com caminho completo; inclui origem da MASTER_KEY
                         try:
-                            tip = str(cand)
-                            if mk_source:
-                                tip += f"\nMASTER_KEY source: {mk_source}"
-                            self._lbl_license_file.setToolTip(tip)
-                            self._lbl_license_file.setText("Licença")
+                            import os as _os
+                            _nome_key = _os.path.basename(str(cand))
+                            self._lbl_license_file.setToolTip(str(cand))
+                            self._lbl_license_file.setText(f"📄 Licença: {_nome_key}")
                             self._lbl_license_file.show()
                         except Exception:
                             pass
@@ -889,23 +902,9 @@ class LoginDialog(QDialog):
                     continue
 
             if payload_dict is None:
-                # Exibe origem da MASTER_KEY (se conhecida) para ajudar diagnóstico
-                extra = f"\nMASTER_KEY source: {mk_source}" if mk_source else ""
-                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}{extra}")
+                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}")
                 return False
 
-            # Validação de campos obrigatórios: sql_servidor / sql_banco
-            sql_servidor = (payload_dict.get('sql_servidor') or '').strip()
-            sql_banco = (payload_dict.get('sql_banco') or '').strip()
-            if not sql_servidor or not sql_banco:
-                QMessageBox.critical(self, "Campo de licença ausente", "Arquivo de licença inválido: campo 'sql_servidor' ou 'sql_banco' ausente.")
-                return False
-
-            if len(sql_servidor) > 30 or len(sql_banco) > 30:
-                QMessageBox.critical(self, "Campo inválido", "Arquivo de licença inválido: 'sql_servidor' ou 'sql_banco' excede 30 caracteres.")
-                return False
-
-            # A assinatura já foi verificada por cscollectmanager_verify.load_and_verify_file.
             # Verificar validade da licença (data)
             validade = payload_dict.get('validade') or ''
             try:
@@ -927,24 +926,46 @@ class LoginDialog(QDialog):
             except Exception:
                 pass
 
-            # Verifica se os campos sql_servidor/sql_banco batem com a conexão selecionada
-            conn_srv = (connection.get('server') or '').strip()
-            conn_db = (connection.get('database') or '').strip()
-            if (conn_srv.lower() != sql_servidor.lower()) or (conn_db.lower() != sql_banco.lower()):
-                QMessageBox.critical(self, "Servidor ou banco inválidos", "O servidor ou banco informado na licença não corresponde à conexão selecionada.")
-                return False
+            # Validação de sql_servidor/sql_banco (apenas para licenças assinadas que contêm esses campos)
+            sql_servidor = (payload_dict.get('sql_servidor') or '').strip()
+            sql_banco = (payload_dict.get('sql_banco') or '').strip()
+            if sql_servidor and sql_banco:
+                if len(sql_servidor) > 30 or len(sql_banco) > 30:
+                    QMessageBox.critical(self, "Campo inválido", "Arquivo de licença inválido: 'sql_servidor' ou 'sql_banco' excede 30 caracteres.")
+                    return False
+                conn_srv = (connection.get('server') or '').strip()
+                conn_db = (connection.get('database') or '').strip()
+                if conn_srv.lower() != sql_servidor.lower() or conn_db.lower() != sql_banco.lower():
+                    QMessageBox.critical(
+                        self,
+                        "Servidor ou banco inválidos",
+                        f"A licença autoriza:\n"
+                        f"  Servidor: {sql_servidor}\n"
+                        f"  Banco:    {sql_banco}\n\n"
+                        f"Conexão selecionada:\n"
+                        f"  Servidor: {conn_srv}\n"
+                        f"  Banco:    {conn_db}"
+                    )
+                    return False
 
             # Tudo OK: armazena payload e token raw
             self._licenca_payload = payload_dict
             try:
                 import json as _json
-                with open(str(cand), 'r', encoding='utf-8') as _kf:
-                    _kraw = _kf.read().strip()
-                try:
-                    _kdata = _json.loads(_kraw)
-                    self._licenca_token_raw = _kdata.get('token', _kraw)
-                except Exception:
-                    self._licenca_token_raw = _kraw
+                _kraw = None
+                for _enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
+                    try:
+                        with open(str(cand), 'r', encoding=_enc) as _kf:
+                            _kraw = _kf.read().strip()
+                        break
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                if _kraw:
+                    try:
+                        _kdata = _json.loads(_kraw)
+                        self._licenca_token_raw = _extract_api_token(_kdata.get('token', _kraw))
+                    except Exception:
+                        self._licenca_token_raw = _extract_api_token(_kraw)
             except Exception:
                 pass
             return True
@@ -1014,8 +1035,10 @@ class LoginDialog(QDialog):
                         payload = cscollectmanager_verify.load_and_verify_file(str(cand))
                     payload_dict = payload
                     try:
+                        import os as _os
+                        _nome_key = _os.path.basename(str(cand))
                         self._lbl_license_file.setToolTip(str(cand))
-                        self._lbl_license_file.setText("Licença")
+                        self._lbl_license_file.setText(f"📄 Licença: {_nome_key}")
                         self._lbl_license_file.show()
                     except Exception:
                         pass
@@ -1025,8 +1048,7 @@ class LoginDialog(QDialog):
                     continue
 
             if payload_dict is None:
-                extra = f"\nMASTER_KEY source: {mk_source}" if mk_source else ""
-                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença. {last_error or ''}{extra}")
+                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença.\n{last_error or ''}")
                 return False
 
             # Verifica validade
@@ -1053,13 +1075,20 @@ class LoginDialog(QDialog):
             self._licenca_payload = payload_dict
             try:
                 import json as _json
-                with open(str(cand), 'r', encoding='utf-8') as _kf:
-                    _kraw = _kf.read().strip()
-                try:
-                    _kdata = _json.loads(_kraw)
-                    self._licenca_token_raw = _kdata.get('token', _kraw)
-                except Exception:
-                    self._licenca_token_raw = _kraw
+                _kraw = None
+                for _enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
+                    try:
+                        with open(str(cand), 'r', encoding=_enc) as _kf:
+                            _kraw = _kf.read().strip()
+                        break
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                if _kraw:
+                    try:
+                        _kdata = _json.loads(_kraw)
+                        self._licenca_token_raw = _extract_api_token(_kdata.get('token', _kraw))
+                    except Exception:
+                        self._licenca_token_raw = _extract_api_token(_kraw)
             except Exception:
                 pass
             return True

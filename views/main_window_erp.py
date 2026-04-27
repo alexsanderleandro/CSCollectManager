@@ -959,6 +959,50 @@ class MainWindowERP(QMainWindow):
         token_row.addWidget(btn_toggle_token)
         api_form.addLayout(token_row)
 
+        # Database URL (Neon direto)
+        lbl_dburl = QLabel("URL do Banco (Neon) — verificação de duplicatas:")
+        lbl_dburl.setStyleSheet("color: #cccccc; font-size: 10pt;")
+        api_form.addWidget(lbl_dburl)
+
+        lbl_dburl_hint = QLabel(
+            "Conexão direta ao banco PostgreSQL da API para verificar e remover cargas duplicadas "
+            "antes do envio. Deixe em branco se não quiser usar esse recurso."
+        )
+        lbl_dburl_hint.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+        lbl_dburl_hint.setWordWrap(True)
+        api_form.addWidget(lbl_dburl_hint)
+
+        dburl_row = QHBoxLayout()
+        self._settings_api_dburl = QLineEdit()
+        self._settings_api_dburl.setPlaceholderText(
+            "postgresql://user:pass@host/db?sslmode=require"
+        )
+        self._settings_api_dburl.setMinimumHeight(36)
+        self._settings_api_dburl.setEchoMode(QLineEdit.EchoMode.Password)
+        self._settings_api_dburl.setStyleSheet(_field_style)
+        dburl_row.addWidget(self._settings_api_dburl, 1)
+
+        btn_toggle_dburl = QPushButton("👁")
+        btn_toggle_dburl.setFixedSize(36, 36)
+        btn_toggle_dburl.setToolTip("Mostrar/ocultar URL")
+        btn_toggle_dburl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_toggle_dburl.setCheckable(True)
+        btn_toggle_dburl.setStyleSheet("""
+            QPushButton {
+                background-color: #3e3e42; color: #cccccc;
+                border: none; border-radius: 4px; font-size: 14pt;
+            }
+            QPushButton:hover { background-color: #505050; }
+            QPushButton:checked { background-color: #0078d4; }
+        """)
+        btn_toggle_dburl.toggled.connect(
+            lambda checked: self._settings_api_dburl.setEchoMode(
+                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+            )
+        )
+        dburl_row.addWidget(btn_toggle_dburl)
+        api_form.addLayout(dburl_row)
+
         # Botões salvar / testar
         api_btns = QHBoxLayout()
         api_btns.addStretch()
@@ -1013,6 +1057,8 @@ class MainWindowERP(QMainWindow):
                 self._settings_api_url.setText(AppConfig.get_api_url())
             if hasattr(self, '_settings_api_token'):
                 self._settings_api_token.setText(AppConfig.get_api_authorization())
+            if hasattr(self, '_settings_api_dburl'):
+                self._settings_api_dburl.setText(AppConfig.get_api_database_url())
         except Exception:
             pass
 
@@ -1022,9 +1068,11 @@ class MainWindowERP(QMainWindow):
 
         url = self._settings_api_url.text().strip() if hasattr(self, '_settings_api_url') else ""
         token = self._settings_api_token.text().strip() if hasattr(self, '_settings_api_token') else ""
+        dburl = self._settings_api_dburl.text().strip() if hasattr(self, '_settings_api_dburl') else ""
 
         AppConfig.set_api_url(url)
         AppConfig.set_api_authorization(token)
+        AppConfig.set_api_database_url(dburl)
 
         if url and token:
             msg = "✅ Configurações da API salvas.\nAs cargas serão enviadas automaticamente após a exportação."
@@ -2102,17 +2150,20 @@ class MainWindowERP(QMainWindow):
         # ── Envio para a API CSCollect ──────────────────────────────────
         self._send_to_api(filepath)
 
-    def _send_to_api(self, filepath: str):
+    def _send_to_api(self, filepath: str, _force_delete_id=None):
         """
-        Envia o arquivo ZIP para a API CSCollect em thread separada (não bloqueante).
+        Verifica duplicidade e envia o arquivo ZIP para a API CSCollect.
 
-        Exibe feedback na status bar e, em caso de falha, abre um diálogo
-        com a opção de tentar novamente.
+        Fluxo:
+        1. Verifica se já existe registro (cnpj + codvendedor + idcelular).
+        2. Se sim → exibe diálogo de conflito com opções de substituir ou cancelar.
+        3. Se "Apagar e enviar novo" → remove o registro antigo e faz upload.
+        4. Se "Manter" → cancela sem enviar.
+        5. Se não há conflito → faz upload direto.
         """
         try:
             from utils.config import AppConfig
             if not AppConfig.is_api_configured():
-                # API não configurada — nada a fazer
                 return
         except Exception:
             return
@@ -2121,27 +2172,234 @@ class MainWindowERP(QMainWindow):
             from utils.config import AppConfig
             from services.api_service import ApiService
             from PySide6.QtCore import QThread
+            from PySide6.QtWidgets import (
+                QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                QPushButton, QProgressBar, QFrame,
+            )
+            from PySide6.QtCore import Qt
+            import os as _os
 
-            url = AppConfig.get_api_url()
-            token = AppConfig.get_api_authorization()
-            api = ApiService(base_url=url, authorization=token)
+            url      = AppConfig.get_api_url()
+            token    = AppConfig.get_api_authorization()
+            db_url   = AppConfig.get_api_database_url()
+            api      = ApiService(base_url=url, authorization=token)
 
-            self._status_bar.show_message("📡  Enviando carga para a API...", 0)
-
-            # Executa em thread para não bloquear a UI
-            # coleta dados de empresa/usuario da última exportação
-            lexp = getattr(self, '_last_export_empresa', {})
-            lusr = getattr(self, '_last_export_usuario', {})
-            cnpj = lexp.get('cnpj', '')
+            lexp       = getattr(self, '_last_export_empresa',  {})
+            lusr       = getattr(self, '_last_export_usuario',  {})
+            cnpj       = lexp.get('cnpj', '')
             codvendedor = lusr.get('codigo', '')
-            idcelular = lusr.get('id_celular', '')
+            idcelular  = lusr.get('id_celular', '')
             if codvendedor is not None:
                 codvendedor = str(codvendedor).zfill(3)
 
-            class _ApiUploadThread(QThread):
-                def __init__(self, api_svc, path, cnpj_val=None, codvend_val=None, idcel_val=None, parent=None):
+            # ── Diálogo base (reutilizado nas duas fases) ─────────────────────
+            _DLG_CSS = """
+                QDialog  { background-color: #1e1e1e; }
+                QLabel   { color: #cccccc; font-size: 10pt; }
+                QFrame#separator { background-color: #3e3e42; max-height: 1px; }
+                QPushButton {
+                    border: none; border-radius: 4px;
+                    padding: 8px 20px; font-weight: bold; color: white;
+                }
+                QPushButton#btnOk     { background-color: #0078d4; }
+                QPushButton#btnOk:hover { background-color: #1e8ad4; }
+                QPushButton#btnDelete { background-color: #c0392b; }
+                QPushButton#btnDelete:hover { background-color: #e74c3c; }
+                QPushButton#btnKeep   { background-color: #444; }
+                QPushButton#btnKeep:hover { background-color: #555; }
+                QPushButton#btnRetry  { background-color: #e65100; }
+                QPushButton#btnRetry:hover { background-color: #ff6d00; }
+                QPushButton:disabled  { background-color: #3e3e42; color: #666; }
+            """
+
+            def _make_progress(parent_layout, *, indeterminate=True):
+                bar = QProgressBar()
+                bar.setRange(0, 0 if indeterminate else 1)
+                if not indeterminate:
+                    bar.setValue(1)
+                bar.setTextVisible(False)
+                bar.setMaximumHeight(4)
+                bar.setStyleSheet("""
+                    QProgressBar { background-color: #2d2d30; border: none; border-radius: 2px; }
+                    QProgressBar::chunk { background-color: #0078d4; border-radius: 2px; }
+                """)
+                parent_layout.addWidget(bar)
+                return bar
+
+            # ── FASE 1: verificar duplicidade ─────────────────────────────────
+            class _CheckThread(QThread):
+                def __init__(self, api_svc, cnpj_v, codv_v, idcel_v, parent=None):
                     super().__init__(parent)
-                    self._api = api_svc
+                    self._api   = api_svc
+                    self._cnpj  = cnpj_v
+                    self._codv  = codv_v
+                    self._idcel = idcel_v
+                    self.found  = False
+                    self.record = None
+                    self.error  = None
+
+                def run(self):
+                    _dbu = getattr(self, '_db_url', '')
+                    self.found, self.record, self.error = self._api.check_existing(
+                        self._cnpj, self._codv, self._idcel, database_url=_dbu
+                    )
+
+            chk_thread = _CheckThread(api, cnpj, codvendedor, idcelular, self)
+            chk_thread._db_url = db_url
+
+            dlg_check = QDialog(self)
+            dlg_check.setWindowTitle("Verificando...")
+            dlg_check.setWindowFlags(
+                Qt.WindowType.Dialog |
+                Qt.WindowType.WindowTitleHint |
+                Qt.WindowType.CustomizeWindowHint
+            )
+            dlg_check.setMinimumWidth(380)
+            dlg_check.setStyleSheet(_DLG_CSS)
+
+            lay_check = QVBoxLayout(dlg_check)
+            lay_check.setContentsMargins(24, 20, 24, 20)
+            lay_check.setSpacing(12)
+
+            lbl_chk = QLabel("🔍  Verificando registros existentes na API...")
+            lbl_chk.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_chk.setWordWrap(True)
+            lay_check.addWidget(lbl_chk)
+
+            lbl_chk_file = QLabel(f"Arquivo: {_os.path.basename(filepath)}")
+            lbl_chk_file.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_chk_file.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+            lay_check.addWidget(lbl_chk_file)
+
+            _make_progress(lay_check)
+
+            def _on_check_done():
+                dlg_check.accept()   # fecha o diálogo de verificação
+
+            chk_thread.finished.connect(_on_check_done)
+            chk_thread.start()
+            self._api_check_thread = chk_thread
+            dlg_check.exec()        # bloqueia até _on_check_done
+
+            # ── Resultado da verificação ──────────────────────────────────────
+            if chk_thread.found and chk_thread.record:
+                rec = chk_thread.record
+                nome_banco  = str(rec.get("nome_arquivo") or rec.get("arquivo") or "(sem nome)")
+                data_envio  = str(rec.get("data_envio") or rec.get("criado_em") or "")
+                carga_id    = rec.get("id")
+
+                # Diálogo de conflito
+                dlg_conf = QDialog(self)
+                dlg_conf.setWindowTitle("Carga já existente")
+                dlg_conf.setWindowFlags(
+                    Qt.WindowType.Dialog |
+                    Qt.WindowType.WindowTitleHint |
+                    Qt.WindowType.CustomizeWindowHint
+                )
+                dlg_conf.setMinimumWidth(420)
+                dlg_conf.setStyleSheet(_DLG_CSS)
+
+                lay_conf = QVBoxLayout(dlg_conf)
+                lay_conf.setContentsMargins(24, 20, 24, 20)
+                lay_conf.setSpacing(12)
+
+                lbl_warn = QLabel("⚠️  Já existe uma carga registrada para esta identificação:")
+                lbl_warn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl_warn.setWordWrap(True)
+                lbl_warn.setStyleSheet("color: #f39c12; font-size: 10pt; font-weight: bold;")
+                lay_conf.addWidget(lbl_warn)
+
+                sep = QFrame()
+                sep.setObjectName("separator")
+                sep.setFrameShape(QFrame.Shape.HLine)
+                lay_conf.addWidget(sep)
+
+                # Detalhes do registro existente
+                info_css = "color: #cccccc; font-size: 9pt;"
+                for label_txt, value_txt in [
+                    ("CNPJ:",        cnpj or "—"),
+                    ("Vendedor:",    codvendedor or "—"),
+                    ("ID Celular:",  idcelular or "—"),
+                    ("Arquivo no banco:", nome_banco),
+                    ("Data de envio:",    data_envio or "—"),
+                ]:
+                    row = QHBoxLayout()
+                    lbl_k = QLabel(label_txt)
+                    lbl_k.setStyleSheet(info_css + " font-weight: bold;")
+                    lbl_k.setFixedWidth(120)
+                    lbl_v = QLabel(value_txt)
+                    lbl_v.setStyleSheet(info_css)
+                    lbl_v.setWordWrap(True)
+                    row.addWidget(lbl_k)
+                    row.addWidget(lbl_v, 1)
+                    lay_conf.addLayout(row)
+
+                sep2 = QFrame()
+                sep2.setObjectName("separator")
+                sep2.setFrameShape(QFrame.Shape.HLine)
+                lay_conf.addWidget(sep2)
+
+                lbl_pergunta = QLabel("O que deseja fazer?")
+                lbl_pergunta.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl_pergunta.setStyleSheet("color: #aaaaaa; font-size: 9pt;")
+                lay_conf.addWidget(lbl_pergunta)
+
+                btn_row = QHBoxLayout()
+                btn_row.setSpacing(10)
+                btn_delete = QPushButton("🗑  Apagar do banco e enviar novo")
+                btn_delete.setObjectName("btnDelete")
+                btn_keep   = QPushButton("✔  Manter e não enviar")
+                btn_keep.setObjectName("btnKeep")
+                btn_row.addWidget(btn_delete)
+                btn_row.addWidget(btn_keep)
+                lay_conf.addLayout(btn_row)
+
+                _conf_choice = {"value": None}  # "delete" | "keep"
+
+                def _choose_delete():
+                    _conf_choice["value"] = "delete"
+                    dlg_conf.accept()
+
+                def _choose_keep():
+                    _conf_choice["value"] = "keep"
+                    dlg_conf.reject()
+
+                btn_delete.clicked.connect(_choose_delete)
+                btn_keep.clicked.connect(_choose_keep)
+                dlg_conf.exec()
+
+                if _conf_choice["value"] == "keep":
+                    try:
+                        self._status_bar.show_message(
+                            f"ℹ️  Envio cancelado — carga '{nome_banco}' mantida no banco.", 6000
+                        )
+                    except Exception:
+                        pass
+                    logger.info("Envio para API cancelado: usuário optou por manter registro existente.")
+                    return
+
+                if _conf_choice["value"] == "delete":
+                    # Remove o registro antigo antes de subir o novo
+                    if carga_id is not None:
+                        ok_del, msg_del = api.delete_carga(carga_id, database_url=db_url)
+                        if not ok_del:
+                            from PySide6.QtWidgets import QMessageBox
+                            QMessageBox.warning(
+                                self,
+                                "Erro ao remover registro",
+                                f"Não foi possível remover o registro anterior:\n\n{msg_del}\n\n"
+                                "O novo arquivo não será enviado.",
+                            )
+                            logger.warning(f"Falha ao remover carga {carga_id}: {msg_del}")
+                            return
+                        logger.info(f"Carga anterior (id={carga_id}) removida: {msg_del}")
+                    # Continua para o upload (abaixo)
+
+            # ── FASE 2: upload ────────────────────────────────────────────────
+            class _ApiUploadThread(QThread):
+                def __init__(self, api_svc, path, cnpj_val, codvend_val, idcel_val, parent=None):
+                    super().__init__(parent)
+                    self._api  = api_svc
                     self._path = path
                     self._cnpj = cnpj_val
                     self._codv = codvend_val
@@ -2150,39 +2408,89 @@ class MainWindowERP(QMainWindow):
                     self.message = ""
 
                 def run(self):
-                    self.success, self.message = self._api.upload_file(self._path, cnpj=self._cnpj, codvendedor=self._codv, idcelular=self._idcel)
+                    self.success, self.message = self._api.upload_file(
+                        self._path,
+                        cnpj=self._cnpj,
+                        codvendedor=self._codv,
+                        idcelular=self._idcel,
+                    )
 
-            thread = _ApiUploadThread(api, filepath, cnpj, codvendedor, idcelular, self)
+            up_thread = _ApiUploadThread(api, filepath, cnpj, codvendedor, idcelular, self)
+
+            self._status_bar.show_message("📡  Enviando carga para a API...", 0)
+
+            dlg_up = QDialog(self)
+            dlg_up.setWindowTitle("Enviando para API")
+            dlg_up.setWindowFlags(
+                Qt.WindowType.Dialog |
+                Qt.WindowType.WindowTitleHint |
+                Qt.WindowType.CustomizeWindowHint
+            )
+            dlg_up.setMinimumWidth(380)
+            dlg_up.setStyleSheet(_DLG_CSS)
+
+            lay_up = QVBoxLayout(dlg_up)
+            lay_up.setContentsMargins(24, 20, 24, 20)
+            lay_up.setSpacing(14)
+
+            lbl_up_status = QLabel("📡  Conectando à API...")
+            lbl_up_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_up_status.setWordWrap(True)
+            lay_up.addWidget(lbl_up_status)
+
+            lbl_up_file = QLabel(f"Arquivo: {_os.path.basename(filepath)}")
+            lbl_up_file.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_up_file.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+            lay_up.addWidget(lbl_up_file)
+
+            prog_up = _make_progress(lay_up)
+
+            btn_ok_up = QPushButton("OK")
+            btn_ok_up.setObjectName("btnOk")
+            btn_ok_up.setVisible(False)
+            btn_ok_up.clicked.connect(dlg_up.accept)
+            btn_row_up = QHBoxLayout()
+            btn_row_up.addStretch()
+            btn_row_up.addWidget(btn_ok_up)
+            btn_row_up.addStretch()
+            lay_up.addLayout(btn_row_up)
 
             def _on_upload_done():
-                if thread.success:
-                    logger.info(f"Carga enviada para API: {thread.message}")
+                prog_up.setRange(0, 1)
+                prog_up.setValue(1)
+                if up_thread.success:
+                    logger.info(f"Carga enviada para API: {up_thread.message}")
+                    lbl_up_status.setText(f"✅  Carga enviada com sucesso!\n{up_thread.message}")
+                    lbl_up_status.setStyleSheet("color: #4caf50; font-size: 10pt; font-weight: bold;")
                     try:
-                        self._status_bar.show_message(f"✅ API: {thread.message}", 6000)
+                        self._status_bar.show_message(f"✅ API: {up_thread.message}", 6000)
                     except Exception:
                         pass
+                    btn_ok_up.setVisible(True)
                 else:
-                    logger.warning(f"Falha ao enviar para API: {thread.message}")
+                    logger.warning(f"Falha ao enviar para API: {up_thread.message}")
+                    lbl_up_status.setText(f"❌  Falha no envio\n{up_thread.message}")
+                    lbl_up_status.setStyleSheet("color: #f44336; font-size: 10pt;")
+                    prog_up.setStyleSheet("""
+                        QProgressBar { background-color: #2d2d30; border: none; border-radius: 2px; }
+                        QProgressBar::chunk { background-color: #f44336; border-radius: 2px; }
+                    """)
                     try:
-                        self._status_bar.show_message(f"⚠️ API: falha no envio", 6000)
+                        self._status_bar.show_message("⚠️ API: falha no envio", 6000)
                     except Exception:
                         pass
-                    # Pergunta se deseja tentar novamente
-                    reply = QMessageBox.warning(
-                        self,
-                        "Falha no Envio para API",
-                        f"Não foi possível enviar a carga para a API:\n\n{thread.message}\n\n"
-                        "Deseja tentar novamente?",
-                        QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Ignore,
-                    )
-                    if reply == QMessageBox.StandardButton.Retry:
-                        self._send_to_api(filepath)
+                    btn_retry = QPushButton("🔄  Tentar novamente")
+                    btn_retry.setObjectName("btnRetry")
+                    btn_retry.clicked.connect(lambda: (dlg_up.reject(), self._send_to_api(filepath)))
+                    btn_row_up.insertWidget(1, btn_retry)
+                    btn_ok_up.setVisible(True)
+                    btn_ok_up.setText("Fechar")
 
-            thread.finished.connect(_on_upload_done)
-            thread.start()
+            up_thread.finished.connect(_on_upload_done)
+            up_thread.start()
+            self._api_upload_thread = up_thread
 
-            # Mantém referência para não ser coletado pelo GC
-            self._api_upload_thread = thread
+            dlg_up.exec()
 
         except Exception as exc:
             logger.error(f"Erro inesperado ao iniciar envio para API: {exc}")

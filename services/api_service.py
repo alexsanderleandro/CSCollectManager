@@ -64,6 +64,22 @@ class ApiService:
         headers = {"Authorization": self._authorization}
         filename = os.path.basename(filepath)
 
+        # Log de diagnóstico: mostra prefixo/sufixo do token para comparar com API_TOKEN do servidor
+        try:
+            import logging
+            _log = logging.getLogger("CSCollect.services.api_service")
+            _tok = self._authorization or ""
+            _tok_repr = (
+                f"{_tok[:20]}...{_tok[-10:]}" if len(_tok) > 32
+                else (_tok[:8] + "..." if len(_tok) > 8 else f"(vazio ou muito curto: {len(_tok)} chars)")
+            )
+            _log.warning(
+                "Token sendo enviado para API → comprimento=%d | valor='%s' | url='%s'",
+                len(_tok), _tok_repr, url,
+            )
+        except Exception:
+            pass
+
         try:
             with open(filepath, "rb") as fh:
                 # Monta payload multipart/form-data com campos adicionais
@@ -96,12 +112,12 @@ class ApiService:
                 # Log resposta bruta para diagnóstico
                 try:
                     import logging
-                    logger = logging.getLogger("ApiService")
-                    logger.debug("API response status: %s", resp.status_code)
+                    _rlog = logging.getLogger("CSCollect.services.api_service")
+                    _rlog.warning("API response status: %s", resp.status_code)
                     try:
-                        logger.debug("API response json: %s", resp.json())
+                        _rlog.warning("API response body: %s", resp.json())
                     except Exception:
-                        logger.debug("API response text: %s", resp.text[:1000])
+                        _rlog.warning("API response text: %s", resp.text[:2000])
                 except Exception:
                     pass
 
@@ -126,6 +142,155 @@ class ApiService:
             return False, f"Tempo esgotado após {self.TIMEOUT}s. A API pode estar indisponível."
         except Exception as exc:
             return False, f"Erro inesperado ao enviar: {exc}"
+
+    def check_existing(
+        self,
+        cnpj: str,
+        codvendedor: str,
+        idcelular: str,
+        database_url: str = "",
+    ) -> "Tuple[bool, Optional[dict], Optional[str]]":
+        """
+        Verifica se já existe uma carga registrada para cnpj + codvendedor + idcelular.
+
+        Estratégia:
+          1. Se ``database_url`` for informado → consulta direta ao banco Neon (mais confiável).
+          2. Caso contrário → tenta ``GET /cargas`` na API HTTP.
+
+        Returns:
+            (encontrado, registro_ou_None, erro_ou_None)
+        """
+        if database_url:
+            return self._check_existing_db(cnpj, codvendedor, idcelular, database_url)
+        return self._check_existing_http(cnpj, codvendedor, idcelular)
+
+    def _check_existing_db(
+        self, cnpj: str, codvendedor: str, idcelular: str, database_url: str
+    ) -> "Tuple[bool, Optional[dict], Optional[str]]":
+        """Verifica duplicata consultando diretamente o banco PostgreSQL (Neon)."""
+        try:
+            import psycopg2
+            import psycopg2.extras
+        except ImportError:
+            # fallback para psycopg (v3)
+            try:
+                import psycopg as psycopg2  # type: ignore
+                import psycopg.rows  # type: ignore
+            except ImportError:
+                return False, None, "Driver psycopg2/psycopg não instalado."
+
+        try:
+            conn = psycopg2.connect(database_url)
+            cur = conn.cursor(cursor_factory=getattr(psycopg2.extras, 'RealDictCursor', None))
+            cur.execute(
+                """
+                SELECT id, nome_arquivo, cnpj, codvendedor, idcelular, data_envio
+                  FROM cargas
+                 WHERE cnpj = %s AND codvendedor = %s AND idcelular = %s
+                 ORDER BY data_envio DESC
+                 LIMIT 1
+                """,
+                (cnpj, codvendedor, idcelular),
+            )
+            row = cur.fetchone()
+            cur.close()
+            conn.close()
+            if row:
+                rec = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'nome_arquivo': row[1], 'cnpj': row[2],
+                    'codvendedor': row[3], 'idcelular': row[4], 'data_envio': str(row[5]) if row[5] else '',
+                }
+                return True, rec, None
+            return False, None, None
+        except Exception as exc:
+            return False, None, f"Erro ao consultar banco: {exc}"
+
+    def _check_existing_http(
+        self, cnpj: str, codvendedor: str, idcelular: str
+    ) -> "Tuple[bool, Optional[dict], Optional[str]]":
+        """Verifica duplicata via GET /cargas na API HTTP (fallback)."""
+        try:
+            import requests
+        except ImportError:
+            return False, None, "Biblioteca 'requests' não instalada."
+
+        url = f"{self._base_url}/cargas"
+        params: dict = {}
+        if cnpj:
+            params["cnpj"] = cnpj
+        if codvendedor:
+            params["codvendedor"] = codvendedor
+        if idcelular:
+            params["idcelular"] = idcelular
+
+        headers = {"Authorization": self._authorization}
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=self.TIMEOUT)
+            if resp.ok:
+                body = resp.json()
+                if isinstance(body, list):
+                    items = body
+                elif isinstance(body, dict):
+                    items = body.get("items") or body.get("cargas") or []
+                else:
+                    items = []
+                if items:
+                    return True, items[0], None
+                return False, None, None
+            return False, None, f"HTTP {resp.status_code}: {resp.text[:300]}"
+        except Exception as exc:
+            return False, None, str(exc)
+
+    def delete_carga(self, carga_id, database_url: str = "") -> "Tuple[bool, str]":
+        """
+        Remove uma carga pelo seu ID.
+
+        Se ``database_url`` for informado → DELETE direto no banco.
+        Caso contrário → DELETE /cargas/{id} via HTTP.
+
+        Returns:
+            (sucesso, mensagem)
+        """
+        if database_url:
+            return self._delete_carga_db(carga_id, database_url)
+        return self._delete_carga_http(carga_id)
+
+    def _delete_carga_db(self, carga_id, database_url: str) -> "Tuple[bool, str]":
+        """Remove carga diretamente no banco PostgreSQL (Neon)."""
+        try:
+            import psycopg2
+        except ImportError:
+            try:
+                import psycopg as psycopg2  # type: ignore
+            except ImportError:
+                return False, "Driver psycopg2/psycopg não instalado."
+        try:
+            conn = psycopg2.connect(database_url)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM cargas WHERE id = %s", (carga_id,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return True, "Registro anterior removido com sucesso."
+        except Exception as exc:
+            return False, f"Erro ao remover do banco: {exc}"
+
+    def _delete_carga_http(self, carga_id) -> "Tuple[bool, str]":
+        """Remove carga via DELETE /cargas/{id} na API HTTP."""
+        try:
+            import requests
+        except ImportError:
+            return False, "Biblioteca 'requests' não instalada."
+
+        url = f"{self._base_url}/cargas/{carga_id}"
+        headers = {"Authorization": self._authorization}
+        try:
+            resp = requests.delete(url, headers=headers, timeout=self.TIMEOUT)
+            if resp.ok:
+                return True, "Registro anterior removido com sucesso."
+            return False, f"Erro ao remover registro ({resp.status_code}): {resp.text[:300]}"
+        except Exception as exc:
+            return False, str(exc)
 
     # ------------------------------------------------------------------
     # Helpers

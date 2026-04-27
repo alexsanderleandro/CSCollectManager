@@ -187,6 +187,19 @@ class AppConfig:
         cls._save_settings(settings)
 
     @classmethod
+    def get_api_database_url(cls) -> str:
+        """Retorna a URL de conexão direta ao banco Neon da API CSCollect."""
+        settings = cls._load_settings()
+        return settings.get("api_database_url", "").strip()
+
+    @classmethod
+    def set_api_database_url(cls, url: str) -> None:
+        """Salva a URL de conexão direta ao banco Neon da API CSCollect."""
+        settings = cls._load_settings()
+        settings["api_database_url"] = url.strip()
+        cls._save_settings(settings)
+
+    @classmethod
     def is_api_configured(cls) -> bool:
         """Retorna True se URL e token da API estiverem preenchidos."""
         return bool(cls.get_api_url() and cls.get_api_authorization())
