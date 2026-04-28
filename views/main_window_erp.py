@@ -960,13 +960,13 @@ class MainWindowERP(QMainWindow):
         api_form.addLayout(token_row)
 
         # Database URL (Neon direto)
-        lbl_dburl = QLabel("URL do Banco (Neon) — verificação de duplicatas:")
+        lbl_dburl = QLabel("URL do Banco:")
         lbl_dburl.setStyleSheet("color: #cccccc; font-size: 10pt;")
         api_form.addWidget(lbl_dburl)
 
         lbl_dburl_hint = QLabel(
-            "Conexão direta ao banco PostgreSQL da API para verificar e remover cargas duplicadas "
-            "antes do envio. Deixe em branco se não quiser usar esse recurso."
+            "Conexão direta ao banco da API para verificar e remover cargas duplicadas "
+            "antes do envio."
         )
         lbl_dburl_hint.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
         lbl_dburl_hint.setWordWrap(True)
@@ -2368,14 +2368,15 @@ class MainWindowERP(QMainWindow):
                 btn_keep.clicked.connect(_choose_keep)
                 dlg_conf.exec()
 
-                if _conf_choice["value"] == "keep":
+                if _conf_choice["value"] != "delete":
+                    # "keep", fechou o diálogo (X / Escape) ou qualquer outra ação → cancela envio
                     try:
                         self._status_bar.show_message(
                             f"ℹ️  Envio cancelado — carga '{nome_banco}' mantida no banco.", 6000
                         )
                     except Exception:
                         pass
-                    logger.info("Envio para API cancelado: usuário optou por manter registro existente.")
+                    logger.info("Envio para API cancelado: usuário optou por manter registro existente (choice=%r).", _conf_choice["value"])
                     return
 
                 if _conf_choice["value"] == "delete":
