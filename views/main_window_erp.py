@@ -840,6 +840,8 @@ class MainWindowERP(QMainWindow):
         self._history_list = QListWidget()
         self._history_list.setStyleSheet("color: #cccccc; background-color: #252526;")
         self._history_list.itemDoubleClicked.connect(self._on_history_item_double_clicked)
+        self._history_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._history_list.customContextMenuRequested.connect(self._on_history_context_menu)
         content_layout.addWidget(self._history_list)
 
         layout.addWidget(content)
@@ -1193,6 +1195,63 @@ class MainWindowERP(QMainWindow):
             QMessageBox.information(self, "Abrir Pasta", "Selecione um item do histórico primeiro.")
             return
         self._on_history_item_double_clicked(item)
+
+    def _on_history_context_menu(self, pos):
+        """Exibe menu de contexto na lista de histórico."""
+        from PySide6.QtWidgets import QMenu
+        item = self._history_list.itemAt(pos)
+        if not item:
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background-color: #252526; color: #cccccc; border: 1px solid #3e3e42; }
+            QMenu::item:selected { background-color: #0078d4; }
+        """)
+        act_open = menu.addAction("📂  Abrir Pasta")
+        act_resend = menu.addAction("📡  Reenviar para API")
+        action = menu.exec(self._history_list.viewport().mapToGlobal(pos))
+        if action == act_open:
+            self._on_history_item_double_clicked(item)
+        elif action == act_resend:
+            self._on_resend_history_to_api(item)
+
+    def _on_resend_history_to_api(self, item):
+        """Reenvia para a API a carga do item de histórico selecionado."""
+        entry = item.data(Qt.ItemDataRole.UserRole)
+        if not entry:
+            return
+
+        zip_path = entry.get('zip_path') or entry.get('txt_path') or ''
+        if not zip_path or not os.path.isfile(zip_path):
+            QMessageBox.warning(
+                self,
+                "Arquivo não encontrado",
+                f"O arquivo de carga não foi encontrado:\n{zip_path or '(caminho não salvo)'}\n\n"
+                "Não é possível reenviar.",
+            )
+            return
+
+        # Extrai identificadores do registro de histórico
+        empresa = entry.get('empresa') or {}
+        cnpj = empresa.get('cnpj', '') or ''
+        codvendedor = entry.get('codvendedor', '') or ''
+        idcelular = entry.get('aparelho', '') or ''
+
+        if not cnpj and not codvendedor and not idcelular:
+            QMessageBox.warning(
+                self,
+                "Dados insuficientes",
+                "O registro de histórico não contém os dados de identificação "
+                "(CNPJ, vendedor, aparelho) necessários para o reenvio.",
+            )
+            return
+
+        self._send_to_api(
+            zip_path,
+            _override_cnpj=cnpj,
+            _override_codvendedor=codvendedor,
+            _override_idcelular=idcelular,
+        )
 
     def _clear_export_history(self):
         """Limpa o arquivo de histórico após confirmação do usuário."""
@@ -2124,10 +2183,14 @@ class MainWindowERP(QMainWindow):
             usuario_logado = (self._usuario_info.get('nome') if hasattr(self, '_usuario_info') else None) or ""
             vendedor = ""
             aparelho = ""
+            codvendedor = ""
             if hasattr(self, '_last_export_usuario'):
                 lv = self._last_export_usuario
                 vendedor = lv.get('nome', '')
                 aparelho = lv.get('id_celular', '')
+                _cod = lv.get('codigo', '')
+                if _cod is not None:
+                    codvendedor = str(_cod).zfill(3)
 
             hist_entry = {
                 "date": now.strftime("%d-%m-%Y"),
@@ -2135,6 +2198,7 @@ class MainWindowERP(QMainWindow):
                 "usuario": usuario_logado,
                 "vendedor": vendedor,
                 "aparelho": aparelho,
+                "codvendedor": codvendedor,
                 "product_count": getattr(self, '_last_export_count', 0),
                 "zip_path": filepath,
                 "empresa": self._last_export_empresa if hasattr(self, '_last_export_empresa') else {},
@@ -2150,7 +2214,10 @@ class MainWindowERP(QMainWindow):
         # ── Envio para a API CSCollect ──────────────────────────────────
         self._send_to_api(filepath)
 
-    def _send_to_api(self, filepath: str, _force_delete_id=None):
+    def _send_to_api(self, filepath: str, _force_delete_id=None,
+                      _override_cnpj: str = None,
+                      _override_codvendedor: str = None,
+                      _override_idcelular: str = None):
         """
         Verifica duplicidade e envia o arquivo ZIP para a API CSCollect.
 
@@ -2160,6 +2227,9 @@ class MainWindowERP(QMainWindow):
         3. Se "Apagar e enviar novo" → remove o registro antigo e faz upload.
         4. Se "Manter" → cancela sem enviar.
         5. Se não há conflito → faz upload direto.
+
+        Parâmetros opcionais _override_* permitem forçar os valores de identificação
+        (usado no reenvio a partir do histórico).
         """
         try:
             from utils.config import AppConfig
@@ -2186,10 +2256,10 @@ class MainWindowERP(QMainWindow):
 
             lexp       = getattr(self, '_last_export_empresa',  {})
             lusr       = getattr(self, '_last_export_usuario',  {})
-            cnpj       = lexp.get('cnpj', '')
-            codvendedor = lusr.get('codigo', '')
-            idcelular  = lusr.get('id_celular', '')
-            if codvendedor is not None:
+            cnpj       = _override_cnpj if _override_cnpj is not None else lexp.get('cnpj', '')
+            codvendedor = _override_codvendedor if _override_codvendedor is not None else lusr.get('codigo', '')
+            idcelular  = _override_idcelular if _override_idcelular is not None else lusr.get('id_celular', '')
+            if codvendedor is not None and _override_codvendedor is None:
                 codvendedor = str(codvendedor).zfill(3)
 
             # ── Diálogo base (reutilizado nas duas fases) ─────────────────────
