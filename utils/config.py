@@ -157,51 +157,64 @@ class AppConfig:
         cls._save_settings(settings)
 
     # ---------------------------
-    # Configurações da API CSCollect
+    # Configurações da API CSCollect (lidas do arquivo licenca.key)
     # ---------------------------
 
     @classmethod
-    def get_api_url(cls) -> str:
-        """Retorna a URL base da API CSCollect (ex.: https://cscollectapi.onrender.com)."""
-        settings = cls._load_settings()
-        return settings.get("api_url", "").strip()
+    def _find_key_file(cls) -> str:
+        """
+        Localiza o arquivo de licença (.key) no diretório da aplicação.
+
+        Tenta primeiro ``licenca.key``; se não existir, retorna o primeiro
+        arquivo ``*.key`` encontrado na pasta.  Retorna string vazia se nenhum
+        for encontrado.
+        """
+        import glob
+        app_dir = cls.get_app_dir()
+        default = app_dir / "licenca.key"
+        if default.exists():
+            return str(default)
+        candidates = glob.glob(str(app_dir / "*.key"))
+        return candidates[0] if candidates else ""
 
     @classmethod
-    def set_api_url(cls, url: str) -> None:
-        """Salva a URL base da API CSCollect."""
-        settings = cls._load_settings()
-        settings["api_url"] = url.strip()
-        cls._save_settings(settings)
+    def _load_key_file(cls) -> dict:
+        """
+        Carrega e retorna o conteúdo do arquivo de licença (.key) em formato JSON.
+
+        Retorna dicionário vazio em caso de erro ou arquivo não encontrado.
+        """
+        import json
+        path = cls._find_key_file()
+        if not path:
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {}
+
+    @classmethod
+    def get_api_url(cls) -> str:
+        """Retorna a URL base da API CSCollect lida do arquivo licenca.key."""
+        return cls._load_key_file().get("api_url", "").strip()
 
     @classmethod
     def get_api_authorization(cls) -> str:
-        """Retorna o token de autorização da API CSCollect."""
-        settings = cls._load_settings()
-        return settings.get("api_authorization", "").strip()
-
-    @classmethod
-    def set_api_authorization(cls, token: str) -> None:
-        """Salva o token de autorização da API CSCollect."""
-        settings = cls._load_settings()
-        settings["api_authorization"] = token.strip()
-        cls._save_settings(settings)
+        """Retorna o token de autorização da API CSCollect lido do arquivo licenca.key."""
+        return cls._load_key_file().get("api_authorization", "").strip()
 
     @classmethod
     def get_api_database_url(cls) -> str:
-        """Retorna a URL de conexão direta ao banco Neon da API CSCollect."""
-        settings = cls._load_settings()
-        return settings.get("api_database_url", "").strip()
-
-    @classmethod
-    def set_api_database_url(cls, url: str) -> None:
-        """Salva a URL de conexão direta ao banco Neon da API CSCollect."""
-        settings = cls._load_settings()
-        settings["api_database_url"] = url.strip()
-        cls._save_settings(settings)
+        """Retorna a URL de conexão direta ao banco Neon lida do arquivo licenca.key."""
+        return cls._load_key_file().get("api_database_url", "").strip()
 
     @classmethod
     def is_api_configured(cls) -> bool:
-        """Retorna True se URL e token da API estiverem preenchidos."""
+        """Retorna True se URL e token da API estiverem preenchidos no licenca.key."""
         return bool(cls.get_api_url() and cls.get_api_authorization())
     
     @classmethod

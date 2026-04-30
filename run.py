@@ -188,15 +188,6 @@ class CSCollectManagerApp:
         self._licenca_info = login_data.get("licenca", {})
         licenca_token = login_data.get("licenca_token", "")
 
-        # Salva automaticamente o token da licença para envio à API
-        if licenca_token:
-            try:
-                from utils.config import AppConfig
-                AppConfig.set_api_authorization(licenca_token)
-                logger.info("Token da licença salvo automaticamente nas configurações da API.")
-            except Exception as _e:
-                logger.warning(f"Não foi possível salvar token da API automaticamente: {_e}")
-        
         # Configura conexão global do banco de dados
         server = self._connection_info.get("server", "localhost")
         database = self._connection_info.get("database", "master")

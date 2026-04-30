@@ -188,7 +188,9 @@ def salvar_licenca(token, caminho="licenca.key"):
         f.write(token)
 
 
-def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=None, caminho="licenca.key"):
+def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=None,
+                        api_url=None, api_authorization=None, api_database_url=None,
+                        caminho="licenca.key"):
     """Salva a licença no novo formato JSON conforme especificação.
     
     Formato do arquivo .key:
@@ -197,7 +199,10 @@ def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=N
       "ids": ["a3e9e3a0a4659652", "device-123"],
       "token": "base64url(payload).base64url(signature)",
       "validade": "2026-12-31" ou null,
-      "database_url": "postgresql://user:pass@host:port/db" ou null
+      "database_url": "postgresql://user:pass@host:port/db" ou null,
+      "api_url": "https://cscollectapi.onrender.com" ou null,
+      "api_authorization": "token" ou null,
+      "api_database_url": "postgresql://..." ou null
     }
 
     Parâmetros:
@@ -213,7 +218,10 @@ def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=N
         "ids": ids_celular,
         "token": token,
         "validade": validade,
-        "database_url": database_url
+        "database_url": database_url,
+        "api_url": api_url or None,
+        "api_authorization": api_authorization or None,
+        "api_database_url": api_database_url or None,
     }
     
     with open(caminho, "w", encoding='utf-8') as f:
@@ -331,13 +339,22 @@ if __name__ == "__main__":
             # Solicita database_url (opcional)
             database_url = input('Database URL PostgreSQL (opcional, Enter para pular): ').strip() or None
             
+            # Informações da API (opcionais)
+            #print('\n-- Configurações da API CSCollect (opcional, Enter para pular) --')
+            #api_url = input('URL da API (ex: https://cscollectapi.onrender.com): ').strip() or None
+            #api_authorization = input('Token de Autorização da API: ').strip() or None
+            #api_database_url = input('URL do Banco da API (PostgreSQL): ').strip() or None
+            
             # Salva no novo formato JSON
             salvar_licenca_json(
                 novo_token,
                 payload.get('cnpjs', []),
                 payload.get('ids_celular', []),
                 payload.get('validade'),
-                database_url,
+                #database_url,
+                None,
+                #api_authorization,
+                #api_database_url,
                 caminho
             )
             print('Licença atualizada e salva em', caminho, '(formato JSON)')
@@ -391,6 +408,12 @@ if __name__ == "__main__":
             
             # Solicita database_url (opcional)
             database_url = input('Database URL PostgreSQL para validação online (opcional, Enter para pular): ').strip() or None
+
+            # Informações da API (opcionais)
+            print('\n-- Configurações da API CSCollect (opcional, Enter para pular) --')
+            api_url = input('URL da API (ex: https://cscollectapi.onrender.com): ').strip() or None
+            api_authorization = input('Token de Autorização da API: ').strip() or None
+            api_database_url = input('URL do Banco da API (PostgreSQL): ').strip() or None
             
             # nome padrão do arquivo
             safe = ''.join(ch for ch in nome_cliente if (ch.isalnum() or ch in (' ', '_', '-'))).strip().replace(' ', '_')
@@ -400,7 +423,8 @@ if __name__ == "__main__":
             caminho = input(f"Salvar em (padrão '{default_name}'): ").strip() or default_name
             
             # Salva no novo formato JSON
-            salvar_licenca_json(token, cnpjs, ids_celular, validade, database_url, caminho)
+            salvar_licenca_json(token, cnpjs, ids_celular, validade, database_url,
+                                api_url, api_authorization, api_database_url, caminho)
             print('Licença gerada e salva em', caminho, '(formato JSON)')
     except KeyboardInterrupt:
         print('\nOperação cancelada.')

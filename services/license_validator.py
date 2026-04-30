@@ -276,11 +276,11 @@ def validar_licenca_online(
         ValueError: Se database_url não estiver presente
         Exception: Se a validação online falhar
     """
-    # 1. Obtém a connection string
-    database_url = licenca.get('database_url')
+    # 1. Obtém a connection string (api_database_url tem prioridade; fallback para database_url)
+    database_url = licenca.get('api_database_url') or licenca.get('database_url')
     
     if not database_url:
-        raise ValueError("Licença não contém database_url para validação online")
+        raise ValueError("Licença não contém api_database_url para validação online")
     
     # 2. Importa psycopg2 (pode não estar instalado)
     try:
@@ -412,7 +412,7 @@ def validar_licenca_completa(
     }
     
     # Validação online (opcional ou obrigatória)
-    if validar_online and licenca.get('database_url'):
+    if validar_online and (licenca.get('api_database_url') or licenca.get('database_url')):
         try:
             info_online = validar_licenca_online(licenca, cnpj_atual, device_id_atual)
             logger.info(f"✓ Validação online: OK - Cliente: {info_online['nome_cliente']}")
@@ -434,8 +434,8 @@ def validar_licenca_completa(
             else:
                 logger.info("  Prosseguindo com validação offline...")
     
-    elif validar_online and not licenca.get('database_url'):
-        logger.info("ℹ database_url não disponível - validação online ignorada")
+    elif validar_online and not (licenca.get('api_database_url') or licenca.get('database_url')):
+        logger.info("ℹ api_database_url não disponível - validação online ignorada")
     
     return resultado
 

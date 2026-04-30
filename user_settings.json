@@ -1,6 +1,3 @@
 {
-  "last_export_dir": "C:\\CEOSoftware\\Cargas",
-  "api_url": "https://cscollectapi.onrender.com",
-  "api_authorization": "d2bd9a450500c2e851d049c5fb846f44",
-  "api_database_url": "postgresql://neondb_owner:npg_c0bTxm7wYNpz@ep-dawn-mountain-acw7fpk4-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+  "last_export_dir": "C:\\CEOSoftware\\Cargas"
 }

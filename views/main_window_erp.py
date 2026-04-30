@@ -295,7 +295,6 @@ class MainWindowERP(QMainWindow):
         self._create_products_page()
         self._create_export_page()
         self._create_history_page()
-        self._create_settings_page()
         
         content_layout.addWidget(self._module_stack)
         
@@ -341,7 +340,6 @@ class MainWindowERP(QMainWindow):
             (self.MODULE_PRODUCTS, "📦", "Produtos"),
             (self.MODULE_EXPORT, "📤", "Exportar Carga"),
             (self.MODULE_HISTORY, "📋", "Histórico"),
-            (self.MODULE_SETTINGS, "⚙️", "Configurações"),
         ]
         
         for module_id, icon, text in modules:
@@ -852,282 +850,6 @@ class MainWindowERP(QMainWindow):
         self._module_stack.addWidget(page)
         self._pages[self.MODULE_HISTORY] = self._module_stack.count() - 1
     
-    def _create_settings_page(self):
-        """Cria página de configurações."""
-        from PySide6.QtWidgets import QLineEdit, QScrollArea
-
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Header
-        header = ModuleHeader("⚙️", "Configurações", "Configurações do sistema")
-        layout.addWidget(header)
-
-        # Área de scroll
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { background-color: #1e1e1e; border: none; }")
-
-        content = QWidget()
-        content.setStyleSheet("background-color: #1e1e1e;")
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(32, 32, 32, 32)
-        content_layout.setSpacing(24)
-
-        _field_style = """
-            QLineEdit {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
-                border-radius: 4px;
-                padding: 6px 10px;
-                font-size: 11pt;
-            }
-            QLineEdit:focus { border-color: #0078d4; }
-        """
-        _group_style = """
-            QGroupBox {
-                color: #cccccc;
-                font-weight: bold;
-                border: 2px solid #0078d4;
-                border-radius: 8px;
-                margin-top: 16px;
-                padding: 20px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 16px;
-                padding: 0 8px;
-            }
-        """
-
-        # ── Grupo: API CSCollect ──────────────────────────────────────────
-        api_group = QGroupBox("🌐 API CSCollect")
-        api_group.setStyleSheet(_group_style)
-        api_form = QVBoxLayout(api_group)
-        api_form.setSpacing(12)
-
-        lbl_api_info = QLabel(
-            "Configure a URL e o token de autorização para envio automático das cargas para a API."
-        )
-        lbl_api_info.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
-        lbl_api_info.setWordWrap(True)
-        api_form.addWidget(lbl_api_info)
-
-        # URL
-        lbl_url = QLabel("URL da API:")
-        lbl_url.setStyleSheet("color: #cccccc; font-size: 10pt;")
-        api_form.addWidget(lbl_url)
-
-        self._settings_api_url = QLineEdit()
-        self._settings_api_url.setPlaceholderText("https://cscollectapi.onrender.com")
-        self._settings_api_url.setMinimumHeight(36)
-        self._settings_api_url.setStyleSheet(_field_style)
-        api_form.addWidget(self._settings_api_url)
-
-        # Token
-        lbl_token = QLabel("Token de Autorização:")
-        lbl_token.setStyleSheet("color: #cccccc; font-size: 10pt;")
-        api_form.addWidget(lbl_token)
-
-        token_row = QHBoxLayout()
-        self._settings_api_token = QLineEdit()
-        self._settings_api_token.setPlaceholderText("Token fornecido pelo servidor CSCollect")
-        self._settings_api_token.setMinimumHeight(36)
-        self._settings_api_token.setEchoMode(QLineEdit.EchoMode.Password)
-        self._settings_api_token.setStyleSheet(_field_style)
-        token_row.addWidget(self._settings_api_token, 1)
-
-        btn_toggle_token = QPushButton("👁")
-        btn_toggle_token.setFixedSize(36, 36)
-        btn_toggle_token.setToolTip("Mostrar/ocultar token")
-        btn_toggle_token.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_toggle_token.setCheckable(True)
-        btn_toggle_token.setStyleSheet("""
-            QPushButton {
-                background-color: #3e3e42; color: #cccccc;
-                border: none; border-radius: 4px; font-size: 14pt;
-            }
-            QPushButton:hover { background-color: #505050; }
-            QPushButton:checked { background-color: #0078d4; }
-        """)
-        btn_toggle_token.toggled.connect(
-            lambda checked: self._settings_api_token.setEchoMode(
-                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
-            )
-        )
-        token_row.addWidget(btn_toggle_token)
-        api_form.addLayout(token_row)
-
-        # Database URL (Neon direto)
-        lbl_dburl = QLabel("URL do Banco:")
-        lbl_dburl.setStyleSheet("color: #cccccc; font-size: 10pt;")
-        api_form.addWidget(lbl_dburl)
-
-        lbl_dburl_hint = QLabel(
-            "Conexão direta ao banco da API para verificar e remover cargas duplicadas "
-            "antes do envio."
-        )
-        lbl_dburl_hint.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
-        lbl_dburl_hint.setWordWrap(True)
-        api_form.addWidget(lbl_dburl_hint)
-
-        dburl_row = QHBoxLayout()
-        self._settings_api_dburl = QLineEdit()
-        self._settings_api_dburl.setPlaceholderText(
-            "postgresql://user:pass@host/db?sslmode=require"
-        )
-        self._settings_api_dburl.setMinimumHeight(36)
-        self._settings_api_dburl.setEchoMode(QLineEdit.EchoMode.Password)
-        self._settings_api_dburl.setStyleSheet(_field_style)
-        dburl_row.addWidget(self._settings_api_dburl, 1)
-
-        btn_toggle_dburl = QPushButton("👁")
-        btn_toggle_dburl.setFixedSize(36, 36)
-        btn_toggle_dburl.setToolTip("Mostrar/ocultar URL")
-        btn_toggle_dburl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_toggle_dburl.setCheckable(True)
-        btn_toggle_dburl.setStyleSheet("""
-            QPushButton {
-                background-color: #3e3e42; color: #cccccc;
-                border: none; border-radius: 4px; font-size: 14pt;
-            }
-            QPushButton:hover { background-color: #505050; }
-            QPushButton:checked { background-color: #0078d4; }
-        """)
-        btn_toggle_dburl.toggled.connect(
-            lambda checked: self._settings_api_dburl.setEchoMode(
-                QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
-            )
-        )
-        dburl_row.addWidget(btn_toggle_dburl)
-        api_form.addLayout(dburl_row)
-
-        # Botões salvar / testar
-        api_btns = QHBoxLayout()
-        api_btns.addStretch()
-
-        btn_test_api = QPushButton("🔗  Testar Conexão")
-        btn_test_api.setMinimumSize(160, 36)
-        btn_test_api.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_test_api.setStyleSheet("""
-            QPushButton {
-                background-color: #3e3e42; color: #cccccc;
-                border: none; border-radius: 4px;
-                padding: 6px 16px; font-size: 11pt;
-            }
-            QPushButton:hover { background-color: #505050; }
-        """)
-        btn_test_api.clicked.connect(self._on_test_api_connection)
-        api_btns.addWidget(btn_test_api)
-
-        btn_save_api = QPushButton("💾  Salvar")
-        btn_save_api.setMinimumSize(120, 36)
-        btn_save_api.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_save_api.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4; color: white;
-                border: none; border-radius: 4px;
-                font-weight: bold; padding: 6px 16px; font-size: 11pt;
-            }
-            QPushButton:hover { background-color: #1e8ad4; }
-            QPushButton:pressed { background-color: #005a9e; }
-        """)
-        btn_save_api.clicked.connect(self._on_save_api_settings)
-        api_btns.addWidget(btn_save_api)
-
-        api_form.addLayout(api_btns)
-        content_layout.addWidget(api_group)
-
-        content_layout.addStretch()
-        scroll.setWidget(content)
-        layout.addWidget(scroll)
-
-        self._module_stack.addWidget(page)
-        self._pages[self.MODULE_SETTINGS] = self._module_stack.count() - 1
-
-        # Carrega valores salvos
-        self._load_api_settings_fields()
-
-    def _load_api_settings_fields(self):
-        """Preenche os campos de configuração da API com os valores persistidos."""
-        try:
-            from utils.config import AppConfig
-            if hasattr(self, '_settings_api_url'):
-                self._settings_api_url.setText(AppConfig.get_api_url())
-            if hasattr(self, '_settings_api_token'):
-                self._settings_api_token.setText(AppConfig.get_api_authorization())
-            if hasattr(self, '_settings_api_dburl'):
-                self._settings_api_dburl.setText(AppConfig.get_api_database_url())
-        except Exception:
-            pass
-
-    def _on_save_api_settings(self):
-        """Salva as configurações da API."""
-        from utils.config import AppConfig
-
-        url = self._settings_api_url.text().strip() if hasattr(self, '_settings_api_url') else ""
-        token = self._settings_api_token.text().strip() if hasattr(self, '_settings_api_token') else ""
-        dburl = self._settings_api_dburl.text().strip() if hasattr(self, '_settings_api_dburl') else ""
-
-        AppConfig.set_api_url(url)
-        AppConfig.set_api_authorization(token)
-        AppConfig.set_api_database_url(dburl)
-
-        if url and token:
-            msg = "✅ Configurações da API salvas.\nAs cargas serão enviadas automaticamente após a exportação."
-        elif url or token:
-            msg = "⚠️ Configurações salvas.\nPreencha tanto a URL quanto o token para habilitar o envio automático."
-        else:
-            msg = "ℹ️ Configurações limpas. O envio automático para a API está desabilitado."
-
-        QMessageBox.information(self, "Configurações da API", msg)
-        try:
-            self._status_bar.show_message("Configurações da API salvas", 3000)
-        except Exception:
-            pass
-
-    def _on_test_api_connection(self):
-        """Testa a conexão com a API usando os valores dos campos."""
-        from services.api_service import ApiService
-
-        url = self._settings_api_url.text().strip() if hasattr(self, '_settings_api_url') else ""
-        token = self._settings_api_token.text().strip() if hasattr(self, '_settings_api_token') else ""
-
-        if not url or not token:
-            QMessageBox.warning(
-                self,
-                "Teste de Conexão",
-                "Preencha a URL e o token antes de testar a conexão."
-            )
-            return
-
-        try:
-            import requests
-            resp = requests.get(url.rstrip("/"), timeout=10)
-            if resp.ok:
-                try:
-                    data = resp.json()
-                    status = data.get("status", "OK")
-                except Exception:
-                    status = f"HTTP {resp.status_code}"
-                QMessageBox.information(
-                    self, "Teste de Conexão",
-                    f"✅ API acessível!\n\nResposta: {status}"
-                )
-            else:
-                QMessageBox.warning(
-                    self, "Teste de Conexão",
-                    f"⚠️ API respondeu com HTTP {resp.status_code}."
-                )
-        except Exception as exc:
-            QMessageBox.critical(
-                self, "Teste de Conexão",
-                f"❌ Não foi possível conectar:\n\n{exc}"
-            )
-
     # -------------------------
     # Histórico helpers
     # -------------------------
@@ -1384,10 +1106,6 @@ class MainWindowERP(QMainWindow):
             self._licenca_payload = licenca
             self._populate_dispositivos_combo()
 
-        # Atualiza campos de configuração da API com os valores persistidos
-        # (inclui token salvo automaticamente pelo login)
-        self._load_api_settings_fields()
-        
         # Atualiza UI
         empresa_nome = empresa.get("nome", "Empresa")
         usuario_nome = usuario.get("nome", "Usuário")
@@ -1409,7 +1127,10 @@ class MainWindowERP(QMainWindow):
     def _get_licensed_ids(self) -> set:
         """Retorna o conjunto de IDs de dispositivos presentes na licença atual."""
         ids: set = set()
-        for disp in self._licenca_payload.get('ids_celular', []):
+        raw = (self._licenca_payload.get('ids')
+               or self._licenca_payload.get('ids_celular')
+               or [])
+        for disp in raw:
             if isinstance(disp, dict):
                 id_cel = (disp.get('idcelular') or disp.get('id') or '').strip()
             else:
@@ -1446,8 +1167,10 @@ class MainWindowERP(QMainWindow):
         except Exception:
             device_names = {}
 
-        # Campo real no payload gerado por licenca.py é 'ids_celular'
-        dispositivos = self._licenca_payload.get('ids_celular', [])
+        # Campo no arquivo .key é 'ids'; payload do token usa 'ids_celular'
+        dispositivos = (self._licenca_payload.get('ids')
+                        or self._licenca_payload.get('ids_celular')
+                        or [])
         count = 0
         for disp in dispositivos:
             if isinstance(disp, dict):
