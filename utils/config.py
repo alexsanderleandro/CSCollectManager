@@ -61,6 +61,20 @@ class AppConfig:
         except Exception:
             pass
         return str(path)
+
+    @classmethod
+    def get_contagens_path(cls) -> str:
+        """
+        Retorna o caminho da pasta de contagens: <pasta_do_exe>/Contagens.
+
+        Garante que a pasta é criada ao ser acessada pela primeira vez.
+        """
+        path = cls.get_app_dir() / "Contagens"
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception:
+            pass
+        return str(path)
     
     @classmethod
     def get_asset_path(cls, filename: str) -> str:
@@ -182,19 +196,25 @@ class AppConfig:
         """
         Carrega e retorna o conteúdo do arquivo de licença (.key) em formato JSON.
 
+        Tenta múltiplos encodings (utf-8, utf-8-sig, latin-1, cp1252) para lidar
+        com arquivos gerados em diferentes plataformas/editores.
+
         Retorna dicionário vazio em caso de erro ou arquivo não encontrado.
         """
         import json
         path = cls._find_key_file()
         if not path:
             return {}
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            pass
+        for enc in ('utf-8', 'utf-8-sig', 'latin-1', 'cp1252'):
+            try:
+                with open(path, 'r', encoding=enc) as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+            except UnicodeDecodeError:
+                continue
+            except Exception:
+                break
         return {}
 
     @classmethod
@@ -204,13 +224,28 @@ class AppConfig:
 
     @classmethod
     def get_api_authorization(cls) -> str:
-        """Retorna o token de autorização da API CSCollect lido do arquivo licenca.key."""
-        return cls._load_key_file().get("api_authorization", "").strip()
+        """
+        Retorna o token de autorização da API CSCollect lido do arquivo licenca.key.
+
+        Usa o campo ``api_authorization``, que corresponde à variável de ambiente
+        ``API_TOKEN`` configurada no servidor da API (Render).
+        O campo ``token`` do .key é exclusivo para validação de licença mobile
+        e NÃO deve ser enviado nos headers da API HTTP.
+        Cai em ``token`` apenas como fallback para .key antigos sem ``api_authorization``.
+        """
+        data = cls._load_key_file()
+        return (data.get("api_authorization") or data.get("token") or "").strip()
 
     @classmethod
     def get_api_database_url(cls) -> str:
         """Retorna a URL de conexão direta ao banco Neon lida do arquivo licenca.key."""
-        return cls._load_key_file().get("api_database_url", "").strip()
+        url = cls._load_key_file().get("api_database_url", "").strip()
+        # Remove channel_binding=require — não suportado por versões antigas do psycopg2
+        import re
+        url = re.sub(r'[&?]channel_binding=[^&]*', '', url)
+        # Limpa eventual '?' ou '&' sobrando no final
+        url = url.rstrip('?&')
+        return url
 
     @classmethod
     def is_api_configured(cls) -> bool:

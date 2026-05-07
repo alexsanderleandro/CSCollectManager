@@ -204,6 +204,7 @@ class MainWindowERP(QMainWindow):
     MODULE_PRODUCTS = "products"
     MODULE_EXPORT = "export"
     MODULE_HISTORY = "history"
+    MODULE_DOWNLOAD_CONTAGENS = "download_contagens"
     MODULE_SETTINGS = "settings"
     
     def __init__(self, parent=None):
@@ -295,6 +296,7 @@ class MainWindowERP(QMainWindow):
         self._create_products_page()
         self._create_export_page()
         self._create_history_page()
+        self._create_download_contagens_page()
         
         content_layout.addWidget(self._module_stack)
         
@@ -340,6 +342,7 @@ class MainWindowERP(QMainWindow):
             (self.MODULE_PRODUCTS, "📦", "Produtos"),
             (self.MODULE_EXPORT, "📤", "Exportar Carga"),
             (self.MODULE_HISTORY, "📋", "Histórico"),
+            (self.MODULE_DOWNLOAD_CONTAGENS, "📥", "Download Contagens"),
         ]
         
         for module_id, icon, text in modules:
@@ -1090,6 +1093,10 @@ class MainWindowERP(QMainWindow):
         for mid, btn in self._sidebar_buttons.items():
             btn.setChecked(mid == module_id)
         
+        # Ao entrar no módulo de download de contagens, recarrega a lista automaticamente
+        if module_id == self.MODULE_DOWNLOAD_CONTAGENS:
+            self._on_contagens_refresh()
+
         logger.debug(f"Módulo alterado para: {module_id}")
     
     # ==========================================
@@ -2384,6 +2391,328 @@ class MainWindowERP(QMainWindow):
             "Fotos",
             "A exportação de fotos será implementada em versão futura."
         )
+
+    # =========================================================================
+    # Módulo: Download Contagens API
+    # =========================================================================
+
+    def _create_download_contagens_page(self):
+        """Cria a página de download de contagens enviadas pelos coletores."""
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Header
+        header = ModuleHeader(
+            "📥",
+            "Download Contagens",
+            "Baixe e valide os arquivos de contagem enviados pelos coletores",
+        )
+        btn_refresh = header.add_action_button("Atualizar", "🔄")
+        btn_download = header.add_action_button("Baixar Selecionado", "⬇️", primary=True)
+        layout.addWidget(header)
+
+        # Área de conteúdo
+        content = QWidget()
+        content.setStyleSheet("background-color: #1e1e1e;")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 16, 24, 16)
+        content_layout.setSpacing(12)
+
+        # Rótulo informativo
+        lbl_info = QLabel(
+            "Selecione um registro e clique em  ⬇️ Baixar Selecionado  para salvar o arquivo na pasta Cargas."
+        )
+        lbl_info.setStyleSheet("color: #9d9d9d; font-size: 10pt; padding: 4px 0;")
+        content_layout.addWidget(lbl_info)
+
+        # Tabela
+        self._contagens_table = QTableWidget()
+        self._contagens_table.setColumnCount(7)
+        self._contagens_table.setHorizontalHeaderLabels([
+            "ID", "Nome do Arquivo", "Vendedor", "Aparelho", "CNPJ", "Data Envio", "URL",
+        ])
+        self._contagens_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._contagens_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self._contagens_table.setColumnHidden(6, True)   # URL oculta
+        self._contagens_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._contagens_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._contagens_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._contagens_table.setAlternatingRowColors(True)
+        self._contagens_table.verticalHeader().setVisible(False)
+        self._contagens_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #252526;
+                color: #cccccc;
+                border: 1px solid #3e3e42;
+                gridline-color: #3e3e42;
+                font-size: 10pt;
+            }
+            QTableWidget::item:selected {
+                background-color: #094771;
+                color: #ffffff;
+            }
+            QHeaderView::section {
+                background-color: #2d2d30;
+                color: #9d9d9d;
+                border: none;
+                border-bottom: 1px solid #3e3e42;
+                padding: 6px 8px;
+                font-weight: bold;
+            }
+            QTableWidget::item:alternate {
+                background-color: #2d2d30;
+            }
+        """)
+        content_layout.addWidget(self._contagens_table)
+
+        # Label de status da operação de download
+        self._lbl_contagens_status = QLabel("")
+        self._lbl_contagens_status.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+        content_layout.addWidget(self._lbl_contagens_status)
+
+        layout.addWidget(content)
+
+        self._module_stack.addWidget(page)
+        self._pages[self.MODULE_DOWNLOAD_CONTAGENS] = self._module_stack.count() - 1
+
+        # Conecta botões
+        btn_refresh.clicked.connect(self._on_contagens_refresh)
+        btn_download.clicked.connect(self._on_contagem_download)
+
+    def _on_contagens_refresh(self):
+        """Carrega a lista de contagens da API/banco Neon filtrada pelo CNPJ da empresa logada."""
+        from utils.config import AppConfig
+        from services.api_service import ApiService
+        from PySide6.QtCore import QThread, QObject
+        from PySide6.QtCore import Signal as _Signal
+        from PySide6.QtWidgets import QTableWidgetItem
+
+        if not AppConfig.is_api_configured():
+            self._lbl_contagens_status.setText(
+                "⚠️  API não configurada. Verifique o arquivo licenca.key."
+            )
+            return
+
+        # CNPJ da empresa logada
+        cnpj = (self._empresa_info.get("cnpj") or "").strip()
+        if not cnpj:
+            self._lbl_contagens_status.setText(
+                "⚠️  CNPJ da empresa não disponível. Faça login novamente."
+            )
+            return
+
+        url   = AppConfig.get_api_url()
+        token = AppConfig.get_api_authorization()
+        db_url = AppConfig.get_api_database_url()
+        api   = ApiService(base_url=url, authorization=token)
+
+        self._lbl_contagens_status.setText("🔄  Consultando contagens...")
+        self._contagens_table.setRowCount(0)
+
+        class _Worker(QObject):
+            done = _Signal(bool, list, str)
+
+            def __init__(self, svc, cnpj_v, db_url_v):
+                super().__init__()
+                self._svc    = svc
+                self._cnpj   = cnpj_v
+                self._db_url = db_url_v
+
+            def run(self):
+                ok, rows, err = self._svc.list_contagens(self._cnpj, database_url=self._db_url)
+                self.done.emit(ok, rows, err or "")
+
+        thread = QThread(self)
+        worker = _Worker(api, cnpj, db_url)
+        worker.moveToThread(thread)
+
+        def _on_done(ok, rows, err):
+            thread.quit()
+            if not ok:
+                self._lbl_contagens_status.setText(f"❌  Erro: {err}")
+                return
+            self._contagens_table.setRowCount(0)
+            for rec in rows:
+                row_idx = self._contagens_table.rowCount()
+                self._contagens_table.insertRow(row_idx)
+                self._contagens_table.setItem(row_idx, 0, QTableWidgetItem(str(rec.get("id", ""))))
+                self._contagens_table.setItem(row_idx, 1, QTableWidgetItem(str(rec.get("nome_arquivo", ""))))
+                self._contagens_table.setItem(row_idx, 2, QTableWidgetItem(str(rec.get("codvendedor", ""))))
+                self._contagens_table.setItem(row_idx, 3, QTableWidgetItem(str(rec.get("idcelular", ""))))
+                self._contagens_table.setItem(row_idx, 4, QTableWidgetItem(str(rec.get("cnpj", ""))))
+                data_envio = str(rec.get("data_envio", ""))[:19]  # corta microssegundos
+                self._contagens_table.setItem(row_idx, 5, QTableWidgetItem(data_envio))
+                self._contagens_table.setItem(row_idx, 6, QTableWidgetItem(str(rec.get("url_arquivo", ""))))
+
+            total = self._contagens_table.rowCount()
+            self._lbl_contagens_status.setText(
+                f"✅  {total} contagem(ns) encontrada(s) para o CNPJ {cnpj}."
+                if total else
+                f"ℹ️  Nenhuma contagem encontrada para o CNPJ {cnpj}."
+            )
+
+        worker.done.connect(_on_done)
+        thread.started.connect(worker.run)
+        self._contagens_refresh_thread = thread
+        self._contagens_refresh_worker = worker
+        thread.start()
+
+    def _on_contagem_download(self):
+        """
+        Baixa o arquivo selecionado, valida o CNPJ no registro E do TXT
+        e salva na pasta Cargas caso a validação passe.
+        """
+        from utils.config import AppConfig
+        from services.api_service import ApiService
+        import os, tempfile
+
+        selected_rows = self._contagens_table.selectedItems()
+        if not selected_rows:
+            QMessageBox.information(self, "Selecionar", "Selecione um registro na tabela.")
+            return
+
+        row_idx = self._contagens_table.currentRow()
+        nome_arquivo = self._contagens_table.item(row_idx, 1).text() if self._contagens_table.item(row_idx, 1) else ""
+        url_arquivo  = self._contagens_table.item(row_idx, 6).text() if self._contagens_table.item(row_idx, 6) else ""
+        cnpj_tabela  = self._contagens_table.item(row_idx, 4).text() if self._contagens_table.item(row_idx, 4) else ""
+
+        # Se url_arquivo for caminho relativo (começa com /), monta URL completa
+        if url_arquivo and not url_arquivo.startswith("http"):
+            base_url = AppConfig.get_api_url().rstrip("/")
+            url_arquivo = base_url + "/" + url_arquivo.lstrip("/")
+
+        if not url_arquivo:
+            QMessageBox.warning(self, "URL ausente", "Este registro não possui URL de arquivo para download.")
+            return
+
+        # CNPJ e token da empresa logada
+        cnpj_empresa = (self._empresa_info.get("cnpj") or "").strip()
+        token        = AppConfig.get_api_authorization()
+
+        # Validação prévia: CNPJ da tabela deve corresponder ao da empresa logada
+        def _normalizar_cnpj(c: str) -> str:
+            """Remove pontuação do CNPJ para comparação."""
+            import re
+            return re.sub(r"[.\-/]", "", (c or "").strip())
+
+        if cnpj_tabela and cnpj_empresa:
+            if _normalizar_cnpj(cnpj_tabela) != _normalizar_cnpj(cnpj_empresa):
+                QMessageBox.critical(
+                    self,
+                    "CNPJ Inválido",
+                    f"O CNPJ do registro ({cnpj_tabela}) não corresponde ao "
+                    f"CNPJ da empresa logada ({cnpj_empresa}).\n\nDownload cancelado.",
+                )
+                return
+
+        # Token mínimo
+        if not token:
+            QMessageBox.critical(
+                self,
+                "Token ausente",
+                "Token de autorização não configurado. Verifique o arquivo licenca.key.",
+            )
+            return
+
+        # Pasta de destino
+        dest_dir  = AppConfig.get_contagens_path()
+        filename  = nome_arquivo if nome_arquivo else os.path.basename(url_arquivo.split("?")[0])
+        if not filename.lower().endswith(".zip"):
+            filename += ".zip"
+        dest_path = os.path.join(dest_dir, filename)
+
+        self._lbl_contagens_status.setText(f"⬇️  Baixando {filename}...")
+        QApplication.processEvents()
+
+        api = ApiService(
+            base_url=AppConfig.get_api_url(),
+            authorization=token,
+        )
+        ok, msg = api.download_contagem_file(url_arquivo, dest_path)
+
+        if not ok:
+            self._lbl_contagens_status.setText(f"❌  Erro no download: {msg}")
+            QMessageBox.critical(self, "Erro no Download", msg)
+            return
+
+        # ── Validação do CNPJ no registro E do TXT dentro do ZIP ──────
+        self._lbl_contagens_status.setText("🔍  Validando arquivo...")
+        QApplication.processEvents()
+
+        cnpj_no_arquivo = ApiService.extract_cnpj_from_zip(dest_path)
+
+        if cnpj_no_arquivo is None:
+            # Arquivo inválido ou sem registro E — remove e avisa
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+            self._lbl_contagens_status.setText("❌  Arquivo inválido: registro E não encontrado.")
+            QMessageBox.critical(
+                self,
+                "Arquivo Inválido",
+                "Não foi possível localizar o registro E (empresa) dentro do arquivo TXT.\n\n"
+                "O arquivo foi descartado.",
+            )
+            return
+
+        if _normalizar_cnpj(cnpj_no_arquivo) != _normalizar_cnpj(cnpj_empresa):
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+            self._lbl_contagens_status.setText(
+                f"❌  Validação falhou — CNPJ do arquivo ({cnpj_no_arquivo}) ≠ CNPJ da empresa ({cnpj_empresa})."
+            )
+            QMessageBox.critical(
+                self,
+                "Validação de CNPJ Falhou",
+                f"O CNPJ encontrado no arquivo TXT  →  {cnpj_no_arquivo}\n"
+                f"CNPJ da empresa logada           →  {cnpj_empresa}\n\n"
+                "Os CNPJs não coincidem. O arquivo foi descartado.",
+            )
+            return
+
+        # ── Tudo certo ────────────────────────────────────────────────
+        self._lbl_contagens_status.setText(f"✅  Arquivo baixado e validado: {dest_path}")
+
+        # Apaga o registro do banco Neon
+        contagem_id = self._contagens_table.item(row_idx, 0).text() if self._contagens_table.item(row_idx, 0) else None
+        if contagem_id:
+            self._lbl_contagens_status.setText("🗑️  Removendo registro do servidor...")
+            QApplication.processEvents()
+            del_ok, del_msg = api.delete_contagem(contagem_id, database_url=AppConfig.get_api_database_url())
+            if del_ok:
+                self._lbl_contagens_status.setText(f"✅  Arquivo baixado, validado e registro removido do servidor.")
+                # Remove linha da tabela
+                self._contagens_table.removeRow(row_idx)
+            else:
+                self._lbl_contagens_status.setText(f"⚠️  Download OK, mas falha ao remover registro: {del_msg}")
+
+        resp = QMessageBox.question(
+            self,
+            "Download Concluído",
+            f"Arquivo baixado e validado com sucesso!  "
+            f"📄  {filename} "
+            f"📁  {dest_dir}  "
+            f"CNPJ validado: {cnpj_no_arquivo}  "
+            f"Deseja abrir a pasta Contagens?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if resp == QMessageBox.StandardButton.Yes:
+            try:
+                os.startfile(dest_dir)
+            except Exception:
+                pass
+
+    # =========================================================================
+    # Fim: Download Contagens API
+    # =========================================================================
 
     def _on_logout(self):
         """Solicita logout."""

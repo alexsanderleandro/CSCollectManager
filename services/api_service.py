@@ -292,6 +292,229 @@ class ApiService:
         except Exception as exc:
             return False, str(exc)
 
+    def delete_contagem(self, contagem_id, database_url: str = "") -> "Tuple[bool, str]":
+        """
+        Remove uma contagem pelo seu ID.
+
+        Se ``database_url`` for informado → DELETE direto no banco.
+        Caso contrário → DELETE /contagens/{id} via HTTP.
+
+        Returns:
+            (sucesso, mensagem)
+        """
+        if database_url:
+            return self._delete_contagem_db(contagem_id, database_url)
+        return self._delete_contagem_http(contagem_id)
+
+    def _delete_contagem_db(self, contagem_id, database_url: str) -> "Tuple[bool, str]":
+        """Remove contagem diretamente no banco PostgreSQL (Neon)."""
+        try:
+            import psycopg2
+        except ImportError:
+            try:
+                import psycopg as psycopg2  # type: ignore
+            except ImportError:
+                return False, "Driver psycopg2/psycopg não instalado."
+        try:
+            conn = psycopg2.connect(database_url)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM contagens WHERE id = %s", (contagem_id,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return True, "Registro removido com sucesso."
+        except Exception as exc:
+            return False, f"Erro ao remover do banco: {exc}"
+
+    def _delete_contagem_http(self, contagem_id) -> "Tuple[bool, str]":
+        """Remove contagem via DELETE /contagens/{id} na API HTTP."""
+        try:
+            import requests
+        except ImportError:
+            return False, "Biblioteca 'requests' não instalada."
+
+        url = f"{self._base_url}/contagens/{contagem_id}"
+        headers = {"Authorization": self._authorization}
+        try:
+            resp = requests.delete(url, headers=headers, timeout=self.TIMEOUT)
+            if resp.ok:
+                return True, "Registro removido com sucesso."
+            return False, f"Erro ao remover registro ({resp.status_code}): {resp.text[:300]}"
+        except Exception as exc:
+            return False, str(exc)
+
+    # ------------------------------------------------------------------
+    # Contagens
+    # ------------------------------------------------------------------
+
+    def list_contagens(
+        self,
+        cnpj: str,
+        database_url: str = "",
+    ) -> "Tuple[bool, list, Optional[str]]":
+        """
+        Lista contagens registradas para o CNPJ informado.
+
+        Estratégia:
+          1. Se ``database_url`` → consulta direta ao banco Neon.
+          2. Caso contrário → GET /contagens na API HTTP.
+
+        Returns:
+            (sucesso, lista_de_registros, erro_ou_None)
+        """
+        if database_url:
+            return self._list_contagens_db(cnpj, database_url)
+        return self._list_contagens_http(cnpj)
+
+    def _list_contagens_db(
+        self, cnpj: str, database_url: str
+    ) -> "Tuple[bool, list, Optional[str]]":
+        """Consulta contagens diretamente no banco PostgreSQL (Neon)."""
+        try:
+            import psycopg2
+            import psycopg2.extras
+        except ImportError:
+            try:
+                import psycopg as psycopg2  # type: ignore
+                import psycopg.rows  # type: ignore
+            except ImportError:
+                return False, [], "Driver psycopg2/psycopg não instalado."
+
+        try:
+            conn = psycopg2.connect(database_url)
+            cur = conn.cursor(cursor_factory=getattr(psycopg2.extras, 'RealDictCursor', None))
+            cur.execute(
+                """
+                SELECT id, cliente_id, nome_arquivo, data_envio,
+                       cnpj, codvendedor, idcelular, url_arquivo
+                  FROM contagens
+                 WHERE cnpj = %s
+                 ORDER BY data_envio DESC
+                """,
+                (cnpj,),
+            )
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+            result = []
+            for row in rows:
+                rec = dict(row) if hasattr(row, 'keys') else {
+                    'id': row[0], 'cliente_id': row[1], 'nome_arquivo': row[2],
+                    'data_envio': str(row[3]) if row[3] else '',
+                    'cnpj': row[4], 'codvendedor': row[5],
+                    'idcelular': row[6], 'url_arquivo': row[7],
+                }
+                if 'data_envio' in rec and rec['data_envio'] and not isinstance(rec['data_envio'], str):
+                    rec['data_envio'] = str(rec['data_envio'])
+                result.append(rec)
+            return True, result, None
+        except Exception as exc:
+            return False, [], f"Erro ao consultar banco: {exc}"
+
+    def _list_contagens_http(
+        self, cnpj: str
+    ) -> "Tuple[bool, list, Optional[str]]":
+        """Lista contagens via GET /contagens na API HTTP (fallback)."""
+        try:
+            import requests
+        except ImportError:
+            return False, [], "Biblioteca 'requests' não instalada."
+
+        url = f"{self._base_url}/contagens"
+        headers = {"Authorization": self._authorization}
+        params = {"cnpj": cnpj} if cnpj else {}
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=self.TIMEOUT)
+            if resp.ok:
+                body = resp.json()
+                if isinstance(body, list):
+                    return True, body, None
+                if isinstance(body, dict):
+                    items = body.get("items") or body.get("contagens") or []
+                    return True, items, None
+                return True, [], None
+            return False, [], f"HTTP {resp.status_code}: {resp.text[:300]}"
+        except Exception as exc:
+            return False, [], str(exc)
+
+    def download_contagem_file(
+        self,
+        url_arquivo: str,
+        dest_path: str,
+    ) -> "Tuple[bool, str]":
+        """
+        Faz download do arquivo de contagem (ZIP) para ``dest_path``.
+
+        Usa o token de autorização configurado.
+
+        Args:
+            url_arquivo: URL do arquivo (campo ``url_arquivo`` da tabela contagens).
+            dest_path:   Caminho local onde o arquivo será salvo.
+
+        Returns:
+            (sucesso, mensagem)
+        """
+        try:
+            import requests
+        except ImportError:
+            return False, "Biblioteca 'requests' não instalada."
+
+        headers = {"Authorization": self._authorization}
+        try:
+            resp = requests.get(url_arquivo, headers=headers, timeout=self.TIMEOUT, stream=True)
+            if not resp.ok:
+                try:
+                    detail = resp.json().get("detail", resp.text)
+                except Exception:
+                    detail = resp.text or f"HTTP {resp.status_code}"
+                return False, f"Erro ao baixar arquivo ({resp.status_code}): {detail}"
+
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            with open(dest_path, "wb") as fh:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        fh.write(chunk)
+            return True, dest_path
+        except Exception as exc:
+            return False, f"Erro ao baixar arquivo: {exc}"
+
+    @staticmethod
+    def extract_cnpj_from_zip(zip_path: str) -> "Optional[str]":
+        """
+        Extrai o CNPJ do registro E do arquivo TXT contido no ZIP.
+
+        Layout do registro E: ``|E|codempresa|nomeempresa|local|cnpj|``
+
+        Args:
+            zip_path: Caminho do arquivo ZIP.
+
+        Returns:
+            CNPJ encontrado (string) ou ``None``.
+        """
+        import zipfile as _zf
+
+        try:
+            with _zf.ZipFile(zip_path, "r") as zf:
+                txt_names = [n for n in zf.namelist() if n.lower().endswith(".txt")]
+                if not txt_names:
+                    return None
+                with zf.open(txt_names[0]) as tf:
+                    for raw_line in tf:
+                        try:
+                            line = raw_line.decode("utf-8").strip()
+                        except UnicodeDecodeError:
+                            line = raw_line.decode("latin-1").strip()
+                        # Registro E: |E|codempresa|nomeempresa|local|cnpj|
+                        parts = line.split("|")
+                        # partes: ['', 'E', codempresa, nomeempresa, local, cnpj, '']
+                        if len(parts) >= 2 and parts[1].strip().upper() == "E":
+                            if len(parts) >= 6:
+                                return parts[5].strip()
+                            return None
+        except Exception:
+            pass
+        return None
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
