@@ -515,8 +515,116 @@ class ApiService:
             pass
         return None
 
-    # ------------------------------------------------------------------
-    # Helpers
+    @staticmethod
+    def validate_sig(zip_path: str, token_cliente: str) -> dict:
+        """
+        Valida o arquivo ``.sig`` contido no ZIP exportado pelo CSCollect.
+
+        O ``.sig`` é um JSON com dois campos raiz::
+
+            {
+              "assinatura": "<hex HMAC-SHA256 do payload>",
+              "payload": { ... }
+            }
+
+        A assinatura HMAC-SHA256 é calculada sobre o JSON canônico do payload
+        (sort_keys=True, separators=(',', ':'), UTF-8).  A chave HMAC é o
+        ``token_cliente`` (campo ``serial`` da licença).
+
+        Args:
+            zip_path:       Caminho do arquivo ZIP.
+            token_cliente:  Token da licença (campo ``serial`` / autorização).
+
+        Returns:
+            dict com:
+                ok      (bool)  – True se assinatura e hashes são válidos.
+                erros   (list)  – Lista de mensagens de erro.
+                payload (dict)  – Payload do .sig (mesmo se inválido).
+        """
+        import hashlib as _hl
+        import hmac as _hmac
+        import json as _json
+        import zipfile as _zf
+
+        erros: list = []
+        payload: dict = {}
+
+        try:
+            with _zf.ZipFile(zip_path, "r") as zf:
+                names = zf.namelist()
+
+                # 1. Localizar o .sig
+                sig_names = [n for n in names if n.lower().endswith(".sig")]
+                if not sig_names:
+                    return {"ok": False, "erros": ["Arquivo .sig não encontrado no ZIP"], "payload": {}}
+
+                sig_content = zf.read(sig_names[0]).decode("utf-8")
+                doc = _json.loads(sig_content)
+                payload    = doc.get("payload", {})
+                assinatura = doc.get("assinatura", "")
+
+                # 2. JSON canônico do payload
+                payload_json  = _json.dumps(payload, sort_keys=True, ensure_ascii=False,
+                                            separators=(",", ":"))
+                payload_bytes = payload_json.encode("utf-8")
+
+                # 3. Validar HMAC (apenas se token disponível)
+                if token_cliente:
+                    expected_sig = _hmac.new(
+                        token_cliente.encode("utf-8"),
+                        payload_bytes,
+                        _hl.sha256,
+                    ).hexdigest()
+                    if not _hmac.compare_digest(expected_sig, assinatura):
+                        erros.append("Assinatura HMAC inválida — token não confere ou payload adulterado")
+                else:
+                    erros.append("Token de licença ausente — não foi possível validar a assinatura HMAC")
+
+                # 4. Helper SHA-256 de uma entrada do ZIP
+                def _sha256_entry(name: str) -> str:
+                    h = _hl.sha256()
+                    with zf.open(name) as f:
+                        for chunk in iter(lambda: f.read(65536), b""):
+                            h.update(chunk)
+                    return h.hexdigest()
+
+                # 4a. TXT
+                txt_names = [n for n in names if n.lower().endswith(".txt")]
+                if txt_names:
+                    h = _sha256_entry(txt_names[0])
+                    if h != payload.get("hash_txt", ""):
+                        erros.append(
+                            f"Hash TXT diverge — esperado={payload.get('hash_txt')} calculado={h}"
+                        )
+                else:
+                    erros.append("Arquivo TXT não encontrado no ZIP")
+
+                # 4b. PDF (opcional)
+                pdf_names = [n for n in names if n.lower().endswith(".pdf")]
+                if pdf_names and payload.get("hash_pdf"):
+                    h = _sha256_entry(pdf_names[0])
+                    if h != payload["hash_pdf"]:
+                        erros.append(
+                            f"Hash PDF diverge — esperado={payload['hash_pdf']} calculado={h}"
+                        )
+
+                # 4c. Fotos
+                for arcname, expected_hash in (payload.get("hash_fotos") or {}).items():
+                    if arcname in names:
+                        h = _sha256_entry(arcname)
+                        if h != expected_hash:
+                            erros.append(
+                                f"Hash foto diverge [{arcname}] — esperado={expected_hash} calculado={h}"
+                            )
+                    else:
+                        erros.append(f"Foto declarada no .sig não encontrada no ZIP: {arcname}")
+
+        except Exception as exc:
+            erros.append(f"Erro ao processar .sig: {exc}")
+
+        return {"ok": len(erros) == 0, "erros": erros, "payload": payload}
+
+    @staticmethod
     # ------------------------------------------------------------------
 
     @staticmethod

@@ -2563,7 +2563,7 @@ class MainWindowERP(QMainWindow):
 
     def _on_contagem_download(self):
         """
-        Baixa o arquivo selecionado, valida o CNPJ no registro E do TXT
+        Baixa o arquivo selecionado, valida a assinatura do arquivo .sig contido no ZIP
         e salva na pasta Cargas caso a validação passe.
         """
         from utils.config import AppConfig
@@ -2609,6 +2609,63 @@ class MainWindowERP(QMainWindow):
                 )
                 return
 
+        # ── Validação do nome do arquivo (antes do download) ─────────────
+        # Padrão esperado: MODELO_CODEMPRESA_CODVENDEDOR_CNPJ_DDMMYYYYHHMM.ZIP
+        # Exemplo:         MOD1_1_043_65381113000120_070520261714.zip
+        _filename_to_validate = nome_arquivo if nome_arquivo else os.path.basename(url_arquivo.split("?")[0])
+        _basename_no_ext = os.path.splitext(_filename_to_validate)[0]
+        _parts = _basename_no_ext.split("_")
+
+        if len(_parts) < 5:
+            QMessageBox.critical(
+                self,
+                "Nome de Arquivo Inválido",
+                f"O nome do arquivo não segue o padrão esperado:\n"
+                f"  MODELO_CODEMPRESA_CODVENDEDOR_CNPJ_DDMMYYYYHHMM.ZIP\n\n"
+                f"Arquivo recebido: {_filename_to_validate}\n\nDownload cancelado.",
+            )
+            return
+
+        _fn_codempresa  = _parts[1]
+        _fn_codvendedor = _parts[2]
+        _fn_cnpj        = _parts[3]
+
+        # Valida CODEMPRESA
+        _codempresa_empresa = str(self._empresa_info.get("codigo", "") or "").strip()
+        if _fn_codempresa != _codempresa_empresa:
+            QMessageBox.critical(
+                self,
+                "CODEMPRESA Inválido",
+                f"O código de empresa no nome do arquivo  →  {_fn_codempresa}\n"
+                f"Código de empresa logada               →  {_codempresa_empresa}\n\n"
+                "Os códigos não coincidem. Download cancelado.",
+            )
+            return
+
+        # Valida CODVENDEDOR (compara sem zero-fill para maior flexibilidade)
+        _codvendedor_tabela = (self._contagens_table.item(row_idx, 2).text()
+                               if self._contagens_table.item(row_idx, 2) else "")
+        if _fn_codvendedor.lstrip("0") != _codvendedor_tabela.lstrip("0"):
+            QMessageBox.critical(
+                self,
+                "CODVENDEDOR Inválido",
+                f"O código de vendedor no nome do arquivo  →  {_fn_codvendedor}\n"
+                f"Código de vendedor do registro           →  {_codvendedor_tabela}\n\n"
+                "Os códigos não coincidem. Download cancelado.",
+            )
+            return
+
+        # Valida CNPJ
+        if _normalizar_cnpj(_fn_cnpj) != _normalizar_cnpj(cnpj_empresa):
+            QMessageBox.critical(
+                self,
+                "CNPJ Inválido no Nome do Arquivo",
+                f"O CNPJ no nome do arquivo  →  {_fn_cnpj}\n"
+                f"CNPJ da empresa logada     →  {cnpj_empresa}\n\n"
+                "Os CNPJs não coincidem. Download cancelado.",
+            )
+            return
+
         # Token mínimo
         if not token:
             QMessageBox.critical(
@@ -2639,46 +2696,51 @@ class MainWindowERP(QMainWindow):
             QMessageBox.critical(self, "Erro no Download", msg)
             return
 
-        # ── Validação do CNPJ no registro E do TXT dentro do ZIP ──────
-        self._lbl_contagens_status.setText("🔍  Validando arquivo...")
+        # ── Validação da assinatura .sig dentro do ZIP ────────────────
+        self._lbl_contagens_status.setText("🔍  Validando assinatura do arquivo...")
         QApplication.processEvents()
 
-        cnpj_no_arquivo = ApiService.extract_cnpj_from_zip(dest_path)
+        sig_result = ApiService.validate_sig(dest_path, token)
 
-        if cnpj_no_arquivo is None:
-            # Arquivo inválido ou sem registro E — remove e avisa
+        if not sig_result["ok"]:
             try:
                 os.remove(dest_path)
             except Exception:
                 pass
-            self._lbl_contagens_status.setText("❌  Arquivo inválido: registro E não encontrado.")
+            erros_txt = "\n".join(
+                f"  • {e}" for e in sig_result["erros"]
+            )
+            self._lbl_contagens_status.setText("❌  Validação da assinatura falhou — arquivo descartado.")
             QMessageBox.critical(
                 self,
-                "Arquivo Inválido",
-                "Não foi possível localizar o registro E (empresa) dentro do arquivo TXT.\n\n"
+                "Validação de Assinatura Falhou",
+                f"O arquivo não passou na validação de integridade/assinatura:\n\n"
+                f"{erros_txt}\n\n"
                 "O arquivo foi descartado.",
             )
             return
 
-        if _normalizar_cnpj(cnpj_no_arquivo) != _normalizar_cnpj(cnpj_empresa):
+        # CNPJ vem do payload do .sig
+        cnpj_no_arquivo = _normalizar_cnpj(sig_result["payload"].get("cnpj", ""))
+        if cnpj_no_arquivo and cnpj_no_arquivo != _normalizar_cnpj(cnpj_empresa):
             try:
                 os.remove(dest_path)
             except Exception:
                 pass
             self._lbl_contagens_status.setText(
-                f"❌  Validação falhou — CNPJ do arquivo ({cnpj_no_arquivo}) ≠ CNPJ da empresa ({cnpj_empresa})."
+                f"❌  Validação falhou — CNPJ do .sig (" + cnpj_no_arquivo + ") ≠ CNPJ da empresa (" + cnpj_empresa + ")."
             )
             QMessageBox.critical(
                 self,
                 "Validação de CNPJ Falhou",
-                f"O CNPJ encontrado no arquivo TXT  →  {cnpj_no_arquivo}\n"
-                f"CNPJ da empresa logada           →  {cnpj_empresa}\n\n"
-                "Os CNPJs não coincidem. O arquivo foi descartado.",
+                "O CNPJ declarado no .sig         →  " + cnpj_no_arquivo + "\n"
+                + "CNPJ da empresa logada           →  " + cnpj_empresa + "\n\n"
+                + "Os CNPJs não coincidem. O arquivo foi descartado.",
             )
             return
 
         # ── Tudo certo ────────────────────────────────────────────────
-        self._lbl_contagens_status.setText(f"✅  Arquivo baixado e validado: {dest_path}")
+        self._lbl_contagens_status.setText("✅  Arquivo baixado e assinatura validada: " + dest_path)
 
         # Apaga o registro do banco Neon
         contagem_id = self._contagens_table.item(row_idx, 0).text() if self._contagens_table.item(row_idx, 0) else None
@@ -2687,20 +2749,25 @@ class MainWindowERP(QMainWindow):
             QApplication.processEvents()
             del_ok, del_msg = api.delete_contagem(contagem_id, database_url=AppConfig.get_api_database_url())
             if del_ok:
-                self._lbl_contagens_status.setText(f"✅  Arquivo baixado, validado e registro removido do servidor.")
+                self._lbl_contagens_status.setText("✅  Arquivo baixado, assinatura validada e registro removido do servidor.")
                 # Remove linha da tabela
                 self._contagens_table.removeRow(row_idx)
             else:
-                self._lbl_contagens_status.setText(f"⚠️  Download OK, mas falha ao remover registro: {del_msg}")
+                self._lbl_contagens_status.setText("⚠️  Download OK, mas falha ao remover registro: " + del_msg)
 
+        versao_app = sig_result["payload"].get("versao", "")
+        msg_ok = (
+            "Arquivo baixado e assinatura validada com sucesso!\n\n"
+            "📄  " + filename + "\n"
+            "📁  " + dest_dir + "\n"
+            "CNPJ: " + (cnpj_no_arquivo or cnpj_empresa) + "\n"
+            + ("Versão app: " + versao_app + "\n" if versao_app else "")
+            + "\nDeseja abrir a pasta Contagens?"
+        )
         resp = QMessageBox.question(
             self,
             "Download Concluído",
-            f"Arquivo baixado e validado com sucesso!  "
-            f"📄  {filename} "
-            f"📁  {dest_dir}  "
-            f"CNPJ validado: {cnpj_no_arquivo}  "
-            f"Deseja abrir a pasta Contagens?",
+            msg_ok,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
