@@ -237,6 +237,20 @@ class AppConfig:
         return (data.get("api_authorization") or data.get("token") or "").strip()
 
     @classmethod
+    def get_license_token(cls) -> str:
+        """
+        Retorna o token da licença do cliente lido do arquivo licenca.key.
+
+        Este é o campo ``token`` do .key, equivalente ao campo ``serial`` dentro
+        do payload do arquivo .sig, e é a chave HMAC usada para assinar/validar
+        a assinatura do ZIP exportado pelo app CSCollect.
+
+        NÃO confundir com ``api_authorization``, que é o token de autenticação
+        dos endpoints HTTP da API.
+        """
+        return cls._load_key_file().get("token", "").strip()
+
+    @classmethod
     def get_api_database_url(cls) -> str:
         """Retorna a URL de conexão direta ao banco Neon lida do arquivo licenca.key."""
         url = cls._load_key_file().get("api_database_url", "").strip()

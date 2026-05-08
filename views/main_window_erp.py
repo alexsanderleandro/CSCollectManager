@@ -14,7 +14,22 @@ Layout completo com:
 
 import os
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+def _utc_to_local(dt_str: str) -> str:
+    """Converte string de data/hora UTC para horário local (UTC-3 / Brasília)."""
+    if not dt_str:
+        return dt_str
+    try:
+        dt_str_clean = dt_str[:19]  # remove microssegundos
+        dt = datetime.fromisoformat(dt_str_clean)
+        # Se vier sem tzinfo, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_local = dt + timedelta(hours=-3)
+        return dt_local.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return dt_str[:19]
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -1907,7 +1922,7 @@ class MainWindowERP(QMainWindow):
         # Registra histórico de exportação (não bloqueante)
         try:
             from utils.config import AppConfig
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             # Dados para histórico — formato solicitado: data dd-mm-aaaa, hora hh:mm,
             # usuário logado, vendedor selecionado, aparelho (nome + id) e quantidade de produtos
             usuario_logado = (self._usuario_info.get('nome') if hasattr(self, '_usuario_info') else None) or ""
@@ -2085,7 +2100,7 @@ class MainWindowERP(QMainWindow):
             if chk_thread.found and chk_thread.record:
                 rec = chk_thread.record
                 nome_banco  = str(rec.get("nome_arquivo") or rec.get("arquivo") or "(sem nome)")
-                data_envio  = str(rec.get("data_envio") or rec.get("criado_em") or "")
+                data_envio  = _utc_to_local(str(rec.get("data_envio") or rec.get("criado_em") or ""))
                 carga_id    = rec.get("id")
 
                 # Diálogo de conflito
@@ -2303,7 +2318,7 @@ class MainWindowERP(QMainWindow):
             from pathlib import Path as _Path
 
             log_dir = _Path(AppConfig.get_export_logs_dir())
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             log_filename = f"EXPORTLOG-{now.strftime('%Y%m%d-%H%M%S')}.log"
             log_path = log_dir / log_filename
 
@@ -2539,14 +2554,14 @@ class MainWindowERP(QMainWindow):
             for rec in rows:
                 row_idx = self._contagens_table.rowCount()
                 self._contagens_table.insertRow(row_idx)
-                self._contagens_table.setItem(row_idx, 0, QTableWidgetItem(str(rec.get("id", ""))))
-                self._contagens_table.setItem(row_idx, 1, QTableWidgetItem(str(rec.get("nome_arquivo", ""))))
-                self._contagens_table.setItem(row_idx, 2, QTableWidgetItem(str(rec.get("codvendedor", ""))))
-                self._contagens_table.setItem(row_idx, 3, QTableWidgetItem(str(rec.get("idcelular", ""))))
-                self._contagens_table.setItem(row_idx, 4, QTableWidgetItem(str(rec.get("cnpj", ""))))
-                data_envio = str(rec.get("data_envio", ""))[:19]  # corta microssegundos
+                self._contagens_table.setItem(row_idx, 0, QTableWidgetItem(str(rec.get("id") or "")))
+                self._contagens_table.setItem(row_idx, 1, QTableWidgetItem(str(rec.get("nome_arquivo") or "")))
+                self._contagens_table.setItem(row_idx, 2, QTableWidgetItem(str(rec.get("codvendedor") or "")))
+                self._contagens_table.setItem(row_idx, 3, QTableWidgetItem(str(rec.get("idcelular") or "")))
+                self._contagens_table.setItem(row_idx, 4, QTableWidgetItem(str(rec.get("cnpj") or "")))
+                data_envio = _utc_to_local(str(rec.get("data_envio") or ""))  # converte UTC→local (UTC-3)
                 self._contagens_table.setItem(row_idx, 5, QTableWidgetItem(data_envio))
-                self._contagens_table.setItem(row_idx, 6, QTableWidgetItem(str(rec.get("url_arquivo", ""))))
+                self._contagens_table.setItem(row_idx, 6, QTableWidgetItem(str(rec.get("url_arquivo") or "")))
 
             total = self._contagens_table.rowCount()
             self._lbl_contagens_status.setText(
@@ -2693,14 +2708,38 @@ class MainWindowERP(QMainWindow):
 
         if not ok:
             self._lbl_contagens_status.setText(f"❌  Erro no download: {msg}")
-            QMessageBox.critical(self, "Erro no Download", msg)
+            # Se for 404, o arquivo foi perdido no servidor (filesystem efêmero do Render).
+            # Oferece remover o registro inválido do banco para não poluir a lista.
+            is_404 = "(404)" in msg
+            if is_404:
+                resp_del = QMessageBox.question(
+                    self,
+                    "Erro no Download",
+                    f"{msg}\n\nDeseja remover este registro inválido do banco de dados?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if resp_del == QMessageBox.StandardButton.Yes:
+                    contagem_id = self._contagens_table.item(row_idx, 0).text() if self._contagens_table.item(row_idx, 0) else None
+                    if contagem_id:
+                        del_ok, del_msg = api.delete_contagem(contagem_id, database_url=AppConfig.get_api_database_url())
+                        if del_ok:
+                            self._contagens_table.removeRow(row_idx)
+                            self._lbl_contagens_status.setText("🗑️  Registro inválido removido do banco.")
+                        else:
+                            self._lbl_contagens_status.setText(f"⚠️  Não foi possível remover: {del_msg}")
+            else:
+                QMessageBox.critical(self, "Erro no Download", msg)
             return
 
         # ── Validação da assinatura .sig dentro do ZIP ────────────────
         self._lbl_contagens_status.setText("🔍  Validando assinatura do arquivo...")
         QApplication.processEvents()
 
-        sig_result = ApiService.validate_sig(dest_path, token)
+        # O HMAC do .sig é assinado com o token da licença (campo 'token' do .key
+        # = campo 'serial' do payload), NÃO com o token da API HTTP.
+        license_token = AppConfig.get_license_token()
+        sig_result = ApiService.validate_sig(dest_path, license_token)
 
         if not sig_result["ok"]:
             try:

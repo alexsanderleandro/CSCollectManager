@@ -467,6 +467,12 @@ class ApiService:
                     detail = resp.json().get("detail", resp.text)
                 except Exception:
                     detail = resp.text or f"HTTP {resp.status_code}"
+                if resp.status_code == 404:
+                    detail = (
+                        f"{detail}\n\n"
+                        "O arquivo pode ter sido removido do servidor após um reinício automático (Render.com usa "
+                        "armazenamento efêmero). O registro no banco será removido ao confirmar o problema."
+                    )
                 return False, f"Erro ao baixar arquivo ({resp.status_code}): {detail}"
 
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -568,10 +574,14 @@ class ApiService:
                                             separators=(",", ":"))
                 payload_bytes = payload_json.encode("utf-8")
 
-                # 3. Validar HMAC (apenas se token disponível)
-                if token_cliente:
+                # 3. Validar HMAC
+                # A chave HMAC é o token da licença do cliente (campo 'token' do .key
+                # = campo 'serial' no payload).  Se token_cliente não for fornecido,
+                # extrai o 'serial' diretamente do payload como fallback.
+                hmac_key = token_cliente or payload.get("serial", "")
+                if hmac_key:
                     expected_sig = _hmac.new(
-                        token_cliente.encode("utf-8"),
+                        hmac_key.encode("utf-8"),
                         payload_bytes,
                         _hl.sha256,
                     ).hexdigest()
