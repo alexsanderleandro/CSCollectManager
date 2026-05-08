@@ -164,8 +164,10 @@ class ModuleHeader(QFrame):
     
     def add_action_button(self, text: str, icon: str = "", primary: bool = False) -> QPushButton:
         """Adiciona botão de ação ao header."""
+        from PySide6.QtWidgets import QSizePolicy
         btn = QPushButton(f"{icon}  {text}" if icon else text)
         btn.setMinimumHeight(36)
+        btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         
         if primary:
