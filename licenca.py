@@ -38,6 +38,59 @@ if MASTER_KEY is None:
 MASTER_KEY_BYTES = MASTER_KEY.encode("utf-8")
 
 
+# ============================================================
+# Criptografia AES-256-GCM para campos sensíveis do banco
+# Formato: Base64( nonce[12] || ciphertext+tag )
+# Chave derivada: SHA-256(MASTER_KEY)
+# ============================================================
+
+def _derive_aes_key() -> bytes:
+    """Deriva a chave AES-256 a partir da MASTER_KEY via SHA-256 (32 bytes)."""
+    return hashlib.sha256(MASTER_KEY_BYTES).digest()
+
+
+def _encrypt_field(plaintext: str) -> str:
+    """Criptografa um campo sensível com AES-256-GCM.
+
+    Formato de saída (Base64 padrão): nonce[12] || ciphertext+tag
+
+    Parâmetros:
+    - plaintext: texto em claro a ser criptografado.
+
+    Retorna uma string Base64 que pode ser armazenada no banco.
+    """
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    if not plaintext:
+        return ''
+    key = _derive_aes_key()
+    nonce = secrets.token_bytes(12)  # 96 bits aleatórios
+    aesgcm = AESGCM(key)
+    ct = aesgcm.encrypt(nonce, plaintext.encode('utf-8'), None)  # ciphertext+tag
+    return base64.b64encode(nonce + ct).decode('ascii')
+
+
+def _decrypt_field(base64_ciphertext: str) -> str:
+    """Descriptografa um campo AES-256-GCM armazenado no banco.
+
+    Formato esperado (Base64 padrão): nonce[12] || ciphertext+tag
+
+    Parâmetros:
+    - base64_ciphertext: valor criptografado lido do banco.
+
+    Retorna o texto em claro. Nunca persistir o resultado em disco.
+    """
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    if not base64_ciphertext or not base64_ciphertext.strip():
+        return ''
+    key = _derive_aes_key()
+    raw = base64.b64decode(base64_ciphertext)
+    nonce = raw[:12]
+    ct = raw[12:]  # ciphertext + GCM tag (16 bytes embutidos)
+    aesgcm = AESGCM(key)
+    plaintext = aesgcm.decrypt(nonce, ct, None)
+    return plaintext.decode('utf-8')
+
+
 def _b64u_encode(b: bytes) -> str:
     """Encode bytes em base64 URL-safe sem padding.
 

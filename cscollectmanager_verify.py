@@ -65,16 +65,20 @@ def _is_signed_token(token: str) -> bool:
 
 
 def _verify_token_online(licenca_json: Dict[str, Any]) -> Dict[str, Any]:
-    """Valida o token puro contra o banco Neon (database_url) e retorna o payload completo.
+    """Valida licença contra o banco Neon (database_url) conforme fluxo da documentação.
 
-    Conecta à tabela `clientes`, verifica se o token está registrado e ativo,
-    e monta um payload compatível com o restante do sistema a partir dos dados
-    retornados pelo banco.
+    Etapas:
+    1. Consulta o banco pelo CNPJ individual (exact match + LIKE patterns).
+    2. Verifica ``ativo = true``.
+    3. Verifica ``validade >= hoje``.
+    4. Valida a assinatura HMAC-SHA256 do token retornado pelo banco.
+    5. Verifica CNPJ e device ID no payload do token (raiz de confiança).
+    6. Descriptografa ``api_authorization`` e ``api_database_url`` em memória.
 
     Raises:
-        ImportError: se psycopg2 não estiver instalado.
+        ImportError: se psycopg2 ou cryptography não estiverem instalados.
         ValueError: se database_url não estiver presente no arquivo.
-        Exception: se a validação falhar (token inválido, expirado, inativo, etc.).
+        Exception: se qualquer etapa de validação falhar.
     """
     database_url = licenca_json.get('database_url')
     if not database_url:
@@ -86,58 +90,110 @@ def _verify_token_online(licenca_json: Dict[str, Any]) -> Dict[str, Any]:
     except ImportError:
         raise ImportError("psycopg2 não instalado. Execute: pip install psycopg2-binary")
 
-    token = licenca_json.get('token', '')
-    cnpjs_local = licenca_json.get('cnpjs', [])
-    cnpjs_str = ','.join(sorted(cnpjs_local))
+    # Importa descriptografia AES-256-GCM
+    try:
+        from licenca import _decrypt_field
+    except ImportError:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from licenca import _decrypt_field
 
+    cnpjs_local = licenca_json.get('cnpjs', [])
+    ids_local = licenca_json.get('ids', [])
+
+    # Tenta cada CNPJ da lista local até encontrar um registro
+    row = None
+    cnpj_buscado = None
     try:
         conn = psycopg2.connect(database_url, connect_timeout=10)
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
-            SELECT cnpj, idcelular, token, validade, ativo, nome_cliente,
-                   sql_servidor, sql_banco
-            FROM clientes
-            WHERE cnpj = %s
-            """,
-            (cnpjs_str,)
-        )
-        row = cursor.fetchone()
+        for cnpj in cnpjs_local:
+            cursor.execute(
+                """
+                SELECT cnpj, idcelular, token, validade, ativo, nome_cliente,
+                       sql_servidor, sql_banco, api_authorization, api_database_url
+                FROM clientes
+                WHERE cnpj = %s
+                   OR cnpj LIKE %s
+                   OR cnpj LIKE %s
+                   OR cnpj LIKE %s
+                """,
+                (cnpj, f'%,{cnpj}', f'{cnpj},%', f'%,{cnpj},%')
+            )
+            row = cursor.fetchone()
+            if row:
+                cnpj_buscado = cnpj
+                break
+
         cursor.close()
         conn.close()
     except Exception as e:
         raise Exception(f"Erro ao conectar ao banco de licenças: {e}")
 
     if not row:
-        raise Exception(f"CNPJ não registrado ou não autorizado no servidor de licenças: {cnpjs_str}")
+        raise Exception(
+            f"CNPJs não registrados ou não autorizados no servidor: {', '.join(cnpjs_local)}"
+        )
 
-    cnpj_db, idcelular_db, token_db, validade_db, ativo_db, nome_cliente_db, sql_srv_db, sql_banco_db = row
+    (
+        cnpj_db, idcelular_db, token_db, validade_db,
+        ativo_db, nome_cliente_db, sql_srv_db, sql_banco_db,
+        api_authorization_enc, api_database_url_enc
+    ) = row
 
+    # --- Etapa 2: verificar ativo ---
     if not ativo_db:
         raise Exception("Licença desativada no servidor")
 
-    if token_db != token:
-        raise Exception("Token não corresponde ao registrado no servidor")
-
-    # Monta payload compatível com o restante do sistema
+    # --- Etapa 3: verificar validade ---
     from datetime import date as _date
     if validade_db:
         try:
             if _date.fromisoformat(str(validade_db)) < _date.today():
                 raise Exception(f"Licença expirada no servidor em {validade_db}")
-        except Exception as e:
-            if "expirada" in str(e):
+        except Exception as exc:
+            if "expirada" in str(exc):
                 raise
+
+    # --- Etapa 4: validar assinatura HMAC do token retornado pelo banco ---
+    mk = os.environ.get('MASTER_KEY')
+    if not mk:
+        raise ValueError(
+            "MASTER_KEY não definida — necessária para validar a assinatura do token do banco."
+        )
+    payload_db = verify_token(token_db, mk)
+
+    # --- Etapa 5: verificar CNPJ no payload do token (raiz de confiança) ---
+    cnpjs_no_token = payload_db.get('cnpjs', [])
+    if cnpj_buscado not in cnpjs_no_token:
+        raise Exception(
+            f"CNPJ {cnpj_buscado} não autorizado no payload do token do servidor"
+        )
+
+    # Verificar device IDs no payload, se disponíveis no arquivo local
+    ids_no_token = payload_db.get('ids_celular', [])
+    for device_id in ids_local:
+        if device_id not in ids_no_token:
+            raise Exception(
+                f"Device ID {device_id} não autorizado no payload do token do servidor"
+            )
+
+    # --- Etapa 6: descriptografar campos sensíveis em memória (jamais persistir) ---
+    api_authorization_plain = _decrypt_field(api_authorization_enc or '')
+    api_database_url_plain = _decrypt_field(api_database_url_enc or '')
 
     return {
         **licenca_json,
         'nome_cliente': nome_cliente_db or licenca_json.get('nome_cliente', ''),
-        'sql_servidor': sql_srv_db or licenca_json.get('sql_servidor', ''),
-        'sql_banco': sql_banco_db or licenca_json.get('sql_banco', ''),
+        'sql_servidor': sql_srv_db or payload_db.get('sql_servidor', ''),
+        'sql_banco': sql_banco_db or payload_db.get('sql_banco', ''),
         'validade': str(validade_db) if validade_db else licenca_json.get('validade', ''),
-        'ids_celular': idcelular_db.split(',') if idcelular_db else licenca_json.get('ids', []),
+        'ids_celular': idcelular_db.split(',') if idcelular_db else ids_local,
         'cnpjs': cnpj_db.split(',') if cnpj_db else cnpjs_local,
+        # Valores sensíveis: usar e descartar — NÃO persistir em disco
+        '_api_authorization': api_authorization_plain,
+        '_api_database_url': api_database_url_plain,
     }
 
 

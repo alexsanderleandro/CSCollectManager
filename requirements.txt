@@ -19,8 +19,8 @@ python-dotenv>=1.0.0
 
 # Utilitários (zipfile é builtin, não precisa instalar)
 
-# Criptografia (assinatura de arquivos)
-# Usamos HMAC-SHA256 (builtin) — cryptography não é mais necessária
+# Criptografia (assinatura de arquivos e campos AES-256-GCM)
+cryptography>=41.0.0  # AES-256-GCM para descriptografar api_authorization / api_database_url do banco
 
 # Desenvolvimento (opcional)
 # black>=23.0.0

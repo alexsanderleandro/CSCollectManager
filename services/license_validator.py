@@ -276,76 +276,107 @@ def validar_licenca_online(
         ValueError: Se database_url não estiver presente
         Exception: Se a validação online falhar
     """
-    # 1. Obtém a connection string (api_database_url tem prioridade; fallback para database_url)
-    database_url = licenca.get('api_database_url') or licenca.get('database_url')
-    
+    # 1. Obtém a connection string para validação (database_url do arquivo .key)
+    database_url = licenca.get('database_url')
+
     if not database_url:
-        raise ValueError("Licença não contém api_database_url para validação online")
-    
+        raise ValueError("Licença não contém database_url para validação online")
+
     # 2. Importa psycopg2 (pode não estar instalado)
     try:
         import psycopg2
-        from psycopg2 import extras
     except ImportError:
         raise ImportError(
             "psycopg2 não instalado. Execute: pip install psycopg2-binary"
         )
-    
-    # 3. Conecta ao banco
+
+    # Importa descriptografia AES-256-GCM
+    try:
+        from licenca import _decrypt_field
+    except ImportError:
+        # Fallback: importa do módulo raiz se não estiver no path padrão
+        import sys, os as _os
+        sys.path.insert(0, _os.path.dirname(_os.path.dirname(__file__)))
+        from licenca import _decrypt_field
+
+    # 3. Conecta ao banco e consulta por CNPJ individual (conforme documentação)
     try:
         conn = psycopg2.connect(database_url, connect_timeout=10)
         cursor = conn.cursor()
-        
-        # 4. Busca registro pela combinação de CNPJs
-        cnpjs_str = ','.join(sorted(licenca['cnpjs']))  # Ordena para consistência
-        
+
+        # Busca por CNPJ individual usando exact match + LIKE patterns
         query = """
-            SELECT cnpj, idcelular, token, validade, ativo, nome_cliente 
-            FROM clientes 
+            SELECT cnpj, idcelular, token, validade, ativo, nome_cliente,
+                   sql_servidor, sql_banco, api_authorization, api_database_url
+            FROM clientes
             WHERE cnpj = %s
+               OR cnpj LIKE %s
+               OR cnpj LIKE %s
+               OR cnpj LIKE %s
         """
-        cursor.execute(query, (cnpjs_str,))
+        cursor.execute(query, (
+            cnpj_atual,
+            f'%,{cnpj_atual}',
+            f'{cnpj_atual},%',
+            f'%,{cnpj_atual},%',
+        ))
         resultado = cursor.fetchone()
-        
-        if not resultado:
-            raise Exception("Licença não encontrada no banco de dados")
-        
-        cnpj_db, idcelular_db, token_db, validade_db, ativo_db, nome_cliente_db = resultado
-        
-        # 5. Verifica se está ativa
-        if not ativo_db:
-            raise Exception("Licença desativada no servidor")
-        
-        # 6. Verifica se o token corresponde
-        if token_db != licenca['token']:
-            raise Exception("Token não corresponde ao registrado no servidor")
-        
-        # 7. Verifica CNPJ específico (dentro da lista)
-        cnpjs_db_list = cnpj_db.split(',')
-        if cnpj_atual not in cnpjs_db_list:
-            raise Exception(f"CNPJ {cnpj_atual} não autorizado no servidor")
-        
-        # 8. Verifica Device ID
-        ids_db_list = idcelular_db.split(',') if idcelular_db else []
-        if device_id_atual not in ids_db_list:
-            raise Exception(f"Device ID {device_id_atual} não autorizado no servidor")
-        
-        # 9. Verifica validade
-        if validade_db:
-            data_validade = date.fromisoformat(validade_db)
-            if date.today() > data_validade:
-                raise Exception(f"Licença expirada no servidor em {validade_db}")
-        
         cursor.close()
         conn.close()
-        
+
+        if not resultado:
+            raise Exception(f"CNPJ {cnpj_atual} não encontrado no banco de licenças")
+
+        (
+            cnpj_db, idcelular_db, token_db, validade_db,
+            ativo_db, nome_cliente_db, sql_srv_db, sql_banco_db,
+            api_authorization_enc, api_database_url_enc
+        ) = resultado
+
+        # --- Etapa 2: verificar ativo ---
+        if not ativo_db:
+            raise Exception("Licença desativada no servidor")
+
+        # --- Etapa 3: verificar validade ---
+        if validade_db:
+            data_validade = date.fromisoformat(str(validade_db))
+            if date.today() > data_validade:
+                raise Exception(f"Licença expirada no servidor em {validade_db}")
+
+        # --- Etapa 4: validar assinatura HMAC do token retornado pelo banco ---
+        payload_db = validar_token(token_db)
+
+        # --- Etapa 5: verificar CNPJ no payload do token (raiz de confiança) ---
+        cnpjs_no_token = payload_db.get('cnpjs', [])
+        if cnpj_atual not in cnpjs_no_token:
+            raise Exception(
+                f"CNPJ {cnpj_atual} não autorizado no payload do token do servidor"
+            )
+
+        # --- Etapa 6: verificar device ID no payload do token ---
+        if device_id_atual:
+            ids_no_token = payload_db.get('ids_celular', [])
+            if device_id_atual not in ids_no_token:
+                raise Exception(
+                    f"Device ID {device_id_atual} não autorizado no payload do token do servidor"
+                )
+
+        # --- Etapa 7: descriptografar campos sensíveis em memória (jamais persistir) ---
+        api_authorization_plain = _decrypt_field(api_authorization_enc or '')
+        api_database_url_plain = _decrypt_field(api_database_url_enc or '')
+
         return {
             'valida': True,
             'nome_cliente': nome_cliente_db,
-            'validade': validade_db,
-            'ativo': ativo_db
+            'sql_servidor': sql_srv_db or payload_db.get('sql_servidor', ''),
+            'sql_banco': sql_banco_db or payload_db.get('sql_banco', ''),
+            'validade': str(validade_db) if validade_db else None,
+            'ativo': ativo_db,
+            # Valores sensíveis: usar e descartar — NÃO persistir em disco
+            '_api_authorization': api_authorization_plain,
+            '_api_database_url': api_database_url_plain,
         }
-        
+
     except Exception as e:
         if 'psycopg2' in str(type(e).__module__):
             raise Exception(f"Erro ao conectar ao banco de dados: {e}")
