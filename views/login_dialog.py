@@ -436,7 +436,7 @@ class LoginDialog(QDialog):
         layout.addWidget(title)
         
         # Subtítulo
-        subtitle = QLabel("Sistema de exportação de carga para o aplicativo CSCollect")
+        subtitle = QLabel("Sistema de exportação de carga e importação de contagens de estoque")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
         layout.addWidget(subtitle)
@@ -489,6 +489,12 @@ class LoginDialog(QDialog):
         self._lbl_license_file.setToolTip("")
         self._lbl_license_file.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         group_layout.addWidget(self._lbl_license_file)
+
+        # Label para exibir a data de validade da licença
+        self._lbl_license_expiry = QLabel("")
+        self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+        self._lbl_license_expiry.hide()
+        group_layout.addWidget(self._lbl_license_expiry)
         
         # Status de conexão
         self._lbl_connection_status = QLabel("")
@@ -896,6 +902,34 @@ class LoginDialog(QDialog):
                             pass
                     except Exception:
                         pass
+                    # Exibir data de validade da licença
+                    try:
+                        _val = payload_dict.get('validade') or ''
+                        if _val:
+                            from datetime import datetime, date, timezone as _tz
+                            _expirada = False
+                            if 'T' in _val or _val.endswith('Z'):
+                                _v = _val.replace('Z', '+00:00')
+                                _dt = datetime.fromisoformat(_v)
+                                if _dt.tzinfo is None:
+                                    _dt = _dt.replace(tzinfo=_tz.utc)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < datetime.now(_tz.utc)
+                            else:
+                                _dt = date.fromisoformat(_val)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < date.today()
+                            if _expirada:
+                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
+                                self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                            else:
+                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
+                                self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+                            self._lbl_license_expiry.show()
+                        else:
+                            self._lbl_license_expiry.hide()
+                    except Exception:
+                        self._lbl_license_expiry.hide()
                     break
                 except Exception as exc:
                     licenca_erro = str(exc)
@@ -905,7 +939,7 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}")
                 return False
 
-            # Verificar validade da licença (data)
+            # Verificar validade da licença (data) — exibe a data e bloqueia se expirada
             validade = payload_dict.get('validade') or ''
             try:
                 if validade:
@@ -916,11 +950,13 @@ class LoginDialog(QDialog):
                         if val_dt.tzinfo is None:
                             val_dt = val_dt.replace(tzinfo=timezone.utc)
                         if val_dt < datetime.now(timezone.utc):
+                            self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
                             QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
                             return False
                     else:
                         from datetime import date
                         if date.fromisoformat(validade) < date.today():
+                            self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
                             QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
                             return False
             except Exception:
@@ -1042,6 +1078,34 @@ class LoginDialog(QDialog):
                         self._lbl_license_file.show()
                     except Exception:
                         pass
+                    # Exibe data de validade imediatamente
+                    try:
+                        _val = payload_dict.get('validade') or ''
+                        if _val:
+                            from datetime import datetime, date, timezone as _tz
+                            _expirada = False
+                            if 'T' in _val or _val.endswith('Z'):
+                                _v = _val.replace('Z', '+00:00')
+                                _dt = datetime.fromisoformat(_v)
+                                if _dt.tzinfo is None:
+                                    _dt = _dt.replace(tzinfo=_tz.utc)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < datetime.now(_tz.utc)
+                            else:
+                                _dt = date.fromisoformat(_val)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < date.today()
+                            if _expirada:
+                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
+                                self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                            else:
+                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
+                                self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+                            self._lbl_license_expiry.show()
+                        else:
+                            self._lbl_license_expiry.hide()
+                    except Exception:
+                        self._lbl_license_expiry.hide()
                     break
                 except Exception as exc:
                     last_error = exc
@@ -1051,7 +1115,7 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença.\n{last_error or ''}")
                 return False
 
-            # Verifica validade
+            # Verifica validade e bloqueia se expirada
             validade = payload_dict.get('validade') or ''
             try:
                 if validade:
