@@ -433,6 +433,9 @@ class ApiService:
                     items = body.get("items") or body.get("contagens") or []
                     return True, items, None
                 return True, [], None
+            # 404 significa que não há contagens para o CNPJ informado — trata como lista vazia
+            if resp.status_code == 404:
+                return True, [], None
             return False, [], f"HTTP {resp.status_code}: {resp.text[:300]}"
         except Exception as exc:
             return False, [], str(exc)

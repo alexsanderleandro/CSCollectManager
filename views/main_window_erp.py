@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QFileDialog, QApplication, QSpacerItem, QGroupBox
 )
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QCursor, QPixmap
+from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QShortcut, QCursor, QPixmap
 
 from utils.constants import APP_INFO, Icons, Messages, Shortcuts, UIConfig
 from utils.logger import get_logger
@@ -73,16 +73,16 @@ class SidebarButton(QPushButton):
         self.setText(f"  {icon}  {text}")
         self.setCheckable(True)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setMinimumHeight(45)
+        self.setMinimumHeight(44)
         self.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 color: #9d9d9d;
                 text-align: left;
-                padding: 12px 16px;
+                padding: 10px 12px;
                 border: none;
                 border-radius: 0;
-                font-size: 11pt;
+                font-size: 10.5pt;
             }
             QPushButton:hover {
                 background-color: #2d2d30;
@@ -326,7 +326,7 @@ class MainWindowERP(QMainWindow):
     def _create_sidebar(self) -> QFrame:
         """Cria barra lateral de navegação."""
         sidebar = QFrame()
-        sidebar.setFixedWidth(220)
+        sidebar.setFixedWidth(245)
         sidebar.setStyleSheet("""
             QFrame {
                 background-color: #1e1e1e;
@@ -356,10 +356,10 @@ class MainWindowERP(QMainWindow):
         self._sidebar_buttons = {}
         
         modules = [
-            (self.MODULE_PRODUCTS, "📦", "Produtos"),
-            (self.MODULE_EXPORT, "📤", "Exportar Carga"),
-            (self.MODULE_HISTORY, "📋", "Histórico"),
-            (self.MODULE_DOWNLOAD_CONTAGENS, "📥", "Download Contagens"),
+            (self.MODULE_PRODUCTS,           "📦", "Produtos           F1"),
+            (self.MODULE_EXPORT,              "📤", "Exportar Carga     F2"),
+            (self.MODULE_HISTORY,             "📋", "Histórico           F3"),
+            (self.MODULE_DOWNLOAD_CONTAGENS,  "📥", "Download Contagens F4"),
         ]
         
         for module_id, icon, text in modules:
@@ -383,27 +383,38 @@ class MainWindowERP(QMainWindow):
             }
         """)
         user_layout = QHBoxLayout(user_frame)
-        user_layout.setContentsMargins(12, 8, 12, 8)
-        user_layout.addStretch()
+        user_layout.setContentsMargins(8, 8, 8, 8)
+        user_layout.setSpacing(0)
 
         # Botão de sair do aplicativo
-        btn_exit = QPushButton("⏻")
-        btn_exit.setToolTip("Sair")
-        btn_exit.setFixedSize(36, 36)
+        btn_exit = QPushButton("  ⏻  Sair  (F10)")
+        btn_exit.setToolTip("Sair do aplicativo  [F10]")
+        btn_exit.setMinimumHeight(36)
         btn_exit.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_exit.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
+                color: #9d9d9d;
                 border: none;
                 border-radius: 4px;
-                font-size: 16pt;
+                text-align: left;
+                padding: 8px 10px;
+                font-size: 10pt;
             }
             QPushButton:hover {
-                background-color: #3e3e42;
+                background-color: #5a1a1a;
+                color: #ff6b6b;
+            }
+            QPushButton:pressed {
+                background-color: #7a1f1f;
             }
         """)
         btn_exit.clicked.connect(self.close)
         user_layout.addWidget(btn_exit)
+
+        # Atalho F10 para sair
+        shortcut_f10 = QShortcut(QKeySequence(Qt.Key.Key_F10), self)
+        shortcut_f10.activated.connect(self.close)
 
         layout.addWidget(user_frame)
         
@@ -765,7 +776,7 @@ class MainWindowERP(QMainWindow):
         action_layout = QHBoxLayout()
         action_layout.addStretch()
 
-        btn_cancel = QPushButton("Cancelar")
+        btn_cancel = QPushButton("Cancelar  [ESC]")
         btn_cancel.setMinimumSize(120, 40)
         btn_cancel.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_cancel.setStyleSheet("""
@@ -781,7 +792,7 @@ class MainWindowERP(QMainWindow):
         btn_cancel.clicked.connect(lambda: self._switch_module(self.MODULE_PRODUCTS))
         action_layout.addWidget(btn_cancel)
 
-        self._btn_start_export = QPushButton("📤  Iniciar Exportação")
+        self._btn_start_export = QPushButton("📤  Iniciar Exportação  [F11]")
         self._btn_start_export.setMinimumSize(180, 40)
         self._btn_start_export.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._btn_start_export.setStyleSheet("""
@@ -835,7 +846,7 @@ class MainWindowERP(QMainWindow):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(8)
 
-        btn_refresh = QPushButton("🔄 Atualizar")
+        btn_refresh = QPushButton("🔄 Atualizar  [F5]")
         btn_refresh.setMinimumHeight(36)
         btn_refresh.clicked.connect(self._refresh_history)
         controls_layout.addWidget(btn_refresh)
@@ -1082,7 +1093,21 @@ class MainWindowERP(QMainWindow):
     
     def _setup_shortcuts(self):
         """Configura atalhos de teclado."""
-        pass  # Atalhos já definidos nos menus
+        shortcuts = [
+            (Qt.Key.Key_F1,  lambda: self._switch_module(self.MODULE_PRODUCTS)),
+            (Qt.Key.Key_F2,  lambda: self._switch_module(self.MODULE_EXPORT)),
+            (Qt.Key.Key_F3,  lambda: self._switch_module(self.MODULE_HISTORY)),
+            (Qt.Key.Key_F4,  lambda: self._switch_module(self.MODULE_DOWNLOAD_CONTAGENS)),
+            (Qt.Key.Key_F5,  self._on_refresh_shortcut),
+            (Qt.Key.Key_F6,  self._on_clear_selection),
+            (Qt.Key.Key_F8,  self._on_contagem_download),
+            (Qt.Key.Key_F9,  self._on_select_all),
+            (Qt.Key.Key_F11, self._on_start_export_shortcut),
+            (Qt.Key.Key_Escape, self._on_cancel_export_shortcut),
+        ]
+        for key, slot in shortcuts:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(slot)
     
     def _connect_signals(self):
         """Conecta sinais."""
@@ -1508,6 +1533,27 @@ class MainWindowERP(QMainWindow):
     def _on_select_all(self):
         """Seleciona todos os produtos."""
         self._product_table._select_all()
+
+    def _on_clear_selection(self):
+        """Limpa a seleção de produtos."""
+        self._product_table._clear_selection()
+
+    def _on_start_export_shortcut(self):
+        """Aciona Iniciar Exportação via F11 (apenas quando no módulo de exportação)."""
+        if self._current_module == self.MODULE_EXPORT and self._btn_start_export.isEnabled():
+            self._btn_start_export.click()
+
+    def _on_refresh_shortcut(self):
+        """F5: Atualizar — roteia para o módulo ativo."""
+        if self._current_module == self.MODULE_HISTORY:
+            self._refresh_history()
+        elif self._current_module == self.MODULE_DOWNLOAD_CONTAGENS:
+            self._on_contagens_refresh()
+
+    def _on_cancel_export_shortcut(self):
+        """Aciona Cancelar via ESC (apenas quando no módulo de exportação)."""
+        if self._current_module == self.MODULE_EXPORT:
+            self._switch_module(self.MODULE_PRODUCTS)
     
     def _on_export_selected(self):
         """Navega para a página de exportação com os produtos selecionados."""
@@ -1855,7 +1901,7 @@ class MainWindowERP(QMainWindow):
     def _on_export_finished(self, filepath: str):
         """Callback quando exportação termina com sucesso."""
         self._btn_start_export.setEnabled(True)
-        self._btn_start_export.setText("📤  Iniciar Exportação")
+        self._btn_start_export.setText("📤  Iniciar Exportação  [F11]")
         self._status_bar.hide_progress()
         self._status_bar.show_message(f"✅ Exportação concluída: {os.path.basename(filepath)}", 8000)
         logger.info(f"Exportação concluída: {filepath}")
@@ -2388,7 +2434,7 @@ class MainWindowERP(QMainWindow):
     def _on_export_error(self, error: Exception):
         """Callback de erro na exportação."""
         self._btn_start_export.setEnabled(True)
-        self._btn_start_export.setText("📤  Iniciar Exportação")
+        self._btn_start_export.setText("📤  Iniciar Exportação  [F11]")
         self._status_bar.hide_progress()
         error_msg = str(error)
         self._status_bar.show_error(f"Erro na exportação: {error_msg}")
@@ -2428,8 +2474,8 @@ class MainWindowERP(QMainWindow):
             "Download Contagens",
             "Baixe e valide os arquivos de contagem enviados pelos coletores",
         )
-        btn_refresh = header.add_action_button("Atualizar", "🔄")
-        btn_download = header.add_action_button("Baixar Selecionado", "⬇️", primary=True)
+        btn_refresh = header.add_action_button("Atualizar  [F5]", "🔄")
+        btn_download = header.add_action_button("Baixar Selecionado  [F8]", "⬇️", primary=True)
         layout.addWidget(header)
 
         # Área de conteúdo

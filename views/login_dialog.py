@@ -63,6 +63,46 @@ CSLOGIN_PATH = r"C:\CEOSoftware\CSLogin.xml"
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.ico")
 
 
+def _friendly_connection_error(error: Exception, banco: str = "", servidor: str = "") -> str:
+    """Converte erros técnicos de conexão em mensagens amigáveis ao usuário."""
+    msg = str(error)
+    msg_lower = msg.lower()
+
+    if "cannot open database" in msg_lower or "não foi possível abrir" in msg_lower:
+        db_label = f'"{banco}"' if banco else "selecionada"
+        return (
+            f"❌ Base de dados {db_label} não encontrada no servidor.\n\n"
+            "Verifique se:\n"
+            "  • O nome da base de dados está correto no CSLogin.xml\n"
+            "  • A base de dados existe e está acessível\n"
+            "  • Você tem permissão de acesso a ela"
+        )
+    if "login failed" in msg_lower or "falha no login" in msg_lower:
+        return (
+            f"❌ Falha de autenticação no servidor{f' {servidor}' if servidor else ''}.\n\n"
+            "Verifique se:\n"
+            "  • Sua conta Windows tem acesso ao SQL Server\n"
+            "  • O servidor está acessível na rede"
+        )
+    if "network-related" in msg_lower or "server was not found" in msg_lower or "não foi possível conectar" in msg_lower:
+        srv_label = f'"{servidor}"' if servidor else "configurado"
+        return (
+            f"❌ Servidor {srv_label} não encontrado ou inacessível.\n\n"
+            "Verifique se:\n"
+            "  • O nome do servidor está correto\n"
+            "  • O SQL Server está em execução\n"
+            "  • A rede/firewall permite a conexão"
+        )
+    if "driver" in msg_lower and "sql server" in msg_lower:
+        return (
+            "❌ Driver ODBC para SQL Server não encontrado.\n\n"
+            "Instale o 'ODBC Driver 17 for SQL Server' (ou superior) "
+            "disponível no site da Microsoft."
+        )
+    # Mensagem genérica mais legível
+    return f"❌ Não foi possível conectar ao banco de dados.\n\nDetalhe técnico: {msg}"
+
+
 class ConnectionWorker(QThread):
     """Worker para conectar ao banco e carregar empresas em background."""
     
@@ -129,7 +169,7 @@ class ConnectionWorker(QThread):
             
         except Exception as e:
             logger.error(f"Erro ao conectar: {e}")
-            self.finished.emit(False, str(e), [])
+            self.finished.emit(False, _friendly_connection_error(e, banco, servidor), [])
     
     def _connect_pyodbc(self, servidor: str, banco: str):
         """Conexão direta com pyodbc como fallback."""
@@ -180,7 +220,7 @@ class ConnectionWorker(QThread):
                 
         except Exception as e:
             logger.error(f"Erro pyodbc: {e}")
-            self.finished.emit(False, str(e), [])
+            self.finished.emit(False, _friendly_connection_error(e, banco, servidor), [])
 
 
 class AuthWorker(QThread):
@@ -1235,8 +1275,13 @@ class LoginDialog(QDialog):
                     "Nenhuma empresa encontrada no banco de dados."
                 )
         else:
-            self._lbl_connection_status.setText(f"❌ Erro: {message}")
+            self._lbl_connection_status.setText("❌ Falha ao conectar. Verifique os dados da conexão.")
             self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
+            QMessageBox.warning(
+                self,
+                "Erro de Conexão",
+                message
+            )
     
     def _show_empresa_step(self):
         """Mostra etapa de seleção de empresa."""
