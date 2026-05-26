@@ -174,6 +174,14 @@ class AppConfig:
     # Configurações da API CSCollect (lidas do arquivo licenca.key)
     # ---------------------------
 
+    # Override em memória para api_authorization (descriptografado do Neon durante login)
+    _api_authorization_override: str = ""
+
+    @classmethod
+    def set_api_authorization_override(cls, value: str) -> None:
+        """Define o token de autorização da API em memória (obtido do Neon durante verificação da licença)."""
+        cls._api_authorization_override = (value or "").strip()
+
     @classmethod
     def _find_key_file(cls) -> str:
         """
@@ -225,16 +233,20 @@ class AppConfig:
     @classmethod
     def get_api_authorization(cls) -> str:
         """
-        Retorna o token de autorização da API CSCollect lido do arquivo licenca.key.
+        Retorna o token de autorização da API CSCollect.
 
-        Usa o campo ``api_authorization``, que corresponde à variável de ambiente
-        ``API_TOKEN`` configurada no servidor da API (Render).
+        Prioridade:
+        1. Override em memória (``_api_authorization_override``) — preenchido após
+           verificação online da licença via Neon (``_api_authorization`` do payload).
+        2. Campo ``api_authorization`` do arquivo licenca.key.
+
         O campo ``token`` do .key é exclusivo para validação de licença mobile
-        e NÃO deve ser enviado nos headers da API HTTP.
-        Cai em ``token`` apenas como fallback para .key antigos sem ``api_authorization``.
+        e NÃO é enviado nos headers da API HTTP (evita erro 401).
         """
+        if cls._api_authorization_override:
+            return cls._api_authorization_override
         data = cls._load_key_file()
-        return (data.get("api_authorization") or data.get("token") or "").strip()
+        return (data.get("api_authorization") or "").strip()
 
     @classmethod
     def get_license_token(cls) -> str:

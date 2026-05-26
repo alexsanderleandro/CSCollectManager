@@ -1026,6 +1026,10 @@ class LoginDialog(QDialog):
 
             # Tudo OK: armazena payload e token raw
             self._licenca_payload = payload_dict
+            # Registrar api_authorization descriptografado (vindo do Neon) no AppConfig
+            _api_auth = payload_dict.get('_api_authorization', '')
+            if _api_auth:
+                AppConfig.set_api_authorization_override(_api_auth)
             try:
                 import json as _json
                 _kraw = None
@@ -1177,6 +1181,10 @@ class LoginDialog(QDialog):
                 pass
 
             self._licenca_payload = payload_dict
+            # Registrar api_authorization descriptografado (vindo do Neon) no AppConfig
+            _api_auth = payload_dict.get('_api_authorization', '')
+            if _api_auth:
+                AppConfig.set_api_authorization_override(_api_auth)
             try:
                 import json as _json
                 _kraw = None
