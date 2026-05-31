@@ -327,13 +327,13 @@ class ApiService:
             return False, f"Erro ao remover do banco: {exc}"
 
     def _delete_contagem_http(self, contagem_id) -> "Tuple[bool, str]":
-        """Remove contagem via DELETE /contagens/{id} na API HTTP."""
+        """Remove contagem via DELETE /contagem/{id} na API HTTP."""
         try:
             import requests
         except ImportError:
             return False, "Biblioteca 'requests' não instalada."
 
-        url = f"{self._base_url}/contagens/{contagem_id}"
+        url = f"{self._base_url}/contagem/{contagem_id}"
         headers = {"Authorization": self._authorization}
         try:
             resp = requests.delete(url, headers=headers, timeout=self.TIMEOUT)
@@ -414,7 +414,7 @@ class ApiService:
     def _list_contagens_http(
         self, cnpj: str
     ) -> "Tuple[bool, list, Optional[str]]":
-        """Lista contagens via GET /contagens na API HTTP (fallback)."""
+        """Lista contagens via GET /contagens?cnpj=... na API HTTP (fallback)."""
         try:
             import requests
         except ImportError:
