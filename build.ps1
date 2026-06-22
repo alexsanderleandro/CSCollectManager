@@ -111,12 +111,27 @@ VSVersionInfo(
 Set-Content -Path $verFile -Value $versionTxt -Encoding UTF8
 Write-Host "Arquivo $verFile atualizado com versÃ£o: $versionStr"
 
-if (Test-Path $icon) {
-    Write-Host "Ãcone encontrado: $icon"
-    & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed --icon $icon $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
+# Prefere usar o .spec (garante runtime_hooks e hiddenimports corretos)
+$specFile = "CSCollectManager.spec"
+if (Test-Path $specFile) {
+    Write-Host "Usando arquivo .spec: $specFile"
+    & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean $specFile
 } else {
-    Write-Host "Ãcone nÃ£o encontrado em $icon - executando sem Ã­cone"
-    & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed $paths $hiddenImportHandlers $hiddenImportVersion $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
+    Write-Host "Arquivo .spec nao encontrado - usando linha de comando"
+    # Runtime hook para injetar MASTER_KEY antes de qualquer modulo
+    $runtimeHook = "--runtime-hook=rthook_master_key.py"
+    # Hidden imports necessarios para dotenv funcionar no executavel
+    $hiddenImportDotenv    = "--hidden-import=dotenv"
+    $hiddenImportDotenvMain = "--hidden-import=dotenv.main"
+    $hiddenImportDotenvCompat = "--hidden-import=dotenv.compat"
+
+    if (Test-Path $icon) {
+        Write-Host "Icone encontrado: $icon"
+        & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed --icon $icon $paths $hiddenImportHandlers $hiddenImportVersion $hiddenImportDotenv $hiddenImportDotenvMain $hiddenImportDotenvCompat $runtimeHook $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
+    } else {
+        Write-Host "Icone nao encontrado em $icon - executando sem icone"
+        & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed $paths $hiddenImportHandlers $hiddenImportVersion $hiddenImportDotenv $hiddenImportDotenvMain $hiddenImportDotenvCompat $runtimeHook $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
+    }
 }
 
-Write-Host "Build finalizado. Artefatos em dist\\$outName or dist\\$outName.exe"
+Write-Host "Build finalizado. Artefatos em dist\$outName.exe"

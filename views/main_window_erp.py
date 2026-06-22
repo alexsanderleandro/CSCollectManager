@@ -14,7 +14,22 @@ Layout completo com:
 
 import os
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+def _utc_to_local(dt_str: str) -> str:
+    """Converte string de data/hora UTC para horário local (UTC-3 / Brasília)."""
+    if not dt_str:
+        return dt_str
+    try:
+        dt_str_clean = dt_str[:19]  # remove microssegundos
+        dt = datetime.fromisoformat(dt_str_clean)
+        # Se vier sem tzinfo, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_local = dt + timedelta(hours=-3)
+        return dt_local.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return dt_str[:19]
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -23,7 +38,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QFileDialog, QApplication, QSpacerItem, QGroupBox
 )
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QCursor, QPixmap
+from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QShortcut, QCursor, QPixmap
 
 from utils.constants import APP_INFO, Icons, Messages, Shortcuts, UIConfig
 from utils.logger import get_logger
@@ -58,16 +73,16 @@ class SidebarButton(QPushButton):
         self.setText(f"  {icon}  {text}")
         self.setCheckable(True)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setMinimumHeight(45)
+        self.setMinimumHeight(44)
         self.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
                 color: #9d9d9d;
                 text-align: left;
-                padding: 12px 16px;
+                padding: 10px 12px;
                 border: none;
                 border-radius: 0;
-                font-size: 11pt;
+                font-size: 10.5pt;
             }
             QPushButton:hover {
                 background-color: #2d2d30;
@@ -149,8 +164,10 @@ class ModuleHeader(QFrame):
     
     def add_action_button(self, text: str, icon: str = "", primary: bool = False) -> QPushButton:
         """Adiciona botão de ação ao header."""
+        from PySide6.QtWidgets import QSizePolicy
         btn = QPushButton(f"{icon}  {text}" if icon else text)
         btn.setMinimumHeight(36)
+        btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         
         if primary:
@@ -309,7 +326,7 @@ class MainWindowERP(QMainWindow):
     def _create_sidebar(self) -> QFrame:
         """Cria barra lateral de navegação."""
         sidebar = QFrame()
-        sidebar.setFixedWidth(220)
+        sidebar.setFixedWidth(245)
         sidebar.setStyleSheet("""
             QFrame {
                 background-color: #1e1e1e;
@@ -339,10 +356,10 @@ class MainWindowERP(QMainWindow):
         self._sidebar_buttons = {}
         
         modules = [
-            (self.MODULE_PRODUCTS, "📦", "Produtos"),
-            (self.MODULE_EXPORT, "📤", "Exportar Carga"),
-            (self.MODULE_HISTORY, "📋", "Histórico"),
-            (self.MODULE_DOWNLOAD_CONTAGENS, "📥", "Download Contagens"),
+            (self.MODULE_PRODUCTS,           "📦", "Produtos           F1"),
+            (self.MODULE_EXPORT,              "📤", "Exportar Carga     F2"),
+            (self.MODULE_HISTORY,             "📋", "Histórico           F3"),
+            (self.MODULE_DOWNLOAD_CONTAGENS,  "📥", "Download Contagens F4"),
         ]
         
         for module_id, icon, text in modules:
@@ -366,27 +383,38 @@ class MainWindowERP(QMainWindow):
             }
         """)
         user_layout = QHBoxLayout(user_frame)
-        user_layout.setContentsMargins(12, 8, 12, 8)
-        user_layout.addStretch()
+        user_layout.setContentsMargins(8, 8, 8, 8)
+        user_layout.setSpacing(0)
 
         # Botão de sair do aplicativo
-        btn_exit = QPushButton("⏻")
-        btn_exit.setToolTip("Sair")
-        btn_exit.setFixedSize(36, 36)
+        btn_exit = QPushButton("  ⏻  Sair  (F10)")
+        btn_exit.setToolTip("Sair do aplicativo  [F10]")
+        btn_exit.setMinimumHeight(36)
         btn_exit.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_exit.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
+                color: #9d9d9d;
                 border: none;
                 border-radius: 4px;
-                font-size: 16pt;
+                text-align: left;
+                padding: 8px 10px;
+                font-size: 10pt;
             }
             QPushButton:hover {
-                background-color: #3e3e42;
+                background-color: #5a1a1a;
+                color: #ff6b6b;
+            }
+            QPushButton:pressed {
+                background-color: #7a1f1f;
             }
         """)
         btn_exit.clicked.connect(self.close)
         user_layout.addWidget(btn_exit)
+
+        # Atalho F10 para sair
+        shortcut_f10 = QShortcut(QKeySequence(Qt.Key.Key_F10), self)
+        shortcut_f10.activated.connect(self.close)
 
         layout.addWidget(user_frame)
         
@@ -748,7 +776,7 @@ class MainWindowERP(QMainWindow):
         action_layout = QHBoxLayout()
         action_layout.addStretch()
 
-        btn_cancel = QPushButton("Cancelar")
+        btn_cancel = QPushButton("Cancelar  [ESC]")
         btn_cancel.setMinimumSize(120, 40)
         btn_cancel.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_cancel.setStyleSheet("""
@@ -764,7 +792,7 @@ class MainWindowERP(QMainWindow):
         btn_cancel.clicked.connect(lambda: self._switch_module(self.MODULE_PRODUCTS))
         action_layout.addWidget(btn_cancel)
 
-        self._btn_start_export = QPushButton("📤  Iniciar Exportação")
+        self._btn_start_export = QPushButton("📤  Iniciar Exportação  [F11]")
         self._btn_start_export.setMinimumSize(180, 40)
         self._btn_start_export.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._btn_start_export.setStyleSheet("""
@@ -818,7 +846,7 @@ class MainWindowERP(QMainWindow):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(8)
 
-        btn_refresh = QPushButton("🔄 Atualizar")
+        btn_refresh = QPushButton("🔄 Atualizar  [F5]")
         btn_refresh.setMinimumHeight(36)
         btn_refresh.clicked.connect(self._refresh_history)
         controls_layout.addWidget(btn_refresh)
@@ -1065,7 +1093,21 @@ class MainWindowERP(QMainWindow):
     
     def _setup_shortcuts(self):
         """Configura atalhos de teclado."""
-        pass  # Atalhos já definidos nos menus
+        shortcuts = [
+            (Qt.Key.Key_F1,  lambda: self._switch_module(self.MODULE_PRODUCTS)),
+            (Qt.Key.Key_F2,  lambda: self._switch_module(self.MODULE_EXPORT)),
+            (Qt.Key.Key_F3,  lambda: self._switch_module(self.MODULE_HISTORY)),
+            (Qt.Key.Key_F4,  lambda: self._switch_module(self.MODULE_DOWNLOAD_CONTAGENS)),
+            (Qt.Key.Key_F5,  self._on_refresh_shortcut),
+            (Qt.Key.Key_F6,  self._on_clear_selection),
+            (Qt.Key.Key_F8,  self._on_contagem_download),
+            (Qt.Key.Key_F9,  self._on_select_all),
+            (Qt.Key.Key_F11, self._on_start_export_shortcut),
+            (Qt.Key.Key_Escape, self._on_cancel_export_shortcut),
+        ]
+        for key, slot in shortcuts:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(slot)
     
     def _connect_signals(self):
         """Conecta sinais."""
@@ -1491,6 +1533,27 @@ class MainWindowERP(QMainWindow):
     def _on_select_all(self):
         """Seleciona todos os produtos."""
         self._product_table._select_all()
+
+    def _on_clear_selection(self):
+        """Limpa a seleção de produtos."""
+        self._product_table._clear_selection()
+
+    def _on_start_export_shortcut(self):
+        """Aciona Iniciar Exportação via F11 (apenas quando no módulo de exportação)."""
+        if self._current_module == self.MODULE_EXPORT and self._btn_start_export.isEnabled():
+            self._btn_start_export.click()
+
+    def _on_refresh_shortcut(self):
+        """F5: Atualizar — roteia para o módulo ativo."""
+        if self._current_module == self.MODULE_HISTORY:
+            self._refresh_history()
+        elif self._current_module == self.MODULE_DOWNLOAD_CONTAGENS:
+            self._on_contagens_refresh()
+
+    def _on_cancel_export_shortcut(self):
+        """Aciona Cancelar via ESC (apenas quando no módulo de exportação)."""
+        if self._current_module == self.MODULE_EXPORT:
+            self._switch_module(self.MODULE_PRODUCTS)
     
     def _on_export_selected(self):
         """Navega para a página de exportação com os produtos selecionados."""
@@ -1838,7 +1901,7 @@ class MainWindowERP(QMainWindow):
     def _on_export_finished(self, filepath: str):
         """Callback quando exportação termina com sucesso."""
         self._btn_start_export.setEnabled(True)
-        self._btn_start_export.setText("📤  Iniciar Exportação")
+        self._btn_start_export.setText("📤  Iniciar Exportação  [F11]")
         self._status_bar.hide_progress()
         self._status_bar.show_message(f"✅ Exportação concluída: {os.path.basename(filepath)}", 8000)
         logger.info(f"Exportação concluída: {filepath}")
@@ -1907,7 +1970,7 @@ class MainWindowERP(QMainWindow):
         # Registra histórico de exportação (não bloqueante)
         try:
             from utils.config import AppConfig
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             # Dados para histórico — formato solicitado: data dd-mm-aaaa, hora hh:mm,
             # usuário logado, vendedor selecionado, aparelho (nome + id) e quantidade de produtos
             usuario_logado = (self._usuario_info.get('nome') if hasattr(self, '_usuario_info') else None) or ""
@@ -2085,7 +2148,7 @@ class MainWindowERP(QMainWindow):
             if chk_thread.found and chk_thread.record:
                 rec = chk_thread.record
                 nome_banco  = str(rec.get("nome_arquivo") or rec.get("arquivo") or "(sem nome)")
-                data_envio  = str(rec.get("data_envio") or rec.get("criado_em") or "")
+                data_envio  = _utc_to_local(str(rec.get("data_envio") or rec.get("criado_em") or ""))
                 carga_id    = rec.get("id")
 
                 # Diálogo de conflito
@@ -2303,7 +2366,7 @@ class MainWindowERP(QMainWindow):
             from pathlib import Path as _Path
 
             log_dir = _Path(AppConfig.get_export_logs_dir())
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             log_filename = f"EXPORTLOG-{now.strftime('%Y%m%d-%H%M%S')}.log"
             log_path = log_dir / log_filename
 
@@ -2371,7 +2434,7 @@ class MainWindowERP(QMainWindow):
     def _on_export_error(self, error: Exception):
         """Callback de erro na exportação."""
         self._btn_start_export.setEnabled(True)
-        self._btn_start_export.setText("📤  Iniciar Exportação")
+        self._btn_start_export.setText("📤  Iniciar Exportação  [F11]")
         self._status_bar.hide_progress()
         error_msg = str(error)
         self._status_bar.show_error(f"Erro na exportação: {error_msg}")
@@ -2411,8 +2474,8 @@ class MainWindowERP(QMainWindow):
             "Download Contagens",
             "Baixe e valide os arquivos de contagem enviados pelos coletores",
         )
-        btn_refresh = header.add_action_button("Atualizar", "🔄")
-        btn_download = header.add_action_button("Baixar Selecionado", "⬇️", primary=True)
+        btn_refresh = header.add_action_button("Atualizar  [F5]", "🔄")
+        btn_download = header.add_action_button("Baixar Selecionado  [F8]", "⬇️", primary=True)
         layout.addWidget(header)
 
         # Área de conteúdo
@@ -2539,14 +2602,14 @@ class MainWindowERP(QMainWindow):
             for rec in rows:
                 row_idx = self._contagens_table.rowCount()
                 self._contagens_table.insertRow(row_idx)
-                self._contagens_table.setItem(row_idx, 0, QTableWidgetItem(str(rec.get("id", ""))))
-                self._contagens_table.setItem(row_idx, 1, QTableWidgetItem(str(rec.get("nome_arquivo", ""))))
-                self._contagens_table.setItem(row_idx, 2, QTableWidgetItem(str(rec.get("codvendedor", ""))))
-                self._contagens_table.setItem(row_idx, 3, QTableWidgetItem(str(rec.get("idcelular", ""))))
-                self._contagens_table.setItem(row_idx, 4, QTableWidgetItem(str(rec.get("cnpj", ""))))
-                data_envio = str(rec.get("data_envio", ""))[:19]  # corta microssegundos
+                self._contagens_table.setItem(row_idx, 0, QTableWidgetItem(str(rec.get("id") or "")))
+                self._contagens_table.setItem(row_idx, 1, QTableWidgetItem(str(rec.get("nome_arquivo") or "")))
+                self._contagens_table.setItem(row_idx, 2, QTableWidgetItem(str(rec.get("codvendedor") or "")))
+                self._contagens_table.setItem(row_idx, 3, QTableWidgetItem(str(rec.get("idcelular") or "")))
+                self._contagens_table.setItem(row_idx, 4, QTableWidgetItem(str(rec.get("cnpj") or "")))
+                data_envio = _utc_to_local(str(rec.get("data_envio") or ""))  # converte UTC→local (UTC-3)
                 self._contagens_table.setItem(row_idx, 5, QTableWidgetItem(data_envio))
-                self._contagens_table.setItem(row_idx, 6, QTableWidgetItem(str(rec.get("url_arquivo", ""))))
+                self._contagens_table.setItem(row_idx, 6, QTableWidgetItem(str(rec.get("url_arquivo") or "")))
 
             total = self._contagens_table.rowCount()
             self._lbl_contagens_status.setText(
@@ -2563,7 +2626,7 @@ class MainWindowERP(QMainWindow):
 
     def _on_contagem_download(self):
         """
-        Baixa o arquivo selecionado, valida o CNPJ no registro E do TXT
+        Baixa o arquivo selecionado, valida a assinatura do arquivo .sig contido no ZIP
         e salva na pasta Cargas caso a validação passe.
         """
         from utils.config import AppConfig
@@ -2609,6 +2672,63 @@ class MainWindowERP(QMainWindow):
                 )
                 return
 
+        # ── Validação do nome do arquivo (antes do download) ─────────────
+        # Padrão esperado: MODELO_CODEMPRESA_CODVENDEDOR_CNPJ_DDMMYYYYHHMM.ZIP
+        # Exemplo:         MOD1_1_043_65381113000120_070520261714.zip
+        _filename_to_validate = nome_arquivo if nome_arquivo else os.path.basename(url_arquivo.split("?")[0])
+        _basename_no_ext = os.path.splitext(_filename_to_validate)[0]
+        _parts = _basename_no_ext.split("_")
+
+        if len(_parts) < 5:
+            QMessageBox.critical(
+                self,
+                "Nome de Arquivo Inválido",
+                f"O nome do arquivo não segue o padrão esperado:\n"
+                f"  MODELO_CODEMPRESA_CODVENDEDOR_CNPJ_DDMMYYYYHHMM.ZIP\n\n"
+                f"Arquivo recebido: {_filename_to_validate}\n\nDownload cancelado.",
+            )
+            return
+
+        _fn_codempresa  = _parts[1]
+        _fn_codvendedor = _parts[2]
+        _fn_cnpj        = _parts[3]
+
+        # Valida CODEMPRESA
+        _codempresa_empresa = str(self._empresa_info.get("codigo", "") or "").strip()
+        if _fn_codempresa != _codempresa_empresa:
+            QMessageBox.critical(
+                self,
+                "CODEMPRESA Inválido",
+                f"O código de empresa no nome do arquivo  →  {_fn_codempresa}\n"
+                f"Código de empresa logada               →  {_codempresa_empresa}\n\n"
+                "Os códigos não coincidem. Download cancelado.",
+            )
+            return
+
+        # Valida CODVENDEDOR (compara sem zero-fill para maior flexibilidade)
+        _codvendedor_tabela = (self._contagens_table.item(row_idx, 2).text()
+                               if self._contagens_table.item(row_idx, 2) else "")
+        if _fn_codvendedor.lstrip("0") != _codvendedor_tabela.lstrip("0"):
+            QMessageBox.critical(
+                self,
+                "CODVENDEDOR Inválido",
+                f"O código de vendedor no nome do arquivo  →  {_fn_codvendedor}\n"
+                f"Código de vendedor do registro           →  {_codvendedor_tabela}\n\n"
+                "Os códigos não coincidem. Download cancelado.",
+            )
+            return
+
+        # Valida CNPJ
+        if _normalizar_cnpj(_fn_cnpj) != _normalizar_cnpj(cnpj_empresa):
+            QMessageBox.critical(
+                self,
+                "CNPJ Inválido no Nome do Arquivo",
+                f"O CNPJ no nome do arquivo  →  {_fn_cnpj}\n"
+                f"CNPJ da empresa logada     →  {cnpj_empresa}\n\n"
+                "Os CNPJs não coincidem. Download cancelado.",
+            )
+            return
+
         # Token mínimo
         if not token:
             QMessageBox.critical(
@@ -2636,49 +2756,78 @@ class MainWindowERP(QMainWindow):
 
         if not ok:
             self._lbl_contagens_status.setText(f"❌  Erro no download: {msg}")
-            QMessageBox.critical(self, "Erro no Download", msg)
+            # Se for 404, o arquivo foi perdido no servidor (filesystem efêmero do Render).
+            # Oferece remover o registro inválido do banco para não poluir a lista.
+            is_404 = "(404)" in msg
+            if is_404:
+                resp_del = QMessageBox.question(
+                    self,
+                    "Erro no Download",
+                    f"{msg}\n\nDeseja remover este registro inválido do banco de dados?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if resp_del == QMessageBox.StandardButton.Yes:
+                    contagem_id = self._contagens_table.item(row_idx, 0).text() if self._contagens_table.item(row_idx, 0) else None
+                    if contagem_id:
+                        del_ok, del_msg = api.delete_contagem(contagem_id, database_url=AppConfig.get_api_database_url())
+                        if del_ok:
+                            self._contagens_table.removeRow(row_idx)
+                            self._lbl_contagens_status.setText("🗑️  Registro inválido removido do banco.")
+                        else:
+                            self._lbl_contagens_status.setText(f"⚠️  Não foi possível remover: {del_msg}")
+            else:
+                QMessageBox.critical(self, "Erro no Download", msg)
             return
 
-        # ── Validação do CNPJ no registro E do TXT dentro do ZIP ──────
-        self._lbl_contagens_status.setText("🔍  Validando arquivo...")
+        # ── Validação da assinatura .sig dentro do ZIP ────────────────
+        self._lbl_contagens_status.setText("🔍  Validando assinatura do arquivo...")
         QApplication.processEvents()
 
-        cnpj_no_arquivo = ApiService.extract_cnpj_from_zip(dest_path)
+        # O HMAC do .sig é assinado com o token da licença (campo 'token' do .key
+        # = campo 'serial' do payload), NÃO com o token da API HTTP.
+        license_token = AppConfig.get_license_token()
+        sig_result = ApiService.validate_sig(dest_path, license_token)
 
-        if cnpj_no_arquivo is None:
-            # Arquivo inválido ou sem registro E — remove e avisa
+        if not sig_result["ok"]:
             try:
                 os.remove(dest_path)
             except Exception:
                 pass
-            self._lbl_contagens_status.setText("❌  Arquivo inválido: registro E não encontrado.")
+            erros_txt = "\n".join(
+                f"  • {e}" for e in sig_result["erros"]
+            )
+            self._lbl_contagens_status.setText("❌  Validação da assinatura falhou — arquivo descartado.")
             QMessageBox.critical(
                 self,
-                "Arquivo Inválido",
-                "Não foi possível localizar o registro E (empresa) dentro do arquivo TXT.\n\n"
+                "Validação de Assinatura Falhou",
+                f"O arquivo não passou na validação de integridade/assinatura:\n\n"
+                f"{erros_txt}\n\n"
                 "O arquivo foi descartado.",
             )
             return
 
-        if _normalizar_cnpj(cnpj_no_arquivo) != _normalizar_cnpj(cnpj_empresa):
+        # CNPJ vem do payload do .sig
+        cnpj_no_arquivo = _normalizar_cnpj(sig_result["payload"].get("cnpj", ""))
+        if cnpj_no_arquivo and cnpj_no_arquivo != _normalizar_cnpj(cnpj_empresa):
             try:
                 os.remove(dest_path)
             except Exception:
                 pass
             self._lbl_contagens_status.setText(
-                f"❌  Validação falhou — CNPJ do arquivo ({cnpj_no_arquivo}) ≠ CNPJ da empresa ({cnpj_empresa})."
+                f"❌  Validação falhou — CNPJ do .sig (" + cnpj_no_arquivo + ") ≠ CNPJ da empresa (" + cnpj_empresa + ")."
             )
             QMessageBox.critical(
                 self,
                 "Validação de CNPJ Falhou",
-                f"O CNPJ encontrado no arquivo TXT  →  {cnpj_no_arquivo}\n"
-                f"CNPJ da empresa logada           →  {cnpj_empresa}\n\n"
-                "Os CNPJs não coincidem. O arquivo foi descartado.",
+                "O CNPJ declarado no .sig         →  " + cnpj_no_arquivo + "\n"
+                + "CNPJ da empresa logada           →  " + cnpj_empresa + "\n\n"
+                + "Os CNPJs não coincidem. O arquivo foi descartado.",
             )
             return
 
         # ── Tudo certo ────────────────────────────────────────────────
-        self._lbl_contagens_status.setText(f"✅  Arquivo baixado e validado: {dest_path}")
+        self._lbl_contagens_status.setText("✅  Arquivo baixado e assinatura validada: " + dest_path)
 
         # Apaga o registro do banco Neon
         contagem_id = self._contagens_table.item(row_idx, 0).text() if self._contagens_table.item(row_idx, 0) else None
@@ -2687,20 +2836,25 @@ class MainWindowERP(QMainWindow):
             QApplication.processEvents()
             del_ok, del_msg = api.delete_contagem(contagem_id, database_url=AppConfig.get_api_database_url())
             if del_ok:
-                self._lbl_contagens_status.setText(f"✅  Arquivo baixado, validado e registro removido do servidor.")
+                self._lbl_contagens_status.setText("✅  Arquivo baixado, assinatura validada e registro removido do servidor.")
                 # Remove linha da tabela
                 self._contagens_table.removeRow(row_idx)
             else:
-                self._lbl_contagens_status.setText(f"⚠️  Download OK, mas falha ao remover registro: {del_msg}")
+                self._lbl_contagens_status.setText("⚠️  Download OK, mas falha ao remover registro: " + del_msg)
 
+        versao_app = sig_result["payload"].get("versao", "")
+        msg_ok = (
+            "Arquivo baixado e assinatura validada com sucesso!\n\n"
+            "📄  " + filename + "\n"
+            "📁  " + dest_dir + "\n"
+            "CNPJ: " + (cnpj_no_arquivo or cnpj_empresa) + "\n"
+            + ("Versão app: " + versao_app + "\n" if versao_app else "")
+            + "\nDeseja abrir a pasta Contagens?"
+        )
         resp = QMessageBox.question(
             self,
             "Download Concluído",
-            f"Arquivo baixado e validado com sucesso!  "
-            f"📄  {filename} "
-            f"📁  {dest_dir}  "
-            f"CNPJ validado: {cnpj_no_arquivo}  "
-            f"Deseja abrir a pasta Contagens?",
+            msg_ok,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )

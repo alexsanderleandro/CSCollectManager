@@ -63,6 +63,46 @@ CSLOGIN_PATH = r"C:\CEOSoftware\CSLogin.xml"
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.ico")
 
 
+def _friendly_connection_error(error: Exception, banco: str = "", servidor: str = "") -> str:
+    """Converte erros técnicos de conexão em mensagens amigáveis ao usuário."""
+    msg = str(error)
+    msg_lower = msg.lower()
+
+    if "cannot open database" in msg_lower or "não foi possível abrir" in msg_lower:
+        db_label = f'"{banco}"' if banco else "selecionada"
+        return (
+            f"❌ Base de dados {db_label} não encontrada no servidor.\n\n"
+            "Verifique se:\n"
+            "  • O nome da base de dados está correto no CSLogin.xml\n"
+            "  • A base de dados existe e está acessível\n"
+            "  • Você tem permissão de acesso a ela"
+        )
+    if "login failed" in msg_lower or "falha no login" in msg_lower:
+        return (
+            f"❌ Falha de autenticação no servidor{f' {servidor}' if servidor else ''}.\n\n"
+            "Verifique se:\n"
+            "  • Sua conta Windows tem acesso ao SQL Server\n"
+            "  • O servidor está acessível na rede"
+        )
+    if "network-related" in msg_lower or "server was not found" in msg_lower or "não foi possível conectar" in msg_lower:
+        srv_label = f'"{servidor}"' if servidor else "configurado"
+        return (
+            f"❌ Servidor {srv_label} não encontrado ou inacessível.\n\n"
+            "Verifique se:\n"
+            "  • O nome do servidor está correto\n"
+            "  • O SQL Server está em execução\n"
+            "  • A rede/firewall permite a conexão"
+        )
+    if "driver" in msg_lower and "sql server" in msg_lower:
+        return (
+            "❌ Driver ODBC para SQL Server não encontrado.\n\n"
+            "Instale o 'ODBC Driver 17 for SQL Server' (ou superior) "
+            "disponível no site da Microsoft."
+        )
+    # Mensagem genérica mais legível
+    return f"❌ Não foi possível conectar ao banco de dados.\n\nDetalhe técnico: {msg}"
+
+
 class ConnectionWorker(QThread):
     """Worker para conectar ao banco e carregar empresas em background."""
     
@@ -129,7 +169,7 @@ class ConnectionWorker(QThread):
             
         except Exception as e:
             logger.error(f"Erro ao conectar: {e}")
-            self.finished.emit(False, str(e), [])
+            self.finished.emit(False, _friendly_connection_error(e, banco, servidor), [])
     
     def _connect_pyodbc(self, servidor: str, banco: str):
         """Conexão direta com pyodbc como fallback."""
@@ -180,7 +220,7 @@ class ConnectionWorker(QThread):
                 
         except Exception as e:
             logger.error(f"Erro pyodbc: {e}")
-            self.finished.emit(False, str(e), [])
+            self.finished.emit(False, _friendly_connection_error(e, banco, servidor), [])
 
 
 class AuthWorker(QThread):
@@ -436,7 +476,7 @@ class LoginDialog(QDialog):
         layout.addWidget(title)
         
         # Subtítulo
-        subtitle = QLabel("Sistema de exportação de carga para o aplicativo CSCollect")
+        subtitle = QLabel("Sistema de exportação de carga e importação de contagens de estoque")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
         layout.addWidget(subtitle)
@@ -489,6 +529,12 @@ class LoginDialog(QDialog):
         self._lbl_license_file.setToolTip("")
         self._lbl_license_file.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         group_layout.addWidget(self._lbl_license_file)
+
+        # Label para exibir a data de validade da licença
+        self._lbl_license_expiry = QLabel("")
+        self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+        self._lbl_license_expiry.hide()
+        group_layout.addWidget(self._lbl_license_expiry)
         
         # Status de conexão
         self._lbl_connection_status = QLabel("")
@@ -896,6 +942,34 @@ class LoginDialog(QDialog):
                             pass
                     except Exception:
                         pass
+                    # Exibir data de validade da licença
+                    try:
+                        _val = payload_dict.get('validade') or ''
+                        if _val:
+                            from datetime import datetime, date, timezone as _tz
+                            _expirada = False
+                            if 'T' in _val or _val.endswith('Z'):
+                                _v = _val.replace('Z', '+00:00')
+                                _dt = datetime.fromisoformat(_v)
+                                if _dt.tzinfo is None:
+                                    _dt = _dt.replace(tzinfo=_tz.utc)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < datetime.now(_tz.utc)
+                            else:
+                                _dt = date.fromisoformat(_val)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < date.today()
+                            if _expirada:
+                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
+                                self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                            else:
+                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
+                                self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+                            self._lbl_license_expiry.show()
+                        else:
+                            self._lbl_license_expiry.hide()
+                    except Exception:
+                        self._lbl_license_expiry.hide()
                     break
                 except Exception as exc:
                     licenca_erro = str(exc)
@@ -905,7 +979,7 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}")
                 return False
 
-            # Verificar validade da licença (data)
+            # Verificar validade da licença (data) — exibe a data e bloqueia se expirada
             validade = payload_dict.get('validade') or ''
             try:
                 if validade:
@@ -916,11 +990,13 @@ class LoginDialog(QDialog):
                         if val_dt.tzinfo is None:
                             val_dt = val_dt.replace(tzinfo=timezone.utc)
                         if val_dt < datetime.now(timezone.utc):
+                            self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
                             QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
                             return False
                     else:
                         from datetime import date
                         if date.fromisoformat(validade) < date.today():
+                            self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
                             QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
                             return False
             except Exception:
@@ -950,6 +1026,10 @@ class LoginDialog(QDialog):
 
             # Tudo OK: armazena payload e token raw
             self._licenca_payload = payload_dict
+            # Registrar api_authorization descriptografado (vindo do Neon) no AppConfig
+            _api_auth = payload_dict.get('_api_authorization', '')
+            if _api_auth:
+                AppConfig.set_api_authorization_override(_api_auth)
             try:
                 import json as _json
                 _kraw = None
@@ -1042,6 +1122,34 @@ class LoginDialog(QDialog):
                         self._lbl_license_file.show()
                     except Exception:
                         pass
+                    # Exibe data de validade imediatamente
+                    try:
+                        _val = payload_dict.get('validade') or ''
+                        if _val:
+                            from datetime import datetime, date, timezone as _tz
+                            _expirada = False
+                            if 'T' in _val or _val.endswith('Z'):
+                                _v = _val.replace('Z', '+00:00')
+                                _dt = datetime.fromisoformat(_v)
+                                if _dt.tzinfo is None:
+                                    _dt = _dt.replace(tzinfo=_tz.utc)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < datetime.now(_tz.utc)
+                            else:
+                                _dt = date.fromisoformat(_val)
+                                _val_fmt = _dt.strftime('%d/%m/%Y')
+                                _expirada = _dt < date.today()
+                            if _expirada:
+                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
+                                self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                            else:
+                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
+                                self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+                            self._lbl_license_expiry.show()
+                        else:
+                            self._lbl_license_expiry.hide()
+                    except Exception:
+                        self._lbl_license_expiry.hide()
                     break
                 except Exception as exc:
                     last_error = exc
@@ -1051,7 +1159,7 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença.\n{last_error or ''}")
                 return False
 
-            # Verifica validade
+            # Verifica validade e bloqueia se expirada
             validade = payload_dict.get('validade') or ''
             try:
                 if validade:
@@ -1073,6 +1181,10 @@ class LoginDialog(QDialog):
                 pass
 
             self._licenca_payload = payload_dict
+            # Registrar api_authorization descriptografado (vindo do Neon) no AppConfig
+            _api_auth = payload_dict.get('_api_authorization', '')
+            if _api_auth:
+                AppConfig.set_api_authorization_override(_api_auth)
             try:
                 import json as _json
                 _kraw = None
@@ -1171,8 +1283,13 @@ class LoginDialog(QDialog):
                     "Nenhuma empresa encontrada no banco de dados."
                 )
         else:
-            self._lbl_connection_status.setText(f"❌ Erro: {message}")
+            self._lbl_connection_status.setText("❌ Falha ao conectar. Verifique os dados da conexão.")
             self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
+            QMessageBox.warning(
+                self,
+                "Erro de Conexão",
+                message
+            )
     
     def _show_empresa_step(self):
         """Mostra etapa de seleção de empresa."""

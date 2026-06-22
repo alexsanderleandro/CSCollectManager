@@ -13,7 +13,7 @@ import os
 import zipfile
 from typing import Optional, List, Dict, Any, Callable
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from dataclasses import dataclass
 
 
@@ -157,7 +157,7 @@ class ExportService:
             Nome do arquivo
         """
         if data_hora is None:
-            data_hora = datetime.now()
+            data_hora = datetime.now(timezone.utc)
         
         # Formato: DDMMAAAAHHMM
         timestamp = data_hora.strftime("%d%m%Y%H%M")
