@@ -133,3 +133,17 @@ nome_device.json
 .env
 
 *.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+venv/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
