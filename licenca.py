@@ -6,6 +6,18 @@ import hashlib
 import secrets
 from datetime import datetime, date, timezone
 
+# Importa módulo de criptografia para campos sensíveis
+try:
+    from encryption import encrypt_field, decrypt_field, is_encrypted
+except ImportError:
+    # Fallback se encryption não estiver disponível (compatibilidade)
+    def encrypt_field(v):
+        return v
+    def decrypt_field(v):
+        return v
+    def is_encrypted(v):
+        return False
+
 
 # Tenta carregar variáveis de ambiente a partir de um arquivo .env
 try:
@@ -108,7 +120,8 @@ def _b64u_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode((s + padding).encode('ascii'))
 
 
-def gerar_licenca(cnpjs, ids_celular, validade, nome_cliente, sql_servidor, sql_banco):
+def gerar_licenca(cnpjs, ids_celular, validade, nome_cliente, sql_servidor, sql_banco, 
+                   api_authorization=None, api_database_url=None):
     """Gera um token de licença.
 
     O token é uma string compacta e assinada que contém o payload JSON
@@ -166,6 +179,12 @@ def gerar_licenca(cnpjs, ids_celular, validade, nome_cliente, sql_servidor, sql_
         "sql_banco": sql_banco,
         "gerado_em": datetime.now().astimezone().replace(microsecond=0).isoformat(),
     }
+    
+    # Adiciona campos opcionais da API se fornecidos
+    if api_authorization:
+        payload["api_authorization"] = api_authorization
+    if api_database_url:
+        payload["api_database_url"] = api_database_url
 
     # 3) Serializa para JSON (bytes UTF-8)
     dados = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -246,16 +265,19 @@ def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=N
                         caminho="licenca.key"):
     """Salva a licença no novo formato JSON conforme especificação.
     
+    Campos sensíveis (api_authorization, api_database_url, database_url) são 
+    criptografados antes de serem salvos no arquivo .key.
+    
     Formato do arquivo .key:
     {
       "cnpjs": ["12345678000199", "98765432000188"],
       "ids": ["a3e9e3a0a4659652", "device-123"],
       "token": "base64url(payload).base64url(signature)",
       "validade": "2026-12-31" ou null,
-      "database_url": "postgresql://user:pass@host:port/db" ou null,
+      "database_url": "<criptografado>" ou null,
       "api_url": "https://cscollectapi.onrender.com" ou null,
-      "api_authorization": "token" ou null,
-      "api_database_url": "postgresql://..." ou null
+      "api_authorization": "<criptografado>" ou null,
+      "api_database_url": "<criptografado>" ou null
     }
 
     Parâmetros:
@@ -266,15 +288,16 @@ def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=N
     - database_url: connection string PostgreSQL para validação online ou None.
     - caminho: caminho do arquivo onde a licença será gravada.
     """
+    # Criptografa campos sensíveis antes de salvar
     licenca_data = {
         "cnpjs": cnpjs,
         "ids": ids_celular,
         "token": token,
         "validade": validade,
-        "database_url": database_url,
+        "database_url": encrypt_field(database_url),
         "api_url": api_url or None,
-        "api_authorization": api_authorization or None,
-        "api_database_url": api_database_url or None,
+        "api_authorization": encrypt_field(api_authorization),
+        "api_database_url": encrypt_field(api_database_url),
     }
     
     with open(caminho, "w", encoding='utf-8') as f:
@@ -282,13 +305,75 @@ def salvar_licenca_json(token, cnpjs, ids_celular, validade=None, database_url=N
 
 
 def carregar_licenca_de_arquivo(caminho="licenca.key"):
-    """Lê token de `caminho`, verifica e retorna o payload (dict)."""
+    """Lê token (ou JSON de manager) de `caminho`, verifica e retorna o payload (dict) e o token.
+
+    Suporta dois formatos de arquivo:
+    - Texto simples contendo o token.
+    - JSON contendo pelo menos a chave `token` (ex.: manager key).
+    """
     try:
-        with open(caminho, "r", encoding='utf-8') as f:
-            token = f.read().strip()
+        with open(caminho, "rb") as f:
+            raw = f.read()
     except FileNotFoundError:
         raise FileNotFoundError(f"Arquivo não encontrado: {caminho}")
 
+    # Remove BOM UTF-8 se presente
+    if raw.startswith(b'\xef\xbb\xbf'):
+        raw = raw[3:]
+
+    # Tenta decodificar: UTF-8 → cp1252 → latin-1 (fallback universal)
+    conteudo = None
+    for enc in ('utf-8', 'cp1252', 'latin-1'):
+        try:
+            conteudo = raw.decode(enc).strip()
+            break
+        except UnicodeDecodeError:
+            continue
+    
+    if not conteudo:
+        raise ValueError("Não foi possível decodificar o arquivo")
+
+    token = None
+    payload = None
+    
+    # Tenta detectar JSON com campo `token`
+    if conteudo.startswith('{'):
+        try:
+            doc = json.loads(conteudo)
+            token = doc.get('token')
+            # Monta payload a partir dos campos do JSON (formato CSCollect Manager)
+            # IDs podem vir como 'ids' ou 'ids_celular'
+            ids = doc.get('ids_celular') or doc.get('ids') or []
+            cnpjs = doc.get('cnpjs') or []
+            if cnpjs or ids:
+                # Descriptografa campos sensíveis ao carregar
+                api_auth = doc.get('api_authorization', '')
+                api_db = doc.get('api_database_url', '')
+                db_url = doc.get('database_url', '')
+                
+                payload = {
+                    'cnpjs': cnpjs,
+                    'ids_celular': ids,
+                    'validade': doc.get('validade', ''),
+                    'nome_cliente': doc.get('nome_cliente', ''),
+                    'sql_servidor': doc.get('sql_servidor', ''),
+                    'sql_banco': doc.get('sql_banco', ''),
+                    'api_url': doc.get('api_url', ''),
+                    'api_authorization': decrypt_field(api_auth) if is_encrypted(api_auth) else api_auth,
+                    'api_database_url': decrypt_field(api_db) if is_encrypted(api_db) else api_db,
+                    'database_url': decrypt_field(db_url) if is_encrypted(db_url) else db_url,
+                }
+        except Exception:
+            token = None
+
+    # Se não encontrou token no JSON ou não é JSON, tenta como token direto
+    if not token:
+        token = conteudo
+
+    if not token:
+        raise ValueError("Arquivo vazio ou sem token válido")
+
+    # Verifica e decodifica o token para obter o payload completo
     payload = verificar_licenca(token)
     return payload, token
 
@@ -377,9 +462,14 @@ if __name__ == "__main__":
             except Exception as e:
                 print('Erro ao carregar licença:', e)
                 raise SystemExit(1)
+            # Extrai valores do token original para preservá-los
+            token_payload = verificar_licenca(token, validar_validade=False)
+            api_authorization_existente = token_payload.get('api_authorization')
+            api_database_url_existente = token_payload.get('api_database_url')
+            
             # permitir edição
             payload = _menu_edicao(payload)
-            # regenerar token
+            # regenerar token com os valores de API do token original
             novo_token = gerar_licenca(
                 payload.get('cnpjs', []),
                 payload.get('ids_celular', []),
@@ -387,27 +477,26 @@ if __name__ == "__main__":
                 payload.get('nome_cliente', ''),
                 payload.get('sql_servidor', ''),
                 payload.get('sql_banco', ''),
+                api_authorization=api_authorization_existente,
+                api_database_url=api_database_url_existente,
             )
             
             # Solicita database_url (opcional)
             database_url = input('Database URL PostgreSQL (opcional, Enter para pular): ').strip() or None
             
-            # Informações da API (opcionais)
-            #print('\n-- Configurações da API CSCollect (opcional, Enter para pular) --')
-            #api_url = input('URL da API (ex: https://cscollectapi.onrender.com): ').strip() or None
-            #api_authorization = input('Token de Autorização da API: ').strip() or None
-            #api_database_url = input('URL do Banco da API (PostgreSQL): ').strip() or None
+            # Extrai api_url do payload original (se houver)
+            api_url = payload.get('api_url')
             
-            # Salva no novo formato JSON
+            # Salva no novo formato JSON com todos os valores preservados
             salvar_licenca_json(
                 novo_token,
                 payload.get('cnpjs', []),
                 payload.get('ids_celular', []),
                 payload.get('validade'),
-                #database_url,
-                None,
-                #api_authorization,
-                #api_database_url,
+                database_url,
+                api_url,
+                api_authorization_existente,
+                api_database_url_existente,
                 caminho
             )
             print('Licença atualizada e salva em', caminho, '(formato JSON)')

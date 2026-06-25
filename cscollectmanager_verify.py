@@ -82,8 +82,27 @@ def _verify_token_online(licenca_json: Dict[str, Any]) -> Dict[str, Any]:
     """
     database_url = licenca_json.get('database_url')
     if not database_url:
-        # Sem database_url: aceita apenas com os dados locais do arquivo
         return licenca_json
+
+    # Normaliza URL para evitar erros de channel_binding e sslmode (crítico para Neon)
+    import re
+    from urllib.parse import urlparse, urlunparse
+    
+    # 1. Garante o nome do banco padrão do Neon (/neondb) se estiver ausente
+    # No Neon, se o banco for omitido, o driver usa o user (neondb_owner), que não existe como banco.
+    try:
+        parsed = urlparse(database_url)
+        if not parsed.path or parsed.path == '/':
+            database_url = urlunparse(parsed._replace(path='/neondb'))
+    except Exception:
+        pass
+
+    # 2. Limpeza de channel_binding
+    database_url = re.sub(r'([?&])channel_binding=[^&]*&?', r'\1', database_url).rstrip('?&')
+    
+    # 3. Garante sslmode=require
+    if 'sslmode=' not in database_url:
+        database_url += ("&" if "?" in database_url else "?") + "sslmode=require"
 
     try:
         import psycopg2
@@ -260,6 +279,8 @@ def get_relevant_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
         'gerado_em': payload.get('gerado_em', ''),
         'cnpjs': payload.get('cnpjs', []),
         'ids_celular': payload.get('ids_celular', []),
+        '_api_authorization': payload.get('_api_authorization', ''),  # Adicionado
+        '_api_database_url': payload.get('_api_database_url', ''),      # Adicionado
     }
 
 

@@ -30,6 +30,7 @@ import hashlib
 import sqlite3
 from typing import Optional, List, Dict, Any, Callable
 from datetime import datetime, timezone
+import pytz
 
 from services.export_service import EmpresaInfo, UsuarioInfo, ProdutoExport, ExportService
 from utils.config import AppConfig
@@ -102,7 +103,7 @@ class DbExportService:
         Exemplo: CARGA-1-001-100220260843.db
         """
         if data_hora is None:
-            data_hora = datetime.now(timezone.utc)
+            data_hora = datetime.now(pytz.timezone('America/Sao_Paulo'))
         timestamp = data_hora.strftime("%d%m%Y%H%M")
         cod_usuario_str = f"{codusuario:03d}"
         return f"CARGA-{codempresa}-{cod_usuario_str}-{timestamp}.db"
@@ -142,7 +143,7 @@ class DbExportService:
 
         os.makedirs(output_path, exist_ok=True)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(pytz.timezone('America/Sao_Paulo'))
         filename = self.generate_filename(empresa.codempresa, usuario.codusuario, now)
         filepath = os.path.join(output_path, filename)
 

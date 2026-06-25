@@ -11,6 +11,7 @@ Layout do arquivo TXT:
 
 import os
 import zipfile
+import pytz # Adicionar esta linha
 from typing import Optional, List, Dict, Any, Callable
 from pathlib import Path
 from datetime import datetime, date, timezone
@@ -157,9 +158,8 @@ class ExportService:
             Nome do arquivo
         """
         if data_hora is None:
-            data_hora = datetime.now(timezone.utc)
-        
-        # Formato: DDMMAAAAHHMM
+            # Correção assertiva: usar datetime.now com o fuso horário diretamente.
+            data_hora = datetime.now(pytz.timezone('America/Sao_Paulo'))
         timestamp = data_hora.strftime("%d%m%Y%H%M")
         
         # Código do usuário com 3 dígitos

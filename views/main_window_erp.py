@@ -15,6 +15,7 @@ Layout completo com:
 import os
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
+import pytz
 
 def _utc_to_local(dt_str: str) -> str:
     """Converte string de data/hora UTC para horário local (UTC-3 / Brasília)."""
@@ -1941,8 +1942,6 @@ class MainWindowERP(QMainWindow):
                 if filepath and os.path.exists(filepath):
                     folder = os.path.dirname(filepath)
                 if not folder:
-                    folder = (self._txt_export_dir.text() or "").strip()
-                if not folder:
                     try:
                         from utils.config import AppConfig
                         folder = AppConfig.get_last_export_dir()
@@ -1970,7 +1969,7 @@ class MainWindowERP(QMainWindow):
         # Registra histórico de exportação (não bloqueante)
         try:
             from utils.config import AppConfig
-            now = datetime.now(timezone.utc)
+            now = datetime.now(pytz.timezone('America/Sao_Paulo'))
             # Dados para histórico — formato solicitado: data dd-mm-aaaa, hora hh:mm,
             # usuário logado, vendedor selecionado, aparelho (nome + id) e quantidade de produtos
             usuario_logado = (self._usuario_info.get('nome') if hasattr(self, '_usuario_info') else None) or ""
@@ -2352,9 +2351,8 @@ class MainWindowERP(QMainWindow):
 
             up_thread.finished.connect(_on_upload_done)
             up_thread.start()
-            self._api_upload_thread = up_thread
-
-            dlg_up.exec()
+            self._api_upload_thread = up_thread  # Guarda referência
+            dlg_up.exec() # Bloqueia até o upload ser concluído ou cancelado
 
         except Exception as exc:
             logger.error(f"Erro inesperado ao iniciar envio para API: {exc}")
@@ -2366,7 +2364,7 @@ class MainWindowERP(QMainWindow):
             from pathlib import Path as _Path
 
             log_dir = _Path(AppConfig.get_export_logs_dir())
-            now = datetime.now(timezone.utc)
+            now = datetime.now(pytz.timezone('America/Sao_Paulo'))
             log_filename = f"EXPORTLOG-{now.strftime('%Y%m%d-%H%M%S')}.log"
             log_path = log_dir / log_filename
 

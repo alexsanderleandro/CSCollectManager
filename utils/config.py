@@ -8,6 +8,13 @@ import os
 from pathlib import Path
 from typing import Optional
 
+# Importa funções de descriptografia para campos sensíveis
+try:
+    from encryption import decrypt_field, is_encrypted
+except ImportError:
+    def decrypt_field(v): return v
+    def is_encrypted(v): return False
+
 
 class AppConfig:
     """
@@ -246,7 +253,8 @@ class AppConfig:
         if cls._api_authorization_override:
             return cls._api_authorization_override
         data = cls._load_key_file()
-        return (data.get("api_authorization") or "").strip()
+        val = (data.get("api_authorization") or "").strip()
+        return decrypt_field(val) if is_encrypted(val) else val
 
     @classmethod
     def get_license_token(cls) -> str:
@@ -266,11 +274,36 @@ class AppConfig:
     def get_api_database_url(cls) -> str:
         """Retorna a URL de conexão direta ao banco Neon lida do arquivo licenca.key."""
         url = cls._load_key_file().get("api_database_url", "").strip()
-        # Remove channel_binding=require — não suportado por versões antigas do psycopg2
+        
+        # Descriptografa se necessário
+        if is_encrypted(url):
+            url = decrypt_field(url) or ""
+            
+        if not url:
+            return ""
+
+        # Limpeza robusta da URL para Neon/psycopg2
         import re
-        url = re.sub(r'[&?]channel_binding=[^&]*', '', url)
-        # Limpa eventual '?' ou '&' sobrando no final
+        from urllib.parse import urlparse, urlunparse
+        
+        # 1. Garante o nome do banco padrão do Neon (/neondb) se estiver ausente
+        # Isso evita que o driver use o nome do usuário (neondb_owner) como nome do banco.
+        try:
+            parsed = urlparse(url)
+            if not parsed.path or parsed.path == '/':
+                parsed = parsed._replace(path='/neondb')
+                url = urlunparse(parsed)
+        except Exception:
+            pass
+
+        # 2. Remove channel_binding mas preserva o separador (? ou &) para não quebrar params seguintes
+        url = re.sub(r'([?&])channel_binding=[^&]*&?', r'\1', url)
         url = url.rstrip('?&')
+        
+        # 3. Garante sslmode=require (obrigatório para Neon)
+        if 'sslmode=' not in url:
+            url += ("&" if "?" in url else "?") + "sslmode=require"
+            
         return url
 
     @classmethod
