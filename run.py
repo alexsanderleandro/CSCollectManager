@@ -21,9 +21,9 @@ import os
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT_DIR)
 
-from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
+from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QIcon, QPixmap
+from PySide6.QtGui import QFont, QIcon
 
 from app.styles import DarkTheme, apply_theme
 from utils.logger import get_logger, setup_logging
@@ -67,7 +67,7 @@ class CSCollectManagerApp:
         setup_exception_handler()
         
         # Componentes
-        self._splash: QSplashScreen = None
+        self._splash = None  # AnimatedSplash (widgets/splash_screen.py)
         self._login_dialog = None
         self._main_window = None
         
@@ -105,12 +105,9 @@ class CSCollectManagerApp:
             Código de saída (0=sucesso)
         """
         try:
-            # Mostra splash screen
+            # Mostra splash animado; ao terminar, ele dispara o fluxo de login
             self._show_splash()
-            
-            # Inicia fluxo de login após splash
-            QTimer.singleShot(1500, self._start_login_flow)
-            
+
             return self.app.exec()
             
         except Exception as e:
@@ -122,33 +119,32 @@ class CSCollectManagerApp:
             return 1
     
     def _show_splash(self):
-        """Mostra splash screen."""
-        splash_path = os.path.join(ROOT_DIR, "assets", "splash.png")
-        
-        if os.path.exists(splash_path):
-            pixmap = QPixmap(splash_path)
-        else:
-            # Cria splash simples se não houver imagem
-            pixmap = QPixmap(500, 300)
-            pixmap.fill(Qt.GlobalColor.transparent)
-        
-        self._splash = QSplashScreen(pixmap)
-        self._splash.setStyleSheet("""
-            QSplashScreen {
-                background-color: #1e1e1e;
-                border: 1px solid #0078d4;
-                border-radius: 8px;
-            }
-        """)
-        self._splash.showMessage(
-            f"\n\n\n\n\n📦 {APP_INFO.NAME}\n\nCarregando sistema...",
-            Qt.AlignmentFlag.AlignCenter,
-            Qt.GlobalColor.white
-        )
-        self._splash.show()
-        self.app.processEvents()
-        
-        logger.debug("Splash screen exibida")
+        """Mostra splash animado (conforme docs em assets/) e agenda o login."""
+        try:
+            from app.splash import AnimatedSplash
+
+            # Resolve o ícone tanto em dev quanto no bundle PyInstaller onefile
+            # (assets extraídos em sys._MEIPASS). Usa ceo-icon.png se existir,
+            # senão o logo da marca (fundo transparente).
+            base_dir = getattr(sys, "_MEIPASS", ROOT_DIR)
+            icon_path = os.path.join(base_dir, "assets", "ceo-icon.png")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(base_dir, "assets", "logo.png")
+
+            self._splash = AnimatedSplash(
+                on_finish=self._start_login_flow,
+                icon_path=icon_path,
+                title="CEOsoftware Sistemas",
+                subtitle="INVENTÁRIO INTELIGENTE",
+            )
+            self._splash.start(duration=3.0)
+            self.app.processEvents()
+            logger.debug("Splash animado exibido")
+        except Exception as e:
+            # Splash nunca deve impedir a inicialização: segue direto p/ login.
+            logger.warning(f"Falha ao exibir splash: {e}", exc_info=True)
+            self._splash = None
+            QTimer.singleShot(0, self._start_login_flow)
     
     def _start_login_flow(self):
         """Inicia fluxo de login."""

@@ -33,6 +33,8 @@ class UsuarioInfo:
     codusuario: int
     nomeusuario: str
     id_celular: str = ""
+    login_usuario: str = ""
+    senha_criptografada: str = ""
 
 
 @dataclass
@@ -207,8 +209,8 @@ class ExportService:
         """
         Monta registro V (Vendedor/Usuário).
         
-        Layout: |V|codusuario|nomeusuario|
-        
+        Layout: |V|codusuario|nomeusuario|id_celular|login_usuario|senha_criptografada|
+
         Args:
             usuario: Informações do usuário
             
@@ -221,6 +223,8 @@ class ExportService:
             str(usuario.codusuario).zfill(3),
             usuario.nomeusuario,
             usuario.id_celular or "",
+            usuario.login_usuario or "",
+            usuario.senha_criptografada or "",
             ""   # Final com pipe
         ])
     

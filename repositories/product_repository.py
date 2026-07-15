@@ -73,6 +73,14 @@ class ProductRepository:
         params = {}
         conditions = []
         
+        # Filtro obrigatório de empresa
+        if filters.get("company_code"):
+            conditions.append("pe.CodEmpresa = :company_code")
+            try:
+                params["company_code"] = int(filters["company_code"])
+            except (ValueError, TypeError):
+                params["company_code"] = filters["company_code"]
+
         # Filtro por produtos específicos
         if filters.get("produtos"):
             prods = filters["produtos"]
@@ -251,44 +259,75 @@ class ProductRepository:
             # Retorna lista vazia em caso de erro
             return []
     
-    def get_grupos(self) -> List[Tuple[int, str]]:
+    def get_grupos(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega grupos de estoque.
         
+        Args:
+            company_code: Filtro opcional por empresa
+            
         Returns:
             Lista de (codigo, descricao)
         """
-        query = """
-            SELECT codgrupo, NomeGrupo AS descricao
-            FROM GrupoEstoque
-            WHERE ISNULL(Ativo, 1) = 1
-            ORDER BY NomeGrupo
-        """
+        if company_code:
+            query = """
+                SELECT DISTINCT g.codgrupo, g.NomeGrupo AS descricao
+                FROM GrupoEstoque g
+                INNER JOIN produtos p ON p.codgrupo = g.codgrupo
+                INNER JOIN produtosestoque pe ON pe.codproduto = p.codproduto
+                WHERE pe.codempresa = :company_code
+                  AND ISNULL(g.Ativo, 1) = 1
+                ORDER BY g.NomeGrupo
+            """
+            params = {"company_code": company_code}
+        else:
+            query = """
+                SELECT codgrupo, NomeGrupo AS descricao
+                FROM GrupoEstoque
+                WHERE ISNULL(Ativo, 1) = 1
+                ORDER BY NomeGrupo
+            """
+            params = {}
         
         try:
             with get_session() as session:
-                result = session.execute(text(query))
+                result = session.execute(text(query), params)
                 return [(row.codgrupo, row.descricao) for row in result]
         except Exception as e:
             print(f"Erro ao carregar grupos: {e}")
             return []
     
-    def get_tipos_produto(self) -> List[Tuple[int, str]]:
+    def get_tipos_produto(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega tipos de produto.
         
+        Args:
+            company_code: Filtro opcional por empresa
+            
         Returns:
             Lista de (codigo, descricao)
         """
-        query = """
-            SELECT codtipoproduto AS codtipo, nometipoproduto AS descricao
-            FROM TipoProduto
-            ORDER BY nometipoproduto
-        """
+        if company_code:
+            query = """
+                SELECT DISTINCT t.codtipoproduto AS codtipo, t.nometipoproduto AS descricao
+                FROM TipoProduto t
+                INNER JOIN produtos p ON p.CodTipoProduto = t.codtipoproduto
+                INNER JOIN produtosestoque pe ON pe.codproduto = p.codproduto
+                WHERE pe.codempresa = :company_code
+                ORDER BY t.nometipoproduto
+            """
+            params = {"company_code": company_code}
+        else:
+            query = """
+                SELECT codtipoproduto AS codtipo, nometipoproduto AS descricao
+                FROM TipoProduto
+                ORDER BY nometipoproduto
+            """
+            params = {}
         
         try:
             with get_session() as session:
-                result = session.execute(text(query))
+                result = session.execute(text(query), params)
                 return [(row.codtipo, row.descricao) for row in result]
         except Exception as e:
             print(f"Erro ao carregar tipos: {e}")
@@ -329,67 +368,111 @@ class ProductRepository:
             print(f"Erro ao carregar lista de locais de estoque: {e}")
             return []
 
-    def get_localizacoes(self) -> List[Tuple[int, str]]:
+    def get_localizacoes(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega localizações de estoque.
         
+        Args:
+            company_code: Filtro opcional por empresa
+            
         Returns:
             Lista de (codigo, descricao)
         """
-        query = """
-            SELECT codlocal, NomeLocalEstoque AS descricao
-            FROM LocalEstoque
-            WHERE ISNULL(Ativo, 1) = 1
-            ORDER BY NomeLocalEstoque
-        """
+        if company_code:
+            query = """
+                SELECT DISTINCT l.codlocal, l.NomeLocalEstoque AS descricao
+                FROM LocalEstoque l
+                INNER JOIN produtosestoque pe ON pe.localizacao = l.NomeLocalEstoque
+                WHERE pe.codempresa = :company_code
+                  AND ISNULL(l.Ativo, 1) = 1
+                ORDER BY l.NomeLocalEstoque
+            """
+            params = {"company_code": company_code}
+        else:
+            query = """
+                SELECT codlocal, NomeLocalEstoque AS descricao
+                FROM LocalEstoque
+                WHERE ISNULL(Ativo, 1) = 1
+                ORDER BY NomeLocalEstoque
+            """
+            params = {}
         
         try:
             with get_session() as session:
-                result = session.execute(text(query))
+                result = session.execute(text(query), params)
                 return [(row.codlocal, row.descricao) for row in result]
         except Exception as e:
             print(f"Erro ao carregar localizações: {e}")
             return []
     
-    def get_fornecedores(self) -> List[Tuple[int, str]]:
+    def get_fornecedores(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega fornecedores.
         
+        Args:
+            company_code: Filtro opcional por empresa
+
         Returns:
             Lista de (codigo, nome)
         """
-        query = """
-            SELECT codpessoa, nome 
-            FROM pessoas 
-            WHERE fornecedor = 1 AND ativo = 1
-            ORDER BY nome
-        """
+        if company_code:
+            query = """
+                SELECT DISTINCT p.codpessoa, p.nome 
+                FROM pessoas p
+                INNER JOIN produtosestoque pe ON pe.codfornecedor = p.codpessoa
+                WHERE p.fornecedor = 1 AND p.ativo = 1 AND pe.codempresa = :company_code
+                ORDER BY p.nome
+            """
+            params = {"company_code": company_code}
+        else:
+            query = """
+                SELECT codpessoa, nome 
+                FROM pessoas 
+                WHERE fornecedor = 1 AND ativo = 1
+                ORDER BY nome
+            """
+            params = {}
         
         try:
             with get_session() as session:
-                result = session.execute(text(query))
+                result = session.execute(text(query), params)
                 return [(row.codpessoa, row.nome) for row in result]
         except Exception as e:
             print(f"Erro ao carregar fornecedores: {e}")
             return []
     
-    def get_fabricantes(self) -> List[Tuple[int, str]]:
+    def get_fabricantes(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega fabricantes.
         
+        Args:
+            company_code: Filtro opcional por empresa
+
         Returns:
             Lista de (codigo, nome)
         """
-        query = """
-            SELECT codpessoa, nome 
-            FROM pessoas 
-            WHERE fabricante = 1 AND ativo = 1
-            ORDER BY nome
-        """
+        if company_code:
+            query = """
+                SELECT DISTINCT p.codpessoa, p.nome 
+                FROM pessoas p
+                INNER JOIN produtos pe ON pe.codfabricante = p.codpessoa
+                INNER JOIN produtosestoque pes ON pes.codproduto = pe.codproduto
+                WHERE p.fabricante = 1 AND p.ativo = 1 AND pes.codempresa = :company_code
+                ORDER BY p.nome
+            """
+            params = {"company_code": company_code}
+        else:
+            query = """
+                SELECT codpessoa, nome 
+                FROM pessoas 
+                WHERE fabricante = 1 AND ativo = 1
+                ORDER BY nome
+            """
+            params = {}
         
         try:
             with get_session() as session:
-                result = session.execute(text(query))
+                result = session.execute(text(query), params)
                 return [(row.codpessoa, row.nome) for row in result]
         except Exception as e:
             print(f"Erro ao carregar fabricantes: {e}")

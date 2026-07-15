@@ -20,33 +20,39 @@ class DataLoaderWorker(QObject):
     error = Signal(str)
     progress = Signal(int, str)
     
-    def __init__(self, inventory_service: InventoryService):
+    def __init__(self, inventory_service: InventoryService, company_code: Optional[str] = None):
         """
         Inicializa o worker de carregamento de dados.
 
         Args:
             inventory_service: Serviço de inventário usado para buscar
                 grupos, tipos de produto, localizações e produtos.
+            company_code: Código da empresa logada para filtragem.
         """
         super().__init__()
         self._service = inventory_service
+        self._company_code = company_code
         self._filters = {}
+        if company_code:
+            self._filters["company_code"] = company_code
     
     def set_filters(self, filters: Dict[str, Any]):
         """Define filtros para busca."""
         self._filters = filters
+        if self._company_code:
+            self._filters["company_code"] = self._company_code
     
     def run(self):
         """Executa carregamento."""
         try:
             self.progress.emit(10, "Carregando grupos...")
-            grupos = self._service.get_grupos()
+            grupos = self._service.get_grupos(self._company_code)
             
             self.progress.emit(30, "Carregando tipos de produto...")
-            tipos = self._service.get_tipos_produto()
+            tipos = self._service.get_tipos_produto(self._company_code)
             
             self.progress.emit(50, "Carregando localizações...")
-            localizacoes = self._service.get_localizacoes()
+            localizacoes = self._service.get_localizacoes(self._company_code)
             
             self.progress.emit(70, "Carregando produtos...")
             produtos = self._service.get_produtos(self._filters)
@@ -88,6 +94,10 @@ class MainController(BaseController):
         self._current_module: str = ""
         self._inventory_service = InventoryService()
         
+        # Define código da empresa no painel de filtros
+        if self._user and self._view.filter_panel:
+            self._view.filter_panel.set_company_code(self._user.company_code)
+
         # Thread para carregamento
         self._loader_thread: QThread = None
         self._loader_worker: DataLoaderWorker = None
@@ -139,9 +149,12 @@ class MainController(BaseController):
         self._view.set_status("Carregando dados...")
         self._view.show_progress(True, 0)
         
+        # Código da empresa do usuário logado
+        company_code = self._user.company_code if self._user else None
+
         # Cria worker e thread
         self._loader_thread = QThread()
-        self._loader_worker = DataLoaderWorker(self._inventory_service)
+        self._loader_worker = DataLoaderWorker(self._inventory_service, company_code)
         self._loader_worker.moveToThread(self._loader_thread)
         
         # Conecta sinais
@@ -163,8 +176,12 @@ class MainController(BaseController):
         self._view.set_status("Filtrando produtos...")
         self._view.show_progress(True, 0)
         
+        filters = filters or {}
+        if self._user and self._user.company_code:
+            filters["company_code"] = self._user.company_code
+
         try:
-            produtos = self._inventory_service.get_produtos(filters or {})
+            produtos = self._inventory_service.get_produtos(filters)
             self._view.load_products(produtos)
             self._view.set_status(f"{len(produtos)} produtos encontrados")
         except Exception as e:

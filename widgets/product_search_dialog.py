@@ -24,9 +24,10 @@ class ProductSearchWorker(QThread):
     total_changed = Signal(int)  # Total de registros encontrados
     error = Signal(str)      # Mensagem de erro
     
-    def __init__(self, search_text: str, limit: int = 50, offset: int = 0):
+    def __init__(self, search_text: str, company_code: Optional[str] = None, limit: int = 50, offset: int = 0):
         super().__init__()
         self.search_text = search_text.strip()
+        self.company_code = company_code
         self.limit = limit
         self.offset = offset
         self.service = ProductService()
@@ -37,6 +38,7 @@ class ProductSearchWorker(QThread):
             # Busca produtos (com ou sem filtro de texto)
             results, total = self.service.search_products(
                 search_text=self.search_text,
+                company_code=self.company_code,
                 limit=self.limit,
                 offset=self.offset
             )
@@ -59,9 +61,10 @@ class ProductSearchDialog(QDialog):
     # Signal emitido com produtos selecionados (lista de tuplas: codproduto, descricao)
     products_selected = Signal(list)
     
-    def __init__(self, search_text: str = "", parent=None):
+    def __init__(self, search_text: str = "", company_code: Optional[str] = None, parent=None):
         super().__init__(parent)
         self.search_text = search_text
+        self.company_code = company_code
         self.worker = None
         self.current_page = 0
         self.page_size = 50
@@ -341,6 +344,7 @@ class ProductSearchDialog(QDialog):
         
         self.worker = ProductSearchWorker(
             search_text=self.txt_search.text(),
+            company_code=self.company_code,
             limit=self.page_size,
             offset=offset
         )

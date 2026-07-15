@@ -126,12 +126,12 @@ def gerar_licenca(cnpjs, ids_celular, validade, nome_cliente, sql_servidor, sql_
         "sql_banco": sql_banco,
         "gerado_em": datetime.now().astimezone().replace(microsecond=0).isoformat(),
     }
-    
-    # Adiciona campos opcionais da API se fornecidos
-    if api_authorization:
-        payload["api_authorization"] = api_authorization
-    if api_database_url:
-        payload["api_database_url"] = api_database_url
+
+    # NOTA (correção 2026-07-02): api_authorization/api_database_url NÃO são
+    # embutidos no payload do token. O token é apenas assinado (HMAC), não
+    # criptografado, então qualquer valor aqui seria legível por qualquer um
+    # via base64url-decode. Esses dois campos só devem existir no arquivo
+    # .key criptografados via encrypt_field(), gravados por salvar_licenca_json().
 
     # 3) Serializa para JSON (bytes UTF-8)
     dados = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -321,8 +321,15 @@ def carregar_licenca_de_arquivo(caminho="licenca.key"):
         raise ValueError("Arquivo vazio ou sem token válido")
 
     # Verifica e decodifica o token para obter o payload completo
-    payload = verificar_licenca(token)
-    return payload, token
+    payload_token = verificar_licenca(token)
+    if payload is not None:
+        # Mescla campos do token sem sobrescrever os já descriptografados
+        # do envelope JSON (prioridade para o envelope)
+        for k, v in payload_token.items():
+            if not payload.get(k):
+                payload[k] = v
+        return payload, token
+    return payload_token, token
 
 
 def _input_cnpjs_inicial():
@@ -409,10 +416,11 @@ if __name__ == "__main__":
             except Exception as e:
                 print('Erro ao carregar licença:', e)
                 raise SystemExit(1)
-            # Extrai valores do token original para preservá-los
-            token_payload = verificar_licenca(token, validar_validade=False)
-            api_authorization_existente = token_payload.get('api_authorization')
-            api_database_url_existente = token_payload.get('api_database_url')
+            # Extrai valores de API já descriptografados do payload carregado
+            # (não usar o token — desde a correção 2026-07-02 ele não carrega
+            # mais api_authorization/api_database_url em texto puro)
+            api_authorization_existente = payload.get('api_authorization')
+            api_database_url_existente = payload.get('api_database_url')
             
             # permitir edição
             payload = _menu_edicao(payload)

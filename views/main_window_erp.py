@@ -1152,6 +1152,10 @@ class MainWindowERP(QMainWindow):
         self._usuario_info = usuario
         self._connection_info = connection
 
+        # Define código da empresa no painel de filtros para buscas dinâmicas
+        if hasattr(self, "_filter_panel") and self._filter_panel:
+            self._filter_panel.set_company_code(empresa.get("codigo"))
+
         if licenca:
             self._licenca_payload = licenca
             self._populate_dispositivos_combo()
@@ -1349,7 +1353,13 @@ class MainWindowERP(QMainWindow):
         """
         try:
             self._status_bar.show_message("Carregando filtros...")
-            filter_data = self._product_service.get_all_filter_data()
+            company_code = self._empresa_info.get("codigo")
+            
+            # Define o código da empresa no painel de filtros para buscas dinâmicas
+            if hasattr(self._filter_panel, "filter_produto"):
+                self._filter_panel.filter_produto.set_company_code(company_code)
+                
+            filter_data = self._product_service.get_all_filter_data(company_code)
             self._filter_panel.load_filter_data(
                 grupos=filter_data.get("grupos", []),
                 fornecedores=filter_data.get("fornecedores", []),
@@ -1456,6 +1466,7 @@ class MainWindowERP(QMainWindow):
         fabricante = fabricante_list or None
 
         return ProductFilter(
+            company_code=self._empresa_info.get("codigo"),
             produtos=produtos or None,
             grupos=grupos or None,
             fornecedor=fornecedor,
@@ -1593,8 +1604,10 @@ class MainWindowERP(QMainWindow):
         try:
             with get_session() as session:
                 result = session.execute(sa_text(
-                    "SELECT CodVendedor, NomeVendedor FROM vendedores "
-                    "WHERE TipoCadastro IN (0, 2) ORDER BY CodVendedor ASC"
+                    "SELECT v.CodVendedor, v.NomeVendedor FROM vendedores v "
+                    "INNER JOIN Usuarios u ON u.CodUsuario = v.CodUsuario "
+                    "WHERE v.TipoCadastro IN (0, 2) AND v.CodUsuario IS NOT NULL "
+                    "AND u.InativosN = 0 ORDER BY v.CodVendedor ASC"
                 ))
                 vendedores = [(row[0], row[1]) for row in result]
         except Exception as e:
@@ -1819,24 +1832,47 @@ class MainWindowERP(QMainWindow):
         # Busca nome do vendedor diretamente no banco para garantir consistência
         cod_vendedor = int(self._export_vendedor.get("codigo", 0) or 0)
         nome_vendedor = self._export_vendedor.get("nome", "")
+        login_usuario = ""
+        senha_criptografada = ""
         try:
             from database.connection import get_session
             from sqlalchemy import text as sa_text
             with get_session() as session:
                 result = session.execute(sa_text(
-                    "SELECT NomeVendedor FROM vendedores WHERE CodVendedor = :cod LIMIT 1"
+                    "SELECT TOP 1 NomeVendedor FROM vendedores WHERE CodVendedor = :cod"
                 ), {"cod": cod_vendedor})
                 row = result.first()
                 if row and row[0]:
                     nome_vendedor = row[0]
-        except Exception:
+
+                # Busca o usuário do ERP vinculado ao vendedor (login/senha para o registro V)
+                result = session.execute(sa_text(
+                    "SELECT TOP 1 u.NomeUsuario, u.NSenha FROM vendedores v "
+                    "INNER JOIN Usuarios u ON u.CodUsuario = v.CodUsuario "
+                    "WHERE v.CodVendedor = :cod"
+                ), {"cod": cod_vendedor})
+                row_usuario = result.first()
+                if row_usuario:
+                    login_usuario = (row_usuario[0] or "").strip()
+                    if row_usuario[1]:
+                        from encryption import encrypt_field
+                        # NSenha é VARBINARY (hash PWDENCRYPT do SQL Server) — converter
+                        # os bytes reais para hex antes de criptografar para transporte.
+                        nsenha_hex = bytes(row_usuario[1]).hex()
+                        senha_criptografada = encrypt_field(nsenha_hex) or ""
+                else:
+                    print(f"[AVISO] Nenhum usuário do ERP vinculado ao vendedor {cod_vendedor} — "
+                          f"login_usuario/senha_criptografada ficarão vazios no registro V.")
+        except Exception as e:
             # fallback: usa o nome já armazenado na seleção
-            pass
+            print(f"[AVISO] Falha ao buscar vendedor/usuário do ERP para registro V: {e}")
 
         usuario = UsuarioInfo(
             codusuario=cod_vendedor,
             nomeusuario=nome_vendedor or "",
-            id_celular=aparelho_id
+            id_celular=aparelho_id,
+            login_usuario=login_usuario,
+            senha_criptografada=senha_criptografada,
         )
 
         # 4. Função de exportação a ser executada no worker
@@ -2023,11 +2059,14 @@ class MainWindowERP(QMainWindow):
         Parâmetros opcionais _override_* permitem forçar os valores de identificação
         (usado no reenvio a partir do histórico).
         """
+        from utils.config import AppConfig
         try:
-            from utils.config import AppConfig
-            if not AppConfig.is_api_configured():
-                return
-        except Exception:
+            api_configured = AppConfig.is_api_configured()
+        except Exception as e:
+            logger.exception(f"[_send_to_api] Falha ao verificar configuração da API: {e}")
+            QMessageBox.critical(self, "Erro", f"Erro ao ler configuração da API no licenca.key:\n{e}")
+            return
+        if not api_configured:
             return
 
         try:
@@ -2552,7 +2591,13 @@ class MainWindowERP(QMainWindow):
         from PySide6.QtCore import Signal as _Signal
         from PySide6.QtWidgets import QTableWidgetItem
 
-        if not AppConfig.is_api_configured():
+        try:
+            api_configured = AppConfig.is_api_configured()
+        except Exception as e:
+            logger.exception(f"[_on_contagens_refresh] Falha ao verificar configuração da API: {e}")
+            self._lbl_contagens_status.setText(f"⚠️  Erro ao ler configuração da API: {e}")
+            return
+        if not api_configured:
             self._lbl_contagens_status.setText(
                 "⚠️  API não configurada. Verifique o arquivo licenca.key."
             )

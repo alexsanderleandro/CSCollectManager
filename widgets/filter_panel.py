@@ -105,6 +105,12 @@ class FilterPanel(QWidget):
         super().__init__(parent)
         self._setup_ui()
         self._connect_signals()
+        self._company_code: Optional[str] = None
+    
+    def set_company_code(self, company_code: str):
+        """Define o código da empresa para os filtros."""
+        self._company_code = company_code
+        self.filter_produto.set_company_code(company_code)
     
     def _setup_ui(self):
         """Configura interface."""
@@ -563,6 +569,9 @@ class FilterPanel(QWidget):
             Dict com filtros
         """
         return {
+            # Meta
+            "company_code": self._company_code,
+
             # Seleções
             "produtos": self.filter_produto.get_selected_values(),
             "grupos": self.filter_grupo.get_selected_values(),

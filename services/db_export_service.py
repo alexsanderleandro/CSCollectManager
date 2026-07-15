@@ -37,7 +37,7 @@ from utils.config import AppConfig
 from utils.crypto import ensure_keypair, sign_file
 
 # Versão do layout — incrementar se o esquema mudar
-LAYOUT_VERSION = 1
+LAYOUT_VERSION = 2
 
 
 class DbExportService:
@@ -193,8 +193,14 @@ class DbExportService:
 
                 # --- vendedor (registro V) ---
                 cur.execute(
-                    "INSERT INTO vendedor (tipo, codusuario, nomeusuario, id_celular) VALUES (?, ?, ?, ?)",
-                    ("V", str(usuario.codusuario).zfill(3), usuario.nomeusuario, getattr(usuario, 'id_celular', '') or ''),
+                    "INSERT INTO vendedor (tipo, codusuario, nomeusuario, id_celular, login_usuario, senha_criptografada) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        "V", str(usuario.codusuario).zfill(3), usuario.nomeusuario,
+                        getattr(usuario, 'id_celular', '') or '',
+                        getattr(usuario, 'login_usuario', '') or '',
+                        getattr(usuario, 'senha_criptografada', '') or '',
+                    ),
                 )
 
                 if progress_callback:
@@ -372,10 +378,12 @@ class DbExportService:
             );
 
             CREATE TABLE IF NOT EXISTS vendedor (
-                tipo        TEXT NOT NULL,
-                codusuario  TEXT NOT NULL,
-                nomeusuario TEXT NOT NULL,
-                id_celular  TEXT    NOT NULL DEFAULT ''
+                tipo                TEXT NOT NULL,
+                codusuario          TEXT NOT NULL,
+                nomeusuario         TEXT NOT NULL,
+                id_celular          TEXT    NOT NULL DEFAULT '',
+                login_usuario       TEXT    NOT NULL DEFAULT '',
+                senha_criptografada TEXT    NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS produtos (

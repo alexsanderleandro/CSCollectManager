@@ -16,6 +16,17 @@ import hmac
 import hashlib
 from typing import Tuple, Dict, Any, Optional
 
+# Importa módulo de criptografia para descriptografar api_authorization/
+# api_database_url do envelope JSON local (esquema Fernet/ENCRYPTION_SEED,
+# distinto do AES-256-GCM usado em _verify_token_online para as colunas do Neon)
+try:
+    from encryption import decrypt_field, is_encrypted
+except ImportError:
+    def decrypt_field(v):
+        return v
+    def is_encrypted(v):
+        return False
+
 
 def _b64u_decode(s: str) -> bytes:
     padding = '=' * (-len(s) % 4)
@@ -256,7 +267,23 @@ def load_and_verify_file(path: str, master_key: Optional[str] = None) -> Dict[st
             mk = master_key or os.environ.get('MASTER_KEY')
             if not mk:
                 raise ValueError('MASTER_KEY não fornecida (passar master_key ou definir variável de ambiente).')
-            return verify_token(token, mk)
+            payload = verify_token(token, mk)
+            # Mescla campos do envelope JSON que o token não carrega (api_url) ou
+            # que só existem criptografados no envelope (api_authorization,
+            # api_database_url, database_url) — desde a correção 2026-07-02 o
+            # token não carrega mais cópias em texto puro desses dois campos.
+            api_auth_raw = licenca_json.get('api_authorization', '')
+            api_db_raw = licenca_json.get('api_database_url', '')
+            db_url_raw = licenca_json.get('database_url', '')
+            if api_auth_raw:
+                payload['api_authorization'] = decrypt_field(api_auth_raw) if is_encrypted(api_auth_raw) else api_auth_raw
+            if api_db_raw:
+                payload['api_database_url'] = decrypt_field(api_db_raw) if is_encrypted(api_db_raw) else api_db_raw
+            if db_url_raw:
+                payload['database_url'] = decrypt_field(db_url_raw) if is_encrypted(db_url_raw) else db_url_raw
+            if licenca_json.get('api_url'):
+                payload['api_url'] = licenca_json.get('api_url')
+            return payload
         else:
             # Formato JSON puro — token da API, valida online contra Neon
             return _verify_token_online(licenca_json)

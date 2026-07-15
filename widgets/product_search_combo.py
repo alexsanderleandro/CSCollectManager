@@ -40,10 +40,15 @@ class ProductSearchCombo(MultiSelectCombo):
             parent: Widget pai (opcional).
         """
         super().__init__(title=title, placeholder=placeholder, parent=parent)
+        self._company_code: Optional[str] = None
         
         # Sobrescreve o keyPressEvent do txt_search
         self._setup_search_key_handler()
     
+    def set_company_code(self, company_code: str):
+        """Define o código da empresa para buscas dinâmicas."""
+        self._company_code = company_code
+
     def clear_selection(self):
         """Remove todos os produtos adicionados dinamicamente e limpa o campo."""
         # Limpa a lista interna de itens
@@ -80,7 +85,7 @@ class ProductSearchCombo(MultiSelectCombo):
         """Abre diálogo de busca de produtos com lazy loading."""
         search_text = self.txt_search.text().strip()
         
-        dialog = ProductSearchDialog(search_text, self)
+        dialog = ProductSearchDialog(search_text, self._company_code, self)
         
         if dialog.exec() == ProductSearchDialog.Accepted and hasattr(dialog, '_last_selected'):
             # Adiciona produtos selecionados

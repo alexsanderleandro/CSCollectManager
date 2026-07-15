@@ -648,12 +648,16 @@ class ApiService:
         Returns:
             ``ApiService`` configurado, ou ``None`` se URL/token não estiverem definidos.
         """
+        from utils.config import AppConfig
         try:
-            from utils.config import AppConfig
             url = AppConfig.get_api_url()
             token = AppConfig.get_api_authorization()
-            if url and token:
-                return ApiService(base_url=url, authorization=token)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger("ApiService").error(
+                f"from_config: falha ao ler configuração da API (possível erro de descriptografia): {e}"
+            )
+            return None
+        if url and token:
+            return ApiService(base_url=url, authorization=token)
         return None

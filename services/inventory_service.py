@@ -153,47 +153,56 @@ class InventoryService:
         """
         return self._product_repository.get_produtos(filters or {})
     
-    def get_grupos(self) -> List[Tuple[int, str]]:
+    def get_grupos(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega grupos de estoque para filtro.
         
+        Args:
+            company_code: Filtro opcional por empresa
+            
         Returns:
             Lista de (codigo, descricao)
         """
-        return self._product_repository.get_grupos()
+        return self._product_repository.get_grupos(company_code)
     
-    def get_tipos_produto(self) -> List[Tuple[int, str]]:
+    def get_tipos_produto(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega tipos de produto para filtro.
         
+        Args:
+            company_code: Filtro opcional por empresa
+            
         Returns:
             Lista de (codigo, descricao)
         """
-        return self._product_repository.get_tipos_produto()
+        return self._product_repository.get_tipos_produto() # Por enquanto tipos não filtram, mas deixamos assinatura
     
-    def get_localizacoes(self) -> List[Tuple[int, str]]:
+    def get_localizacoes(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega localizações para filtro.
         
+        Args:
+            company_code: Filtro opcional por empresa
+            
         Returns:
             Lista de (codigo, descricao)
         """
-        return self._product_repository.get_localizacoes()
+        return self._product_repository.get_localizacoes(company_code)
     
-    def get_fornecedores(self) -> List[Tuple[int, str]]:
+    def get_fornecedores(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega fornecedores para filtro.
         
         Returns:
             Lista de (codigo, nome)
         """
-        return self._product_repository.get_fornecedores()
+        return self._product_repository.get_fornecedores(company_code)
     
-    def get_fabricantes(self) -> List[Tuple[int, str]]:
+    def get_fabricantes(self, company_code: Optional[str] = None) -> List[Tuple[int, str]]:
         """
         Carrega fabricantes para filtro.
         
         Returns:
             Lista de (codigo, nome)
         """
-        return self._product_repository.get_fabricantes()
+        return self._product_repository.get_fabricantes(company_code)

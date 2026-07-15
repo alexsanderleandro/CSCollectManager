@@ -20,8 +20,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QLineEdit, QComboBox, QPushButton, QCheckBox,
     QGroupBox, QFrame, QMessageBox, QProgressBar, QSpacerItem,
-    QSizePolicy, QStackedWidget, QWidget, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView
+    QSizePolicy, QStackedWidget, QWidget
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread
 from PySide6.QtGui import QFont, QPixmap, QIcon, QCursor
@@ -61,6 +60,78 @@ CSLOGIN_PATH = r"C:\CEOSoftware\CSLogin.xml"
 
 # Caminho do logo (usa o ícone da aplicação)
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.ico")
+
+# Logo em PNG (ícone azul transparente da marca) — usado no cabeçalho da tela
+LOGO_PNG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
+
+
+# ==========================================================================
+# Paleta de cores — harmonizada com o splash (app/splash.py)
+# ==========================================================================
+class _C:
+    """Tokens de cor da tela de login, derivados do gradiente do splash."""
+
+    BG_DIALOG = "#0f1826"       # fundo (azul-marinho profundo, casa com #0e42b0)
+    BG_PANEL = "#16223c"        # caixas de info
+    BG_INPUT = "#1a2740"        # campos
+    BG_INPUT_HOVER = "#20304e"
+    BORDER = "#2a3a57"
+    BORDER_HOVER = "#35507e"
+    ACCENT = "#3e9cf7"          # azul claro (foco/realces)
+    ACCENT_DEEP = "#1d6bb0"
+    ACCENT_DARK = "#0e42b0"
+    TEXT = "#e6edf6"
+    TEXT_MUTED = "#9db3d1"
+    TEXT_FAINT = "#6b7f9e"
+    SELECTION = "#1d6bb0"
+    BTN_DISABLED_BG = "#24314a"
+    BTN_DISABLED_FG = "#5a6b86"
+
+
+def _primary_button_qss() -> str:
+    """QSS do botão primário (gradiente azul do splash)."""
+    return f"""
+        QPushButton {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {_C.ACCENT}, stop:1 {_C.ACCENT_DEEP});
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 24px;
+            font-weight: bold;
+            font-size: 11pt;
+        }}
+        QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #5aa9f9, stop:1 #2a7cc4);
+        }}
+        QPushButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {_C.ACCENT_DEEP}, stop:1 {_C.ACCENT_DARK});
+        }}
+        QPushButton:disabled {{
+            background: {_C.BTN_DISABLED_BG};
+            color: {_C.BTN_DISABLED_FG};
+        }}
+    """
+
+
+def _secondary_button_qss() -> str:
+    """QSS do botão secundário (navy sutil)."""
+    return f"""
+        QPushButton {{
+            background-color: {_C.BG_INPUT};
+            color: {_C.TEXT_MUTED};
+            border: 1px solid {_C.BORDER};
+            border-radius: 8px;
+            padding: 10px 20px;
+        }}
+        QPushButton:hover {{
+            background-color: {_C.BG_INPUT_HOVER};
+            color: {_C.TEXT};
+            border-color: {_C.ACCENT_DEEP};
+        }}
+    """
 
 
 def _friendly_connection_error(error: Exception, banco: str = "", servidor: str = "") -> str:
@@ -329,80 +400,106 @@ class LoginDialog(QDialog):
             Qt.WindowType.Dialog |
             Qt.WindowType.WindowCloseButtonHint
         )
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e1e;
-            }
-            QLabel {
-                color: #cccccc;
-            }
-            QLineEdit, QComboBox {
-                background-color: #2d2d30;
-                border: 1px solid #3e3e42;
-                border-radius: 4px;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {_C.BG_DIALOG};
+            }}
+            QLabel {{
+                color: {_C.TEXT};
+                background: transparent;
+            }}
+            QLineEdit, QComboBox {{
+                background-color: {_C.BG_INPUT};
+                border: 1px solid {_C.BORDER};
+                border-radius: 8px;
                 padding: 8px 12px;
-                color: #cccccc;
+                color: {_C.TEXT};
                 min-height: 20px;
-            }
-            QLineEdit:focus, QComboBox:focus {
-                border-color: #0078d4;
-            }
-            QComboBox::drop-down {
+                selection-background-color: {_C.ACCENT_DEEP};
+                selection-color: #ffffff;
+            }}
+            QLineEdit:hover, QComboBox:hover {{
+                border-color: {_C.BORDER_HOVER};
+            }}
+            QLineEdit:focus, QComboBox:focus {{
+                border-color: {_C.ACCENT};
+            }}
+            QComboBox::drop-down {{
                 border: none;
                 width: 30px;
-            }
-            QComboBox::down-arrow {
+            }}
+            QComboBox::down-arrow {{
                 image: none;
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 5px solid #cccccc;
+                border-top: 5px solid {_C.TEXT_MUTED};
                 margin-right: 10px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #2d2d30;
-                border: 1px solid #3e3e42;
-                selection-background-color: #094771;
-                color: #cccccc;
-            }
-            QGroupBox {
-                color: #cccccc;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {_C.BG_INPUT};
+                border: 1px solid {_C.BORDER};
+                selection-background-color: {_C.SELECTION};
+                color: {_C.TEXT};
+                outline: none;
+            }}
+            QGroupBox {{
+                color: {_C.TEXT};
                 font-weight: bold;
-                border: 1px solid #3e3e42;
-                border-radius: 6px;
+                border: 1px solid {_C.BORDER};
+                border-radius: 10px;
                 margin-top: 12px;
                 padding-top: 12px;
-            }
-            QGroupBox::title {
+            }}
+            QGroupBox::title {{
                 subcontrol-origin: margin;
-                left: 12px;
+                left: 14px;
                 padding: 0 6px;
-            }
-            QTableWidget {
-                background-color: #1e1e1e;
-                alternate-background-color: #252526;
-                border: 1px solid #3e3e42;
-                border-radius: 4px;
-                gridline-color: #3e3e42;
-                color: #cccccc;
-            }
-            QTableWidget::item {
+                color: {_C.ACCENT};
+            }}
+            QTableWidget {{
+                background-color: {_C.BG_DIALOG};
+                alternate-background-color: #131f36;
+                border: 1px solid {_C.BORDER};
+                border-radius: 8px;
+                gridline-color: {_C.BORDER};
+                color: {_C.TEXT};
+                outline: none;
+            }}
+            QTableWidget::item {{
                 padding: 8px;
-            }
-            QTableWidget::item:selected {
-                background-color: #094771;
-            }
-            QTableWidget::item:hover {
-                background-color: #2d2d30;
-            }
-            QHeaderView::section {
-                background-color: #2d2d30;
-                color: #cccccc;
+            }}
+            QTableWidget::item:selected {{
+                background-color: {_C.SELECTION};
+                color: #ffffff;
+            }}
+            QTableWidget::item:hover {{
+                background-color: {_C.BG_INPUT_HOVER};
+            }}
+            QHeaderView::section {{
+                background-color: {_C.BG_PANEL};
+                color: {_C.TEXT_MUTED};
                 padding: 8px;
                 border: none;
-                border-right: 1px solid #3e3e42;
-                border-bottom: 1px solid #3e3e42;
+                border-right: 1px solid {_C.BORDER};
+                border-bottom: 1px solid {_C.BORDER};
                 font-weight: bold;
-            }
+            }}
+            QScrollBar:vertical {{
+                background: {_C.BG_DIALOG};
+                width: 10px;
+                margin: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {_C.BORDER};
+                border-radius: 5px;
+                min-height: 24px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {_C.ACCENT_DEEP};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
         """)
         
         main_layout = QVBoxLayout(self)
@@ -416,7 +513,7 @@ class LoginDialog(QDialog):
         # ===== SEPARADOR =====
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: #3e3e42;")
+        line.setStyleSheet(f"background-color: {_C.BORDER};")
         line.setMaximumHeight(1)
         main_layout.addWidget(line)
         
@@ -438,16 +535,16 @@ class LoginDialog(QDialog):
         self._progress = QProgressBar()
         self._progress.setTextVisible(False)
         self._progress.setMaximumHeight(3)
-        self._progress.setStyleSheet("""
-            QProgressBar {
-                background-color: #2d2d30;
+        self._progress.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {_C.BG_INPUT};
                 border: none;
                 border-radius: 1px;
-            }
-            QProgressBar::chunk {
-                background-color: #0078d4;
+            }}
+            QProgressBar::chunk {{
+                background-color: {_C.ACCENT};
                 border-radius: 1px;
-            }
+            }}
         """)
         self._progress.hide()
         main_layout.addWidget(self._progress)
@@ -455,32 +552,57 @@ class LoginDialog(QDialog):
         # ===== RODAPÉ =====
         footer = QLabel(f"v{APP_INFO.VERSION} • {APP_INFO.COMPANY}")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer.setStyleSheet("color: #666666; font-size: 9pt;")
+        footer.setStyleSheet(f"color: {_C.TEXT_FAINT}; font-size: 9pt;")
         main_layout.addWidget(footer)
     
     def _create_header(self) -> QWidget:
-        """Cria header com logo e título."""
-        header = QWidget()
-        layout = QVBoxLayout(header)
-        layout.setSpacing(8)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Logo removido (não exibido)
-        layout.addSpacing(8)
-        
-        # Título
+        """Cria header em faixa com o gradiente do splash, logo e título."""
+        header = QFrame()
+        header.setObjectName("LoginHeader")
+        header.setStyleSheet(f"""
+            QFrame#LoginHeader {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {_C.ACCENT}, stop:0.5 {_C.ACCENT_DEEP}, stop:1 {_C.ACCENT_DARK});
+                border-radius: 12px;
+            }}
+            QFrame#LoginHeader QLabel {{
+                background: transparent;
+            }}
+        """)
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(18)
+
+        # Logo (ícone azul transparente da marca)
+        logo_lbl = QLabel()
+        logo_lbl.setFixedWidth(56)
+        if os.path.exists(LOGO_PNG_PATH):
+            pm = QPixmap(LOGO_PNG_PATH)
+            if not pm.isNull():
+                logo_lbl.setPixmap(pm.scaled(
+                    56, 56,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
+        layout.addWidget(logo_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # Título + subtítulo
+        text_box = QVBoxLayout()
+        text_box.setSpacing(3)
+        text_box.setContentsMargins(0, 0, 0, 0)
+
         title = QLabel(APP_INFO.NAME)
         title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("color: #ffffff;")
-        layout.addWidget(title)
-        
-        # Subtítulo
-        subtitle = QLabel("Sistema de exportação de carga e importação de contagens de estoque")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
-        layout.addWidget(subtitle)
-        
+        text_box.addWidget(title)
+
+        subtitle = QLabel("Sistema de exportação de carga e contagens de estoque")
+        subtitle.setStyleSheet("color: #dbe8ff; font-size: 9.5pt;")
+        subtitle.setWordWrap(True)
+        text_box.addWidget(subtitle)
+
+        layout.addLayout(text_box, 1)
+
         return header
     
     def _create_connection_step(self) -> QWidget:
@@ -511,12 +633,12 @@ class LoginDialog(QDialog):
         
         # Detalhes da conexão selecionada
         self._lbl_connection_details = QLabel("")
-        self._lbl_connection_details.setStyleSheet("""
-            background-color: #252526;
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
+        self._lbl_connection_details.setStyleSheet(f"""
+            background-color: {_C.BG_PANEL};
+            border: 1px solid {_C.BORDER};
+            border-radius: 8px;
             padding: 12px;
-            color: #9d9d9d;
+            color: {_C.TEXT_MUTED};
             font-size: 9pt;
         """)
         self._lbl_connection_details.setWordWrap(True)
@@ -554,24 +676,7 @@ class LoginDialog(QDialog):
         self._btn_connect.setMinimumSize(160, 44)
         self._btn_connect.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._btn_connect.setEnabled(False)
-        self._btn_connect.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 24px;
-                font-weight: bold;
-                font-size: 11pt;
-            }
-            QPushButton:hover {
-                background-color: #1e8ad4;
-            }
-            QPushButton:disabled {
-                background-color: #3e3e42;
-                color: #666666;
-            }
-        """)
+        self._btn_connect.setStyleSheet(_primary_button_qss())
         btn_layout.addWidget(self._btn_connect)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
@@ -587,12 +692,12 @@ class LoginDialog(QDialog):
         
         # Info da conexão selecionada
         self._lbl_selected_connection = QLabel("")
-        self._lbl_selected_connection.setStyleSheet("""
-            background-color: #252526;
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
+        self._lbl_selected_connection.setStyleSheet(f"""
+            background-color: {_C.BG_PANEL};
+            border: 1px solid {_C.BORDER};
+            border-radius: 8px;
             padding: 12px;
-            color: #9d9d9d;
+            color: {_C.TEXT_MUTED};
         """)
         layout.addWidget(self._lbl_selected_connection)
         
@@ -602,23 +707,10 @@ class LoginDialog(QDialog):
         group_layout.setSpacing(12)
         group_layout.setContentsMargins(16, 20, 16, 16)
         
-        # Tabela de empresas
-        self._table_empresas = QTableWidget()
-        self._table_empresas.setColumnCount(3)
-        self._table_empresas.setHorizontalHeaderLabels(["Código", "Nome", "CNPJ"])
-        self._table_empresas.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table_empresas.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self._table_empresas.setAlternatingRowColors(True)
-        self._table_empresas.verticalHeader().setVisible(False)
-        self._table_empresas.setMinimumHeight(200)
-        
-        # Ajusta colunas
-        header = self._table_empresas.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        
-        group_layout.addWidget(self._table_empresas)
+        # Lista suspensa de empresas
+        self._cmb_empresa = QComboBox()
+        self._cmb_empresa.setMinimumHeight(40)
+        group_layout.addWidget(self._cmb_empresa)
         
         layout.addWidget(group)
         
@@ -628,18 +720,7 @@ class LoginDialog(QDialog):
         self._btn_back_empresa = QPushButton("←  Voltar")
         self._btn_back_empresa.setMinimumSize(100, 40)
         self._btn_back_empresa.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._btn_back_empresa.setStyleSheet("""
-            QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 20px;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
-        """)
+        self._btn_back_empresa.setStyleSheet(_secondary_button_qss())
         btn_layout.addWidget(self._btn_back_empresa)
         
         btn_layout.addStretch()
@@ -648,24 +729,7 @@ class LoginDialog(QDialog):
         self._btn_next_empresa.setMinimumSize(160, 44)
         self._btn_next_empresa.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._btn_next_empresa.setEnabled(False)
-        self._btn_next_empresa.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 24px;
-                font-weight: bold;
-                font-size: 11pt;
-            }
-            QPushButton:hover {
-                background-color: #1e8ad4;
-            }
-            QPushButton:disabled {
-                background-color: #3e3e42;
-                color: #666666;
-            }
-        """)
+        self._btn_next_empresa.setStyleSheet(_primary_button_qss())
         btn_layout.addWidget(self._btn_next_empresa)
         
         layout.addLayout(btn_layout)
@@ -681,12 +745,12 @@ class LoginDialog(QDialog):
         
         # Info da conexão e empresa selecionadas
         self._lbl_selected_context = QLabel("")
-        self._lbl_selected_context.setStyleSheet("""
-            background-color: #252526;
-            border: 1px solid #3e3e42;
-            border-radius: 4px;
+        self._lbl_selected_context.setStyleSheet(f"""
+            background-color: {_C.BG_PANEL};
+            border: 1px solid {_C.BORDER};
+            border-radius: 8px;
             padding: 12px;
-            color: #9d9d9d;
+            color: {_C.TEXT_MUTED};
             font-size: 9pt;
         """)
         self._lbl_selected_context.setWordWrap(True)
@@ -727,18 +791,7 @@ class LoginDialog(QDialog):
         self._btn_back_auth = QPushButton("←  Voltar")
         self._btn_back_auth.setMinimumSize(100, 40)
         self._btn_back_auth.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._btn_back_auth.setStyleSheet("""
-            QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 20px;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
-        """)
+        self._btn_back_auth.setStyleSheet(_secondary_button_qss())
         btn_layout.addWidget(self._btn_back_auth)
         
         btn_layout.addStretch()
@@ -747,24 +800,7 @@ class LoginDialog(QDialog):
         self._btn_login.setMinimumSize(160, 44)
         self._btn_login.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._btn_login.setEnabled(False)
-        self._btn_login.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 24px;
-                font-weight: bold;
-                font-size: 11pt;
-            }
-            QPushButton:hover {
-                background-color: #1e8ad4;
-            }
-            QPushButton:disabled {
-                background-color: #3e3e42;
-                color: #666666;
-            }
-        """)
+        self._btn_login.setStyleSheet(_primary_button_qss())
         btn_layout.addWidget(self._btn_login)
         
         layout.addLayout(btn_layout)
@@ -780,8 +816,7 @@ class LoginDialog(QDialog):
         # Step 2 - Empresa
         self._btn_back_empresa.clicked.connect(self._on_back_to_connection)
         self._btn_next_empresa.clicked.connect(self._on_next_to_auth)
-        self._table_empresas.itemSelectionChanged.connect(self._on_empresa_selected)
-        self._table_empresas.doubleClicked.connect(self._on_next_to_auth)
+        self._cmb_empresa.currentIndexChanged.connect(self._on_empresa_selected)
         
         # Step 3 - Autenticação
         self._btn_back_auth.clicked.connect(self._on_back_to_empresa)
@@ -1301,55 +1336,36 @@ class LoginDialog(QDialog):
         
         # Carrega último login para pré-selecionar empresa
         last_login = login_module.load_last_login()
-        default_row = -1
-        
-        # Popula tabela de empresas
-        self._table_empresas.setRowCount(0)
-        
+        default_index = -1
+
+        # Popula combo de empresas
+        self._cmb_empresa.clear()
+
         for idx, emp in enumerate(self._empresas):
-            row = self._table_empresas.rowCount()
-            self._table_empresas.insertRow(row)
-            
-            # Código
-            item_codigo = QTableWidgetItem(str(emp.get("codigo", "")))
-            item_codigo.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item_codigo.setData(Qt.ItemDataRole.UserRole, emp)
-            self._table_empresas.setItem(row, 0, item_codigo)
-            
-            # Nome
-            item_nome = QTableWidgetItem(emp.get("nome", ""))
-            self._table_empresas.setItem(row, 1, item_nome)
-            
-            # CNPJ
-            cnpj = emp.get("cnpj", "")
-            if cnpj:
-                # Formata CNPJ
-                cnpj_clean = cnpj.replace(".", "").replace("/", "").replace("-", "").replace(" ", "")
-                if len(cnpj_clean) == 14:
-                    cnpj = f"{cnpj_clean[:2]}.{cnpj_clean[2:5]}.{cnpj_clean[5:8]}/{cnpj_clean[8:12]}-{cnpj_clean[12:]}"
-            item_cnpj = QTableWidgetItem(cnpj)
-            item_cnpj.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table_empresas.setItem(row, 2, item_cnpj)
-            
+            codigo = str(emp.get("codigo", ""))
+            nome = emp.get("nome", "")
+            label = f"{codigo} — {nome}"
+            self._cmb_empresa.addItem(label, emp)
+
             # Verifica se é a última empresa selecionada
             if last_login:
                 if (conn.get("server", "").lower() == last_login.get("srv", "").lower() and
                     conn.get("database", "").lower() == last_login.get("db", "").lower() and
-                    str(emp.get("codigo", "")) == str(last_login.get("codempresa", ""))):
-                    default_row = row
-        
+                    codigo == str(last_login.get("codempresa", ""))):
+                    default_index = idx
+
         # Muda para step de empresa
         self._stack.setCurrentIndex(self.STEP_EMPRESA)
-        self._btn_next_empresa.setEnabled(False)
-        
-        # Seleciona última empresa usada
-        if default_row >= 0:
-            self._table_empresas.selectRow(default_row)
-    
+
+        # Seleciona última empresa usada (ou mantém a primeira, já selecionada
+        # automaticamente pelo QComboBox ao popular)
+        if default_index >= 0:
+            self._cmb_empresa.setCurrentIndex(default_index)
+        self._on_empresa_selected()
+
     def _on_empresa_selected(self):
         """Quando empresa é selecionada."""
-        selected = self._table_empresas.selectedItems()
-        self._btn_next_empresa.setEnabled(len(selected) > 0)
+        self._btn_next_empresa.setEnabled(self._cmb_empresa.currentData() is not None)
     
     def _on_back_to_connection(self):
         """Volta para seleção de conexão."""
@@ -1358,15 +1374,8 @@ class LoginDialog(QDialog):
     
     def _on_next_to_auth(self):
         """Avança para etapa de autenticação."""
-        selected_rows = self._table_empresas.selectedItems()
-        if not selected_rows:
-            return
-        
-        # Pega dados da empresa selecionada
-        row = selected_rows[0].row()
-        item = self._table_empresas.item(row, 0)
-        empresa = item.data(Qt.ItemDataRole.UserRole)
-        
+        empresa = self._cmb_empresa.currentData()
+
         if not empresa:
             return
         
