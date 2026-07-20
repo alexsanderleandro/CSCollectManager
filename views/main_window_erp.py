@@ -2435,7 +2435,7 @@ class MainWindowERP(QMainWindow):
 
             lines = [
                 "=" * 72,
-                "  RELATÓRIO DE EXPORTAÇÃO DE CARGA — CSCollectManager",
+                "  RELATÓRIO DE EXPORTAÇÃO DE CARGA — LogScan Manager",
                 "=" * 72,
                 f"  Data/Hora          : {now.strftime('%d/%m/%Y %H:%M:%S')}",
                 f"  Usuário logado      : {usuario_logado}",

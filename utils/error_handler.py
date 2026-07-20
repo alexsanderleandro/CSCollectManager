@@ -261,7 +261,7 @@ class CriticalErrorDialog(QDialog):
         
         report = []
         report.append("=" * 60)
-        report.append("RELATÓRIO DE ERRO - CSCollectManager")
+        report.append("RELATÓRIO DE ERRO - LogScan Manager")
         report.append("=" * 60)
         report.append("")
         report.append(f"Data/Hora: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
