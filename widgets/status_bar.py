@@ -61,7 +61,7 @@ class ConnectionIndicator(QWidget):
         layout.addWidget(self._icon)
         
         self._label = QLabel("Desconectado")
-        self._label.setStyleSheet("color: #9d9d9d;")
+        self._label.setStyleSheet("color: #9db3d1;")
         layout.addWidget(self._label)
     
     def set_connected(self, server: str = ""):
@@ -71,19 +71,19 @@ class ConnectionIndicator(QWidget):
             self._label.setText(f"Conectado: {server}")
         else:
             self._label.setText("Conectado")
-        self._label.setStyleSheet("color: #4caf50;")
-    
+        self._label.setStyleSheet("color: #ffffff;")
+
     def set_disconnected(self):
         """Define como desconectado."""
         self._icon.setText("🔴")
         self._label.setText("Desconectado")
-        self._label.setStyleSheet("color: #f44336;")
-    
+        self._label.setStyleSheet("color: #ffffff;")
+
     def set_connecting(self):
         """Define como conectando."""
         self._icon.setText("🟡")
         self._label.setText("Conectando...")
-        self._label.setStyleSheet("color: #ff9800;")
+        self._label.setStyleSheet("color: #ffffff;")
 
 
 class ProgressIndicator(QWidget):
@@ -124,7 +124,7 @@ class ProgressIndicator(QWidget):
             QPushButton {
                 background-color: transparent;
                 border: none;
-                color: #9d9d9d;
+                color: #9db3d1;
                 font-size: 12px;
             }
             QPushButton:hover {
@@ -193,7 +193,7 @@ class AppStatusBar(QStatusBar):
         """Configura a interface."""
         self.setStyleSheet("""
             QStatusBar {
-                background-color: #007acc;
+                background-color: #3e9cf7;
                 color: white;
                 border: none;
                 min-height: 28px;

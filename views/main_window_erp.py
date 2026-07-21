@@ -78,7 +78,7 @@ class SidebarButton(QPushButton):
         self.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                color: #9d9d9d;
+                color: #9db3d1;
                 text-align: left;
                 padding: 10px 12px;
                 border: none;
@@ -86,13 +86,13 @@ class SidebarButton(QPushButton):
                 font-size: 10.5pt;
             }
             QPushButton:hover {
-                background-color: #2d2d30;
+                background-color: #16223c;
                 color: #ffffff;
             }
             QPushButton:checked {
-                background-color: #094771;
+                background-color: #1d6bb0;
                 color: #ffffff;
-                border-left: 3px solid #0078d4;
+                border-left: 3px solid #3e9cf7;
             }
         """)
 
@@ -124,8 +124,8 @@ class ModuleHeader(QFrame):
         """
         self.setStyleSheet("""
             QFrame {
-                background-color: #252526;
-                border-bottom: 1px solid #3e3e42;
+                background-color: #1a2740;
+                border-bottom: 1px solid #2a3a57;
             }
         """)
         self.setMinimumHeight(80)
@@ -152,7 +152,7 @@ class ModuleHeader(QFrame):
         
         if subtitle:
             subtitle_label = QLabel(subtitle)
-            subtitle_label.setStyleSheet("color: #9d9d9d; font-size: 10pt; background: transparent;")
+            subtitle_label.setStyleSheet("color: #9db3d1; font-size: 10pt; background: transparent;")
             text_layout.addWidget(subtitle_label)
         
         layout.addLayout(text_layout)
@@ -174,31 +174,31 @@ class ModuleHeader(QFrame):
         if primary:
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #0078d4;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3e9cf7, stop:1 #1d6bb0);
                     color: white;
                     border: none;
-                    border-radius: 4px;
+                    border-radius: 8px;
                     padding: 8px 20px;
                     font-weight: bold;
                 }
                 QPushButton:hover {
-                    background-color: #1e8ad4;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5aa9f9, stop:1 #2a7cc4);
                 }
                 QPushButton:pressed {
-                    background-color: #005a9e;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1d6bb0, stop:1 #0e42b0);
                 }
             """)
         else:
             btn.setStyleSheet("""
                 QPushButton {
-                    background-color: #3e3e42;
-                    color: #cccccc;
+                    background-color: #2a3a57;
+                    color: #e6edf6;
                     border: none;
-                    border-radius: 4px;
+                    border-radius: 8px;
                     padding: 8px 16px;
                 }
                 QPushButton:hover {
-                    background-color: #505050;
+                    background-color: #35507e;
                 }
             """)
         
@@ -330,8 +330,8 @@ class MainWindowERP(QMainWindow):
         sidebar.setFixedWidth(245)
         sidebar.setStyleSheet("""
             QFrame {
-                background-color: #1e1e1e;
-                border-right: 1px solid #3e3e42;
+                background-color: #0f1826;
+                border-right: 1px solid #2a3a57;
             }
         """)
         
@@ -350,7 +350,7 @@ class MainWindowERP(QMainWindow):
         
         # Label de seção
         section_label = QLabel("  NAVEGAÇÃO")
-        section_label.setStyleSheet("color: #666666; font-size: 9pt; font-weight: bold; padding: 8px 0;")
+        section_label.setStyleSheet("color: #6b7f9e; font-size: 9pt; font-weight: bold; padding: 8px 0;")
         nav_layout.addWidget(section_label)
         
         # Botões
@@ -378,8 +378,8 @@ class MainWindowERP(QMainWindow):
         user_frame.setMinimumHeight(50)
         user_frame.setStyleSheet("""
             QFrame {
-                background-color: #252526;
-                border-top: 1px solid #3e3e42;
+                background-color: #1a2740;
+                border-top: 1px solid #2a3a57;
                 border-right: none;
             }
         """)
@@ -388,16 +388,16 @@ class MainWindowERP(QMainWindow):
         user_layout.setSpacing(0)
 
         # Botão de sair do aplicativo
-        btn_exit = QPushButton("  ⏻  Sair  (F10)")
+        btn_exit = QPushButton("  🚪  Sair  (F10)")
         btn_exit.setToolTip("Sair do aplicativo  [F10]")
         btn_exit.setMinimumHeight(36)
         btn_exit.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_exit.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                color: #9d9d9d;
+                color: #9db3d1;
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 text-align: left;
                 padding: 8px 10px;
                 font-size: 10pt;
@@ -437,13 +437,13 @@ class MainWindowERP(QMainWindow):
         content.setHandleWidth(2)
         content.setStyleSheet("""
             QSplitter {
-                background-color: #1e1e1e;
+                background-color: #0f1826;
             }
             QSplitter::handle {
-                background-color: #3e3e42;
+                background-color: #2a3a57;
             }
             QSplitter::handle:hover {
-                background-color: #0078d4;
+                background-color: #3e9cf7;
             }
         """)
         
@@ -451,8 +451,8 @@ class MainWindowERP(QMainWindow):
         filter_container = QFrame()
         filter_container.setStyleSheet("""
             QFrame {
-                background-color: #252526;
-                border-right: 1px solid #3e3e42;
+                background-color: #1a2740;
+                border-right: 1px solid #2a3a57;
             }
         """)
         filter_layout = QVBoxLayout(filter_container)
@@ -461,12 +461,12 @@ class MainWindowERP(QMainWindow):
         filter_header = QLabel("  🔍 FILTROS")
         filter_header.setMinimumHeight(40)
         filter_header.setStyleSheet("""
-            background-color: #2d2d30;
-            color: #9d9d9d;
+            background-color: #16223c;
+            color: #9db3d1;
             font-weight: bold;
             font-size: 10pt;
             padding-left: 8px;
-            border-bottom: 1px solid #3e3e42;
+            border-bottom: 1px solid #2a3a57;
         """)
         filter_layout.addWidget(filter_header)
         
@@ -500,7 +500,7 @@ class MainWindowERP(QMainWindow):
 
         # Conteúdo
         content = QWidget()
-        content.setStyleSheet("background-color: #1e1e1e;")
+        content.setStyleSheet("background-color: #0f1826;")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 24, 24, 24)
         content_layout.setSpacing(20)
@@ -511,9 +511,9 @@ class MainWindowERP(QMainWindow):
         dir_group = QGroupBox("📁 Diretório de saída  (obrigatório)")
         dir_group.setStyleSheet("""
             QGroupBox {
-                color: #cccccc;
+                color: #e6edf6;
                 font-weight: bold;
-                border: 2px solid #0078d4;
+                border: 2px solid #3e9cf7;
                 border-radius: 8px;
                 margin-top: 16px;
                 padding: 20px;
@@ -541,15 +541,15 @@ class MainWindowERP(QMainWindow):
         self._txt_export_dir.setMinimumHeight(36)
         self._txt_export_dir.setStyleSheet("""
             QLineEdit {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
-                border-radius: 4px;
+                background-color: #1a2740;
+                color: #e6edf6;
+                border: 1px solid #2a3a57;
+                border-radius: 8px;
                 padding: 6px 10px;
                 font-size: 11pt;
             }
             QLineEdit:focus {
-                border-color: #0078d4;
+                border-color: #3e9cf7;
             }
         """)
         dir_layout.addWidget(self._txt_export_dir, 1)
@@ -559,15 +559,15 @@ class MainWindowERP(QMainWindow):
         btn_browse.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_browse.setStyleSheet("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: #2a3a57;
+                color: #e6edf6;
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 padding: 6px 16px;
                 font-size: 11pt;
             }
-            QPushButton:hover { background-color: #505050; }
-            QPushButton:pressed { background-color: #0078d4; color: white; }
+            QPushButton:hover { background-color: #35507e; }
+            QPushButton:pressed { background-color: #3e9cf7; color: white; }
         """)
         btn_browse.clicked.connect(self._on_browse_export_dir)
         dir_layout.addWidget(btn_browse)
@@ -578,9 +578,9 @@ class MainWindowERP(QMainWindow):
         vendedor_group = QGroupBox("👤 Conferente  (obrigatório)")
         vendedor_group.setStyleSheet("""
             QGroupBox {
-                color: #cccccc;
+                color: #e6edf6;
                 font-weight: bold;
-                border: 2px solid #0078d4;
+                border: 2px solid #3e9cf7;
                 border-radius: 8px;
                 margin-top: 16px;
                 padding: 20px;
@@ -600,14 +600,14 @@ class MainWindowERP(QMainWindow):
         self._txt_vendedor.setMinimumHeight(36)
         self._txt_vendedor.setStyleSheet("""
             QLineEdit {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
-                border-radius: 4px;
+                background-color: #1a2740;
+                color: #e6edf6;
+                border: 1px solid #2a3a57;
+                border-radius: 8px;
                 padding: 6px 10px;
                 font-size: 11pt;
             }
-            QLineEdit:focus { border-color: #0078d4; }
+            QLineEdit:focus { border-color: #3e9cf7; }
         """)
         self._txt_vendedor.installEventFilter(self)
         vendedor_layout.addWidget(self._txt_vendedor, 1)
@@ -617,15 +617,15 @@ class MainWindowERP(QMainWindow):
         btn_buscar_vendedor.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_buscar_vendedor.setStyleSheet("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: #2a3a57;
+                color: #e6edf6;
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 padding: 6px 16px;
                 font-size: 11pt;
             }
-            QPushButton:hover { background-color: #505050; }
-            QPushButton:pressed { background-color: #0078d4; color: white; }
+            QPushButton:hover { background-color: #35507e; }
+            QPushButton:pressed { background-color: #3e9cf7; color: white; }
         """)
         btn_buscar_vendedor.clicked.connect(self._on_search_vendedor)
         vendedor_layout.addWidget(btn_buscar_vendedor)
@@ -636,9 +636,9 @@ class MainWindowERP(QMainWindow):
         aparelho_group = QGroupBox("📱 Dispositivo móvel (obrigatório)")
         aparelho_group.setStyleSheet("""
             QGroupBox {
-                color: #cccccc;
+                color: #e6edf6;
                 font-weight: bold;
-                border: 2px solid #0078d4;
+                border: 2px solid #3e9cf7;
                 border-radius: 8px;
                 margin-top: 16px;
                 padding: 20px;
@@ -653,7 +653,7 @@ class MainWindowERP(QMainWindow):
         aparelho_layout.setSpacing(8)
 
         lbl_disp = QLabel("Selecione o dispositivo habilitado na licença (.key):")
-        lbl_disp.setStyleSheet("color: #9d9d9d; font-size: 10pt;")
+        lbl_disp.setStyleSheet("color: #9db3d1; font-size: 10pt;")
         aparelho_layout.addWidget(lbl_disp)
 
         # Linha: combo + botão de renomear
@@ -668,26 +668,26 @@ class MainWindowERP(QMainWindow):
         self._cmb_dispositivo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._cmb_dispositivo.setStyleSheet("""
             QComboBox {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
-                border-radius: 4px;
+                background-color: #1a2740;
+                color: #e6edf6;
+                border: 1px solid #2a3a57;
+                border-radius: 8px;
                 padding: 6px 10px;
                 font-size: 11pt;
             }
-            QComboBox:focus { border-color: #0078d4; }
+            QComboBox:focus { border-color: #3e9cf7; }
             QComboBox::drop-down { border: none; width: 30px; }
             QComboBox::down-arrow {
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 5px solid #cccccc;
+                border-top: 5px solid #e6edf6;
                 margin-right: 10px;
             }
             QComboBox QAbstractItemView {
-                background-color: #252526;
-                border: 1px solid #3e3e42;
-                selection-background-color: #094771;
-                color: #cccccc;
+                background-color: #1a2740;
+                border: 1px solid #2a3a57;
+                selection-background-color: #3d5a80;
+                color: #e6edf6;
             }
         """)
         disp_row_layout.addWidget(self._cmb_dispositivo, 1)
@@ -698,14 +698,14 @@ class MainWindowERP(QMainWindow):
         btn_rename_disp.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_rename_disp.setStyleSheet("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: #2a3a57;
+                color: #e6edf6;
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 font-size: 14pt;
             }
-            QPushButton:hover { background-color: #505050; }
-            QPushButton:pressed { background-color: #0078d4; }
+            QPushButton:hover { background-color: #35507e; }
+            QPushButton:pressed { background-color: #3e9cf7; }
         """)
         btn_rename_disp.clicked.connect(self._on_rename_dispositivo)
         disp_row_layout.addWidget(btn_rename_disp)
@@ -715,7 +715,7 @@ class MainWindowERP(QMainWindow):
         self._lbl_dispositivo_info = QLabel(
             "ℹ️  Os dispositivos disponíveis são carregados automaticamente da licença (.key)."
         )
-        self._lbl_dispositivo_info.setStyleSheet("color: #666666; font-size: 9pt;")
+        self._lbl_dispositivo_info.setStyleSheet("color: #6b7f9e; font-size: 9pt;")
         aparelho_layout.addWidget(self._lbl_dispositivo_info)
 
         content_layout.addWidget(aparelho_group)
@@ -724,9 +724,9 @@ class MainWindowERP(QMainWindow):
         export_options = QGroupBox("📋 Opções de exportação")
         export_options.setStyleSheet("""
             QGroupBox {
-                color: #cccccc;
+                color: #e6edf6;
                 font-weight: bold;
-                border: 1px solid #3e3e42;
+                border: 1px solid #2a3a57;
                 border-radius: 8px;
                 margin-top: 16px;
                 padding: 20px;
@@ -740,7 +740,7 @@ class MainWindowERP(QMainWindow):
         options_layout = QGridLayout(export_options)
         options_layout.setSpacing(16)
 
-        chk_style = "color: #cccccc; font-size: 11pt;"
+        chk_style = "color: #e6edf6; font-size: 11pt;"
 
         self._chk_export_photos = QCheckBox("Incluir fotos dos produtos")
         self._chk_export_photos.setStyleSheet(chk_style)
@@ -752,9 +752,9 @@ class MainWindowERP(QMainWindow):
         summary_group = QGroupBox("📊 Resumo da Exportação")
         summary_group.setStyleSheet("""
             QGroupBox {
-                color: #cccccc;
+                color: #e6edf6;
                 font-weight: bold;
-                border: 1px solid #3e3e42;
+                border: 1px solid #2a3a57;
                 border-radius: 8px;
                 margin-top: 16px;
                 padding: 20px;
@@ -768,7 +768,7 @@ class MainWindowERP(QMainWindow):
         summary_layout = QVBoxLayout(summary_group)
 
         self._lbl_export_summary = QLabel("Selecione produtos na aba \u2018Produtos\u2019 e clique em Exportar Selecionados.")
-        self._lbl_export_summary.setStyleSheet("color: #9d9d9d; font-size: 11pt; padding: 16px;")
+        self._lbl_export_summary.setStyleSheet("color: #9db3d1; font-size: 11pt; padding: 16px;")
         summary_layout.addWidget(self._lbl_export_summary)
 
         content_layout.addWidget(summary_group)
@@ -782,13 +782,13 @@ class MainWindowERP(QMainWindow):
         btn_cancel.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_cancel.setStyleSheet("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: #2a3a57;
+                color: #e6edf6;
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 padding: 8px 20px;
             }
-            QPushButton:hover { background-color: #505050; }
+            QPushButton:hover { background-color: #35507e; }
         """)
         btn_cancel.clicked.connect(lambda: self._switch_module(self.MODULE_PRODUCTS))
         action_layout.addWidget(btn_cancel)
@@ -798,19 +798,19 @@ class MainWindowERP(QMainWindow):
         self._btn_start_export.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._btn_start_export.setStyleSheet("""
             QPushButton {
-                background-color: #0078d4;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3e9cf7, stop:1 #1d6bb0);
                 color: white;
                 border: none;
-                border-radius: 4px;
+                border-radius: 8px;
                 font-weight: bold;
                 font-size: 11pt;
                 padding: 8px 20px;
             }
-            QPushButton:hover { background-color: #1e8ad4; }
-            QPushButton:pressed { background-color: #005a9e; }
+            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5aa9f9, stop:1 #2a7cc4); }
+            QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1d6bb0, stop:1 #0e42b0); }
             QPushButton:disabled {
-                background-color: #3e3e42;
-                color: #666666;
+                background-color: #2a3a57;
+                color: #6b7f9e;
             }
         """)
         self._btn_start_export.clicked.connect(self._on_start_export)
@@ -837,7 +837,7 @@ class MainWindowERP(QMainWindow):
         
         # Conteúdo
         content = QWidget()
-        content.setStyleSheet("background-color: #1e1e1e;")
+        content.setStyleSheet("background-color: #0f1826;")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 24, 24, 24)
 
@@ -868,7 +868,7 @@ class MainWindowERP(QMainWindow):
 
         # Lista de histórico
         self._history_list = QListWidget()
-        self._history_list.setStyleSheet("color: #cccccc; background-color: #252526;")
+        self._history_list.setStyleSheet("color: #e6edf6; background-color: #1a2740;")
         self._history_list.itemDoubleClicked.connect(self._on_history_item_double_clicked)
         self._history_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._history_list.customContextMenuRequested.connect(self._on_history_context_menu)
@@ -958,8 +958,8 @@ class MainWindowERP(QMainWindow):
             return
         menu = QMenu(self)
         menu.setStyleSheet("""
-            QMenu { background-color: #252526; color: #cccccc; border: 1px solid #3e3e42; }
-            QMenu::item:selected { background-color: #0078d4; }
+            QMenu { background-color: #1a2740; color: #e6edf6; border: 1px solid #2a3a57; }
+            QMenu::item:selected { background-color: #3e9cf7; }
         """)
         act_open = menu.addAction("📂  Abrir Pasta")
         act_resend = menu.addAction("📡  Reenviar para API")
@@ -1283,22 +1283,22 @@ class MainWindowERP(QMainWindow):
         dlg.setWindowTitle("Nome amigável do dispositivo")
         dlg.setFixedSize(420, 180)
         dlg.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; color: #cccccc; }
-            QLabel  { color: #cccccc; font-size: 10pt; }
+            QDialog { background-color: #0f1826; color: #e6edf6; }
+            QLabel  { color: #e6edf6; font-size: 10pt; }
             QLineEdit {
-                background-color: #252526; color: #cccccc;
-                border: 1px solid #3e3e42; border-radius: 4px;
+                background-color: #1a2740; color: #e6edf6;
+                border: 1px solid #2a3a57; border-radius: 8px;
                 padding: 6px 10px; font-size: 11pt;
             }
-            QLineEdit:focus { border-color: #0078d4; }
+            QLineEdit:focus { border-color: #3e9cf7; }
             QPushButton {
-                background-color: #3e3e42; color: #cccccc;
-                border: none; border-radius: 4px;
+                background-color: #2a3a57; color: #e6edf6;
+                border: none; border-radius: 8px;
                 padding: 6px 20px; font-size: 10pt; min-width: 80px;
             }
-            QPushButton:hover { background-color: #505050; }
-            QPushButton[primary="true"] { background-color: #0078d4; color: white; font-weight: bold; }
-            QPushButton[primary="true"]:hover { background-color: #1e8ad4; }
+            QPushButton:hover { background-color: #35507e; }
+            QPushButton[primary="true"] { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3e9cf7, stop:1 #1d6bb0); color: white; font-weight: bold; border: none; }
+            QPushButton[primary="true"]:hover { background-color: #5aa9f9; }
         """)
 
         lay = QVBoxLayout(dlg)
@@ -1623,29 +1623,29 @@ class MainWindowERP(QMainWindow):
         dlg.setWindowTitle("Selecionar Vendedor")
         dlg.setMinimumSize(420, 480)
         dlg.setStyleSheet("""
-            QDialog { background-color: #1e1e1e; color: #cccccc; }
-            QLabel  { color: #cccccc; font-size: 10pt; }
+            QDialog { background-color: #0f1826; color: #e6edf6; }
+            QLabel  { color: #e6edf6; font-size: 10pt; }
             QLineEdit {
-                background-color: #252526; color: #cccccc;
-                border: 1px solid #3e3e42; border-radius: 4px;
+                background-color: #1a2740; color: #e6edf6;
+                border: 1px solid #2a3a57; border-radius: 8px;
                 padding: 6px 10px; font-size: 11pt;
             }
-            QLineEdit:focus { border-color: #0078d4; }
+            QLineEdit:focus { border-color: #3e9cf7; }
             QListWidget {
-                background-color: #252526; color: #cccccc;
-                border: 1px solid #3e3e42; border-radius: 4px;
+                background-color: #1a2740; color: #e6edf6;
+                border: 1px solid #2a3a57; border-radius: 8px;
                 font-size: 11pt;
             }
             QListWidget::item:hover     { background-color: #2d2d2d; }
-            QListWidget::item:selected  { background-color: #0078d4; color: white; }
+            QListWidget::item:selected  { background-color: #3e9cf7; color: white; }
             QPushButton {
-                background-color: #3e3e42; color: #cccccc;
-                border: none; border-radius: 4px;
+                background-color: #2a3a57; color: #e6edf6;
+                border: none; border-radius: 8px;
                 padding: 6px 20px; font-size: 10pt;
             }
-            QPushButton:hover  { background-color: #505050; }
-            QPushButton[primary="true"] { background-color: #0078d4; color: white; font-weight: bold; }
-            QPushButton[primary="true"]:hover { background-color: #1e8ad4; }
+            QPushButton:hover  { background-color: #35507e; }
+            QPushButton[primary="true"] { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3e9cf7, stop:1 #1d6bb0); color: white; font-weight: bold; border: none; }
+            QPushButton[primary="true"]:hover { background-color: #5aa9f9; }
         """)
 
         dlg_layout = QVBoxLayout(dlg)
@@ -2095,22 +2095,22 @@ class MainWindowERP(QMainWindow):
 
             # ── Diálogo base (reutilizado nas duas fases) ─────────────────────
             _DLG_CSS = """
-                QDialog  { background-color: #1e1e1e; }
-                QLabel   { color: #cccccc; font-size: 10pt; }
-                QFrame#separator { background-color: #3e3e42; max-height: 1px; }
+                QDialog  { background-color: #0f1826; }
+                QLabel   { color: #e6edf6; font-size: 10pt; }
+                QFrame#separator { background-color: #2a3a57; max-height: 1px; }
                 QPushButton {
-                    border: none; border-radius: 4px;
+                    border: none; border-radius: 8px;
                     padding: 8px 20px; font-weight: bold; color: white;
                 }
-                QPushButton#btnOk     { background-color: #0078d4; }
-                QPushButton#btnOk:hover { background-color: #1e8ad4; }
+                QPushButton#btnOk     { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3e9cf7, stop:1 #1d6bb0); }
+                QPushButton#btnOk:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5aa9f9, stop:1 #2a7cc4); }
                 QPushButton#btnDelete { background-color: #c0392b; }
                 QPushButton#btnDelete:hover { background-color: #e74c3c; }
                 QPushButton#btnKeep   { background-color: #444; }
                 QPushButton#btnKeep:hover { background-color: #555; }
                 QPushButton#btnRetry  { background-color: #e65100; }
                 QPushButton#btnRetry:hover { background-color: #ff6d00; }
-                QPushButton:disabled  { background-color: #3e3e42; color: #666; }
+                QPushButton:disabled  { background-color: #2a3a57; color: #666; }
             """
 
             def _make_progress(parent_layout, *, indeterminate=True):
@@ -2121,8 +2121,8 @@ class MainWindowERP(QMainWindow):
                 bar.setTextVisible(False)
                 bar.setMaximumHeight(4)
                 bar.setStyleSheet("""
-                    QProgressBar { background-color: #2d2d30; border: none; border-radius: 2px; }
-                    QProgressBar::chunk { background-color: #0078d4; border-radius: 2px; }
+                    QProgressBar { background-color: #16223c; border: none; border-radius: 2px; }
+                    QProgressBar::chunk { background-color: #3e9cf7; border-radius: 2px; }
                 """)
                 parent_layout.addWidget(bar)
                 return bar
@@ -2169,7 +2169,7 @@ class MainWindowERP(QMainWindow):
 
             lbl_chk_file = QLabel(f"Arquivo: {_os.path.basename(filepath)}")
             lbl_chk_file.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_chk_file.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+            lbl_chk_file.setStyleSheet("color: #9db3d1; font-size: 9pt;")
             lay_check.addWidget(lbl_chk_file)
 
             _make_progress(lay_check)
@@ -2216,7 +2216,7 @@ class MainWindowERP(QMainWindow):
                 lay_conf.addWidget(sep)
 
                 # Detalhes do registro existente
-                info_css = "color: #cccccc; font-size: 9pt;"
+                info_css = "color: #e6edf6; font-size: 9pt;"
                 for label_txt, value_txt in [
                     ("CNPJ:",        cnpj or "—"),
                     ("Vendedor:",    codvendedor or "—"),
@@ -2342,7 +2342,7 @@ class MainWindowERP(QMainWindow):
 
             lbl_up_file = QLabel(f"Arquivo: {_os.path.basename(filepath)}")
             lbl_up_file.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl_up_file.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+            lbl_up_file.setStyleSheet("color: #9db3d1; font-size: 9pt;")
             lay_up.addWidget(lbl_up_file)
 
             prog_up = _make_progress(lay_up)
@@ -2374,7 +2374,7 @@ class MainWindowERP(QMainWindow):
                     lbl_up_status.setText(f"❌  Falha no envio\n{up_thread.message}")
                     lbl_up_status.setStyleSheet("color: #f44336; font-size: 10pt;")
                     prog_up.setStyleSheet("""
-                        QProgressBar { background-color: #2d2d30; border: none; border-radius: 2px; }
+                        QProgressBar { background-color: #16223c; border: none; border-radius: 2px; }
                         QProgressBar::chunk { background-color: #f44336; border-radius: 2px; }
                     """)
                     try:
@@ -2517,7 +2517,7 @@ class MainWindowERP(QMainWindow):
 
         # Área de conteúdo
         content = QWidget()
-        content.setStyleSheet("background-color: #1e1e1e;")
+        content.setStyleSheet("background-color: #0f1826;")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(24, 16, 24, 16)
         content_layout.setSpacing(12)
@@ -2526,7 +2526,7 @@ class MainWindowERP(QMainWindow):
         lbl_info = QLabel(
             "Selecione um registro e clique em  ⬇️ Baixar Selecionado  para salvar o arquivo na pasta Cargas."
         )
-        lbl_info.setStyleSheet("color: #9d9d9d; font-size: 10pt; padding: 4px 0;")
+        lbl_info.setStyleSheet("color: #9db3d1; font-size: 10pt; padding: 4px 0;")
         content_layout.addWidget(lbl_info)
 
         # Tabela
@@ -2545,33 +2545,33 @@ class MainWindowERP(QMainWindow):
         self._contagens_table.verticalHeader().setVisible(False)
         self._contagens_table.setStyleSheet("""
             QTableWidget {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
-                gridline-color: #3e3e42;
+                background-color: #1a2740;
+                color: #e6edf6;
+                border: 1px solid #2a3a57;
+                gridline-color: #2a3a57;
                 font-size: 10pt;
             }
             QTableWidget::item:selected {
-                background-color: #094771;
+                background-color: #3d5a80;
                 color: #ffffff;
             }
             QHeaderView::section {
-                background-color: #2d2d30;
-                color: #9d9d9d;
+                background-color: #16223c;
+                color: #9db3d1;
                 border: none;
-                border-bottom: 1px solid #3e3e42;
+                border-bottom: 1px solid #2a3a57;
                 padding: 6px 8px;
                 font-weight: bold;
             }
             QTableWidget::item:alternate {
-                background-color: #2d2d30;
+                background-color: #16223c;
             }
         """)
         content_layout.addWidget(self._contagens_table)
 
         # Label de status da operação de download
         self._lbl_contagens_status = QLabel("")
-        self._lbl_contagens_status.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+        self._lbl_contagens_status.setStyleSheet("color: #9db3d1; font-size: 9pt;")
         content_layout.addWidget(self._lbl_contagens_status)
 
         layout.addWidget(content)

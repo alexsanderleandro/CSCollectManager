@@ -1,2 +1,2 @@
-VERSION = "26.07.20 rev. 1"
-BUILD = "26.07.20"
+VERSION = "26.07.21 rev. 1"
+BUILD = "26.07.21"
