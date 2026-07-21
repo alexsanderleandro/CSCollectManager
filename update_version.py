@@ -3,6 +3,7 @@ import re
 import os
 
 VERSION_FILE = "version.py"
+DOCS_FILE = os.path.join("docs", "ajuda_usuario.md")
 
 def gerar_versao():
     hoje = datetime.now().strftime("%y.%m.%d")
@@ -28,6 +29,34 @@ def gerar_versao():
         f.write(f'BUILD = "{hoje}"\n')
 
     print(f"Versão atualizada para: {versao}")
+
+    atualizar_versao_ajuda(versao)
+
+def atualizar_versao_ajuda(versao):
+    """Carimba a mesma versão na documentação de ajuda (docs/ajuda_usuario.md),
+    mantendo o menu Ajuda do aplicativo sincronizado com version.py."""
+    if not os.path.exists(DOCS_FILE):
+        print(f"Aviso: {DOCS_FILE} não encontrado — versão da ajuda não atualizada.")
+        return
+
+    with open(DOCS_FILE, "r", encoding="utf-8") as f:
+        conteudo = f.read()
+
+    novo_conteudo, n = re.subn(
+        r'> Documentação da versão: .*',
+        f'> Documentação da versão: {versao}',
+        conteudo,
+        count=1,
+    )
+
+    if n == 0:
+        print(f"Aviso: marcador de versão não encontrado em {DOCS_FILE}.")
+        return
+
+    with open(DOCS_FILE, "w", encoding="utf-8") as f:
+        f.write(novo_conteudo)
+
+    print(f"Documentação de ajuda atualizada para: {versao}")
 
 if __name__ == "__main__":
     gerar_versao()

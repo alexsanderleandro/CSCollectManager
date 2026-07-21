@@ -2923,9 +2923,10 @@ class MainWindowERP(QMainWindow):
             self.logout_requested.emit()
     
     def _on_docs(self):
-        """Abre documentação."""
-        import webbrowser
-        webbrowser.open(APP_INFO.WEBSITE)
+        """Abre a documentação de ajuda do aplicativo."""
+        from views.help_dialog import HelpDialog
+        dialog = HelpDialog(self)
+        dialog.exec()
     
     def _on_about(self):
         """Exibe diálogo sobre."""
