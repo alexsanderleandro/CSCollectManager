@@ -44,13 +44,23 @@ class AboutDialog(QDialog):
         )
         
         self._setup_ui()
-    
+
+    def moveEvent(self, event):
+        """Força redesenho completo ao mover a janela.
+
+        Mitiga um bug de composição do Windows/DWM onde, ao arrastar o
+        diálogo, apenas parte da área de cliente é repintada, deixando
+        conteúdo em branco (ícone, textos e bloco do desenvolvedor).
+        """
+        super().moveEvent(event)
+        self.repaint()
+
     def _setup_ui(self):
         """Configura a interface."""
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(30, 30, 30, 30)
-        
+
         # Logo/Ícone
         icon_label = QLabel()
         icon_label.setText("📦")

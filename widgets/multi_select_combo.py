@@ -92,9 +92,12 @@ class MultiSelectCombo(QWidget):
         """)
         layout.addWidget(self.txt_search)
         
-        # Lista de itens
-        self.list_widget = QListWidget()
+        # Lista de itens (guard: roda do mouse só age após clique na lista;
+        # autoScroll desligado evita rolagem programática ao clicar em item
+        # parcialmente visível na borda)
+        self.list_widget = _ScrollGuardList()
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.list_widget.setAutoScroll(False)
         self.list_widget.setStyleSheet("""
             QListWidget {
                 background-color: #252526;
@@ -385,9 +388,11 @@ class SingleSelectCombo(QWidget):
         """)
         layout.addWidget(self.txt_search)
         
-        # Lista de itens
-        self.list_widget = QListWidget()
+        # Lista de itens (mesmo guard anti-scroll dos combos multi-seleção)
+        self.list_widget = _ScrollGuardList()
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list_widget.setAutoScroll(False)
+        self.list_widget.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.list_widget.setStyleSheet("""
             QListWidget {
                 background-color: #252526;

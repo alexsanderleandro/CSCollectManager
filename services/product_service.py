@@ -4,12 +4,18 @@ product_service.py
 Serviço para consulta de produtos com filtros dinâmicos.
 """
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from datetime import date
 
 from database.connection import get_session
 from sqlalchemy import text
+
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -632,16 +638,39 @@ class ProductService:
             return []
     
     def get_all_filter_data(self, company_code: Optional[str] = None) -> Dict[str, Any]:
-        """Carrega todos os dados para os filtros de uma vez."""
-        return {
-            "grupos": self.get_grupos(company_code),
-            "tipos_produto": self.get_tipos_produto(company_code),
-            "localizacoes": self.get_localizacoes(company_code),
-            "fornecedores": self.get_fornecedores(company_code),
-            "fabricantes": self.get_fabricantes(company_code),
-            "locais_estoque_config": self.get_config_locais_estoque(),
-            "end_locais_estoque": self.get_end_locais_estoque(),
-        }
+        """Carrega todos os dados para os filtros de uma vez.
+
+        As consultas rodam em paralelo (uma conexão do pool por thread) — o
+        tempo total cai da soma das consultas para o da mais lenta. A primeira
+        consulta (leve) roda sozinha para criar o engine lazy com segurança
+        antes de abrir as threads.
+        """
+        t0 = time.perf_counter()
+
+        # Aquecimento: cria o engine/handshake ODBC fora do paralelismo
+        # (get_engine usa um global sem lock; não pode ser corrida de threads)
+        locais_estoque_config = self.get_config_locais_estoque()
+
+        def _timed(nome: str, fn, *args):
+            inicio = time.perf_counter()
+            resultado = fn(*args)
+            logger.info(f"Filtro '{nome}' carregado em {time.perf_counter() - inicio:.1f}s")
+            return resultado
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = {
+                "grupos": pool.submit(_timed, "grupos", self.get_grupos, company_code),
+                "tipos_produto": pool.submit(_timed, "tipos_produto", self.get_tipos_produto, company_code),
+                "localizacoes": pool.submit(_timed, "localizacoes", self.get_localizacoes, company_code),
+                "fornecedores": pool.submit(_timed, "fornecedores", self.get_fornecedores, company_code),
+                "fabricantes": pool.submit(_timed, "fabricantes", self.get_fabricantes, company_code),
+                "end_locais_estoque": pool.submit(_timed, "end_locais_estoque", self.get_end_locais_estoque),
+            }
+            dados = {nome: futuro.result() for nome, futuro in futures.items()}
+
+        dados["locais_estoque_config"] = locais_estoque_config
+        logger.info(f"Todos os filtros carregados em {time.perf_counter() - t0:.1f}s")
+        return dados
 
     def get_config_locais_estoque(self) -> str:
         """Retorna a configuração de locais de estoque."""

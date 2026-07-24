@@ -1,6 +1,6 @@
 # Ajuda — LogScan Manager
 
-> Documentação da versão: 26.07.21 rev. 3
+> Documentação da versão: 26.07.22 rev. 1
 
 Este guia explica as rotinas do LogScan Manager: para que servem e como usar.
 

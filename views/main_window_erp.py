@@ -38,16 +38,17 @@ from PySide6.QtWidgets import (
     QStackedWidget, QListWidget, QListWidgetItem, QSizePolicy,
     QMessageBox, QFileDialog, QApplication, QSpacerItem, QGroupBox
 )
-from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve, QThreadPool
 from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QShortcut, QCursor, QPixmap
 
 from utils.constants import APP_INFO, Icons, Messages, Shortcuts, UIConfig
 from utils.logger import get_logger
-from utils.workers import DataLoaderWorker, ExportWorker
+from utils.workers import DataLoaderWorker, ExportWorker, TaskRunnable, WorkerSignals
 from widgets.status_bar import AppStatusBar
 from widgets.filter_panel import FilterPanel
 from widgets.lazy_product_table import LazyProductTable
 from widgets.progress_dialog import ProgressDialog
+from widgets.loading_overlay import LoadingOverlay
 from services.product_service import ProductService, ProductFilter
 from services.export_service import ExportService, EmpresaInfo, UsuarioInfo
 from services.db_export_service import DbExportService
@@ -266,24 +267,35 @@ class MainWindowERP(QMainWindow):
         
         # Seleciona módulo inicial
         self._switch_module(self.MODULE_PRODUCTS)
-        
+
+        # Overlay de carregamento (cobre a janela e bloqueia interação
+        # enquanto os filtros são carregados em background)
+        self._loading_overlay = LoadingOverlay(self)
+
+        # Maximiza e exibe a janela somente após toda a UI estar montada,
+        # evitando um frame em branco enquanto sidebar/páginas são construídas.
+        self.showMaximized()
+
         logger.info("MainWindow ERP inicializada")
-    
+
+    def resizeEvent(self, event):
+        """Mantém o overlay de carregamento cobrindo a janela inteira."""
+        super().resizeEvent(event)
+        if self._loading_overlay.isVisible():
+            self._loading_overlay.resize(self.size())
+
     def _setup_window(self):
         """Configura propriedades da janela."""
         self.setWindowTitle(f"{APP_INFO.NAME} - Sistema de Exportação de Carga")
-        
+
         # Define ícone da janela
         if os.path.exists(LOGO_PATH):
             icon = QIcon(LOGO_PATH)
             self.setWindowIcon(icon)
-        
+
         self.setMinimumSize(UIConfig.MIN_WINDOW_WIDTH, UIConfig.MIN_WINDOW_HEIGHT)
         self.resize(UIConfig.DEFAULT_WINDOW_WIDTH, UIConfig.DEFAULT_WINDOW_HEIGHT)
-        
-        # Maximiza a janela
-        self.showMaximized()
-    
+
     def _setup_ui(self):
         """Configura interface principal."""
         # Widget central
@@ -1174,7 +1186,7 @@ class MainWindowERP(QMainWindow):
         validade_licenca = (licenca or {}).get("validade", "")
         self._status_bar.set_license_validity(validade_licenca)
         
-        self.setWindowTitle(f"{APP_INFO.NAME} - {empresa_nome}")
+        self.setWindowTitle(f"{APP_INFO.NAME} - v{APP_INFO.VERSION}")
         
         logger.info(f"Conexão configurada: {empresa_nome} / {usuario_nome}")
 
@@ -1349,17 +1361,49 @@ class MainWindowERP(QMainWindow):
         """
         Carrega dados dos filtros a partir do banco e popula os combos do FilterPanel.
 
-        Deve ser chamado após a conexão ser configurada (pós-login).
+        Deve ser chamado após a conexão ser configurada (pós-login). A consulta
+        ao banco roda em background (QThreadPool) para não travar a UI; enquanto
+        isso, os controles ficam congelados sob um overlay centralizado.
         """
+        self._set_filters_loading(True)
+        company_code = self._empresa_info.get("codigo")
+
+        # Define o código da empresa no painel de filtros para buscas dinâmicas
+        if hasattr(self._filter_panel, "filter_produto"):
+            self._filter_panel.filter_produto.set_company_code(company_code)
+
+        signals = WorkerSignals()
+        signals.finished.connect(self._on_filter_data_loaded)
+        signals.error.connect(self._on_filter_data_error)
+        runnable = TaskRunnable(
+            self._product_service.get_all_filter_data,
+            args=(company_code,),
+            signals=signals,
+        )
+        QThreadPool.globalInstance().start(runnable)
+
+    def _set_filters_loading(self, loading: bool):
+        """Congela/descongela a janela durante o carregamento dos filtros.
+
+        Desabilita conteúdo central e menus (bloqueando teclado/atalhos) e
+        exibe um overlay centralizado que também intercepta cliques.
+        """
+        central = self.centralWidget()
+        if central:
+            central.setEnabled(not loading)
+        menubar = self.menuBar()
+        if menubar:
+            menubar.setEnabled(not loading)
+
+        if loading:
+            self._loading_overlay.resize(self.size())
+            self._loading_overlay.show_loading("Carregando filtros")
+        else:
+            self._loading_overlay.hide_loading()
+
+    def _on_filter_data_loaded(self, filter_data: Dict[str, Any]):
+        """Popula o FilterPanel com os dados carregados em background."""
         try:
-            self._status_bar.show_message("Carregando filtros...")
-            company_code = self._empresa_info.get("codigo")
-            
-            # Define o código da empresa no painel de filtros para buscas dinâmicas
-            if hasattr(self._filter_panel, "filter_produto"):
-                self._filter_panel.filter_produto.set_company_code(company_code)
-                
-            filter_data = self._product_service.get_all_filter_data(company_code)
             self._filter_panel.load_filter_data(
                 grupos=filter_data.get("grupos", []),
                 fornecedores=filter_data.get("fornecedores", []),
@@ -1378,7 +1422,15 @@ class MainWindowERP(QMainWindow):
             logger.info("Dados dos filtros carregados com sucesso")
         except Exception as e:
             self._status_bar.show_message("Erro ao carregar filtros")
-            logger.error(f"Erro ao carregar dados dos filtros: {e}")
+            logger.error(f"Erro ao aplicar dados dos filtros: {e}")
+        finally:
+            self._set_filters_loading(False)
+
+    def _on_filter_data_error(self, e: Exception):
+        """Trata falha ao carregar dados dos filtros em background."""
+        self._set_filters_loading(False)
+        self._status_bar.show_message("Erro ao carregar filtros")
+        logger.error(f"Erro ao carregar dados dos filtros: {e}")
 
     def load_products(self, filters: Dict[str, Any] = None):
         """
@@ -1620,7 +1672,7 @@ class MainWindowERP(QMainWindow):
 
         # Monta diálogo
         dlg = QDialog(self)
-        dlg.setWindowTitle("Selecionar Vendedor")
+        dlg.setWindowTitle("Selecionar Conferente")
         dlg.setMinimumSize(420, 480)
         dlg.setStyleSheet("""
             QDialog { background-color: #0f1826; color: #e6edf6; }
@@ -1723,6 +1775,27 @@ class MainWindowERP(QMainWindow):
             try:
                 from utils.config import AppConfig
                 AppConfig.set_last_export_dir(directory)
+            except Exception:
+                pass
+
+    def _on_browse_contagens_dir(self):
+        """Abre diálogo para selecionar a pasta de destino das contagens e persiste a escolha."""
+        try:
+            from utils.config import AppConfig
+            current = self._txt_contagens_dir.text() or AppConfig.get_contagens_path()
+        except Exception:
+            current = self._txt_contagens_dir.text() or os.path.expanduser("~")
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Selecionar Pasta de Contagens",
+            current,
+            QFileDialog.Option.ShowDirsOnly
+        )
+        if directory:
+            self._txt_contagens_dir.setText(directory)
+            try:
+                from utils.config import AppConfig
+                AppConfig.set_last_contagens_dir(directory)
             except Exception:
                 pass
 
@@ -2498,7 +2571,7 @@ class MainWindowERP(QMainWindow):
 
     def _create_download_contagens_page(self):
         """Cria a página de download de contagens enviadas pelos coletores."""
-        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QLineEdit
 
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -2524,10 +2597,57 @@ class MainWindowERP(QMainWindow):
 
         # Rótulo informativo
         lbl_info = QLabel(
-            "Selecione um registro e clique em  ⬇️ Baixar Selecionado  para salvar o arquivo na pasta Cargas."
+            "Selecione um registro e clique em  ⬇️ Baixar Selecionado  para salvar na pasta de contagens selecionada."
         )
         lbl_info.setStyleSheet("color: #9db3d1; font-size: 10pt; padding: 4px 0;")
         content_layout.addWidget(lbl_info)
+
+        # Pasta de destino das contagens (com persistência da escolha)
+        dir_row = QHBoxLayout()
+        dir_row.setSpacing(10)
+        self._txt_contagens_dir = QLineEdit()
+        self._txt_contagens_dir.setPlaceholderText("Pasta onde as contagens serão salvas...")
+        try:
+            from utils.config import AppConfig as _AppCfg
+            self._txt_contagens_dir.setText(_AppCfg.get_last_contagens_dir())
+        except Exception:
+            pass
+        self._txt_contagens_dir.setReadOnly(True)
+        self._txt_contagens_dir.setMinimumHeight(36)
+        self._txt_contagens_dir.setStyleSheet("""
+            QLineEdit {
+                background-color: #1a2740;
+                color: #e6edf6;
+                border: 1px solid #2a3a57;
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 11pt;
+            }
+            QLineEdit:focus {
+                border-color: #3e9cf7;
+            }
+        """)
+        dir_row.addWidget(self._txt_contagens_dir, 1)
+
+        btn_contagens_browse = QPushButton("📂  Procurar...")
+        btn_contagens_browse.setMinimumSize(130, 36)
+        btn_contagens_browse.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_contagens_browse.setStyleSheet("""
+            QPushButton {
+                background-color: #2a3a57;
+                color: #e6edf6;
+                border: none;
+                border-radius: 8px;
+                font-size: 10pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #35507e;
+            }
+        """)
+        btn_contagens_browse.clicked.connect(self._on_browse_contagens_dir)
+        dir_row.addWidget(btn_contagens_browse)
+        content_layout.addLayout(dir_row)
 
         # Tabela
         self._contagens_table = QTableWidget()
@@ -2781,8 +2901,16 @@ class MainWindowERP(QMainWindow):
             )
             return
 
-        # Pasta de destino
-        dest_dir  = AppConfig.get_contagens_path()
+        # Pasta de destino: usa a selecionada na tela (persistida), com fallback ao padrão
+        dest_dir = ""
+        if hasattr(self, "_txt_contagens_dir"):
+            dest_dir = self._txt_contagens_dir.text().strip()
+        if not dest_dir:
+            dest_dir = AppConfig.get_last_contagens_dir()
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            pass
         filename  = nome_arquivo if nome_arquivo else os.path.basename(url_arquivo.split("?")[0])
         if not filename.lower().endswith(".zip"):
             filename += ".zip"

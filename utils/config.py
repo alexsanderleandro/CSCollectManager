@@ -58,11 +58,11 @@ class AppConfig:
     @classmethod
     def get_default_export_path(cls) -> str:
         """
-        Retorna o caminho padrão de exportação: <pasta_do_exe>/Cargas.
+        Retorna o caminho padrão de exportação: <pasta_do_exe>/cargas.
 
         Garante que a pasta é criada ao ser acessada pela primeira vez.
         """
-        path = cls.get_app_dir() / "Cargas"
+        path = cls.get_app_dir() / "cargas"
         try:
             os.makedirs(path, exist_ok=True)
         except Exception:
@@ -72,11 +72,11 @@ class AppConfig:
     @classmethod
     def get_contagens_path(cls) -> str:
         """
-        Retorna o caminho da pasta de contagens: <pasta_do_exe>/Contagens.
+        Retorna o caminho da pasta de contagens: <pasta_do_exe>/contagens.
 
         Garante que a pasta é criada ao ser acessada pela primeira vez.
         """
-        path = cls.get_app_dir() / "Contagens"
+        path = cls.get_app_dir() / "contagens"
         try:
             os.makedirs(path, exist_ok=True)
         except Exception:
@@ -175,6 +175,19 @@ class AppConfig:
         """Salva o último diretório de exportação escolhido pelo usuário."""
         settings = cls._load_settings()
         settings["last_export_dir"] = path
+        cls._save_settings(settings)
+
+    @classmethod
+    def get_last_contagens_dir(cls) -> str:
+        """Retorna o último diretório de contagens salvo ou o padrão (contagens na pasta do exe)."""
+        settings = cls._load_settings()
+        return settings.get("last_contagens_dir", cls.get_contagens_path())
+
+    @classmethod
+    def set_last_contagens_dir(cls, path: str) -> None:
+        """Salva o último diretório de download de contagens escolhido pelo usuário."""
+        settings = cls._load_settings()
+        settings["last_contagens_dir"] = path
         cls._save_settings(settings)
 
     # ---------------------------

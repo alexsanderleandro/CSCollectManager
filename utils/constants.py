@@ -21,7 +21,7 @@ class AppInfo:
     AUTHOR: str = "CEOsoftware"
     COMPANY: str = "CEOsoftware"
     DESCRIPTION: str = "Sistema de gestão de cargas para o aplicativo LogScan"
-    COPYRIGHT: str = "© 2026 CEOOsoftware. Todos os direitos reservados."
+    COPYRIGHT: str = "© 2026 CEOsoftware. Todos os direitos reservados."
     WEBSITE: str = "https://www.ceosoftware.com.br"
     EMAIL: str = "suporte@ceosoftware.com.br"
 

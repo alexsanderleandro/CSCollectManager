@@ -24,7 +24,7 @@ $paths = "--paths=."
 
 # DefiniÃ§Ãµes
 $entry = "run.py"
-$outName = "CSCollectManager"
+$outName = "LogScanManager"
 $icon = "assets/icon.ico"
 $verFile = "version.txt"
 $assetsSrc = "assets"
@@ -90,11 +90,11 @@ VSVersionInfo(
                     '041604B0',  # PortuguÃªs Brasil
                     [
                         StringStruct('CompanyName', 'CEOsoftware'),
-                        StringStruct('FileDescription', 'CSCollect Manager'),
+                        StringStruct('FileDescription', 'LogScan Manager'),
                         StringStruct('FileVersion', '$versionStr'),
-                        StringStruct('InternalName', 'CSCollectManager.exe'),
-                        StringStruct('OriginalFilename', 'CSCollectManager.exe'),
-                        StringStruct('ProductName', 'CSCollect Manager'),
+                        StringStruct('InternalName', 'LogScanManager.exe'),
+                        StringStruct('OriginalFilename', 'LogScanManager.exe'),
+                        StringStruct('ProductName', 'LogScan Manager'),
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('LegalTrademarks', ''),
                         StringStruct('ProductVersion', '$versionStr'),
@@ -112,7 +112,7 @@ Set-Content -Path $verFile -Value $versionTxt -Encoding UTF8
 Write-Host "Arquivo $verFile atualizado com versÃ£o: $versionStr"
 
 # Prefere usar o .spec (garante runtime_hooks e hiddenimports corretos)
-$specFile = "CSCollectManager.spec"
+$specFile = "LogScanManager.spec"
 if (Test-Path $specFile) {
     Write-Host "Usando arquivo .spec: $specFile"
     & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean $specFile
@@ -127,11 +127,25 @@ if (Test-Path $specFile) {
 
     if (Test-Path $icon) {
         Write-Host "Icone encontrado: $icon"
-        & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed --icon $icon $paths $hiddenImportHandlers $hiddenImportVersion $hiddenImportDotenv $hiddenImportDotenvMain $hiddenImportDotenvCompat $runtimeHook $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
+        & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onedir --contents-directory _internal --windowed --icon $icon $paths $hiddenImportHandlers $hiddenImportVersion $hiddenImportDotenv $hiddenImportDotenvMain $hiddenImportDotenvCompat $runtimeHook $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
     } else {
         Write-Host "Icone nao encontrado em $icon - executando sem icone"
-        & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onefile --windowed $paths $hiddenImportHandlers $hiddenImportVersion $hiddenImportDotenv $hiddenImportDotenvMain $hiddenImportDotenvCompat $runtimeHook $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
+        & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean --name $outName --onedir --contents-directory _internal --windowed $paths $hiddenImportHandlers $hiddenImportVersion $hiddenImportDotenv $hiddenImportDotenvMain $hiddenImportDotenvCompat $runtimeHook $addDataAssets $addDataApp $addDataUtils $addDataEnv $addDataKeys --version-file $verFile $entry
     }
 }
 
-Write-Host "Build finalizado. Artefatos em dist\$outName.exe"
+# Compacta a pasta onedir em um zip para distribuição (não aborta o build se falhar,
+# ex.: arquivo momentaneamente travado pelo antivírus logo após o build)
+$distDir = "dist\$outName"
+$distExe = "$distDir\$outName.exe"
+if (Test-Path $distExe) {
+    try {
+        Compress-Archive -Path $distDir -DestinationPath "dist\$outName.zip" -Force -ErrorAction Stop
+        Write-Host "Zip de distribuicao gerado: dist\$outName.zip"
+    } catch {
+        Write-Host "Aviso: falha ao gerar o zip ($($_.Exception.Message)). Tente novamente: Compress-Archive -Path $distDir -DestinationPath dist\$outName.zip -Force" -ForegroundColor Yellow
+    }
+    Write-Host "Build finalizado. Artefatos em $distExe"
+} else {
+    Write-Error "Executavel nao encontrado em $distExe"
+}

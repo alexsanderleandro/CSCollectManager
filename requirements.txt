@@ -17,6 +17,9 @@ requests>=2.31.0
 # Configuração (variáveis de ambiente)
 python-dotenv>=1.0.0
 
+# Fusos horários (conversão UTC -> local em exportação e telas)
+pytz>=2024.1
+
 # Utilitários (zipfile é builtin, não precisa instalar)
 
 # Criptografia (assinatura de arquivos e campos AES-256-GCM)
