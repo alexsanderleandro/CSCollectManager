@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QWidget, QListWidgetItem, QCheckBox
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QKeyEvent
 
-from widgets.multi_select_combo import MultiSelectCombo
+from widgets.multi_select_combo import MultiSelectCombo, _combo_qss
 from widgets.product_search_dialog import ProductSearchDialog
 
 
@@ -106,9 +106,9 @@ class ProductSearchCombo(MultiSelectCombo):
                     item = QListWidgetItem()
                     checkbox = QCheckBox(descricao)
                     checkbox.setProperty("item_value", codigo)
-                    checkbox.setStyleSheet("""
+                    checkbox.setStyleSheet(_combo_qss("""
                         QCheckBox {
-                            color: #cccccc;
+                            color: {{FG_PRIMARY}};
                             spacing: 5px;
                         }
                         QCheckBox::indicator {
@@ -116,16 +116,16 @@ class ProductSearchCombo(MultiSelectCombo):
                             height: 14px;
                         }
                         QCheckBox::indicator:unchecked {
-                            border: 1px solid #555;
-                            background-color: #252526;
+                            border: 1px solid {{BORDER}};
+                            background-color: {{CHECKBOX_BG}};
                             border-radius: 2px;
                         }
                         QCheckBox::indicator:checked {
-                            border: 1px solid #0078d4;
-                            background-color: #0078d4;
+                            border: 1px solid {{ACCENT}};
+                            background-color: {{ACCENT}};
                             border-radius: 2px;
                         }
-                    """)
+                    """))
                     checkbox.setChecked(True)
                     checkbox.stateChanged.connect(self._on_item_changed)
                     item.setSizeHint(QSize(0, 24))

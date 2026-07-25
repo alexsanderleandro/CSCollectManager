@@ -13,6 +13,18 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize, QEvent
 from PySide6.QtGui import QIcon, QAction
 
+from app.styles import themed_qss, get_active_theme
+
+# Fundo do indicador de checkbox desmarcado: no escuro é igual ao fundo da
+# lista (BG_TERTIARY, comportamento já existente); no claro, BG_TERTIARY e
+# BORDER são tons quase idênticos e a caixinha ficava invisível — usa branco.
+_CHECKBOX_BG = "#16223c" if get_active_theme().__name__ == "DarkTheme" else "#ffffff"
+
+
+def _combo_qss(template: str) -> str:
+    """themed_qss() + placeholder local {{CHECKBOX_BG}} deste arquivo."""
+    return themed_qss(template.replace("{{CHECKBOX_BG}}", _CHECKBOX_BG))
+
 
 class _ScrollGuardList(QListWidget):
     """QListWidget que só rola quando o usuário clicou explicitamente nela."""
@@ -71,25 +83,25 @@ class MultiSelectCombo(QWidget):
         # Título
         if self._title:
             title_label = QLabel(self._title)
-            title_label.setStyleSheet("font-weight: bold; color: #cccccc;")
+            title_label.setStyleSheet(themed_qss("font-weight: bold; color: {{FG_PRIMARY}};"))
             layout.addWidget(title_label)
         
         # Campo de busca
         self.txt_search = QLineEdit()
         self.txt_search.setPlaceholderText(self._placeholder)
         self.txt_search.setClearButtonEnabled(True)
-        self.txt_search.setStyleSheet("""
+        self.txt_search.setStyleSheet(themed_qss("""
             QLineEdit {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}};
                 border-radius: 3px;
                 padding: 5px;
             }
             QLineEdit:focus {
-                border-color: #0078d4;
+                border-color: {{ACCENT}};
             }
-        """)
+        """))
         layout.addWidget(self.txt_search)
         
         # Lista de itens (guard: roda do mouse só age após clique na lista;
@@ -98,20 +110,20 @@ class MultiSelectCombo(QWidget):
         self.list_widget = _ScrollGuardList()
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.list_widget.setAutoScroll(False)
-        self.list_widget.setStyleSheet("""
+        self.list_widget.setStyleSheet(themed_qss("""
             QListWidget {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}};
                 border-radius: 3px;
             }
             QListWidget::item {
                 padding: 3px;
             }
             QListWidget::item:hover {
-                background-color: #3e3e42;
+                background-color: {{BG_HOVER}};
             }
-        """)
+        """))
         self.list_widget.setMinimumHeight(120)
         self.list_widget.setMaximumHeight(200)
         self.list_widget.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -123,43 +135,43 @@ class MultiSelectCombo(QWidget):
         
         self.btn_select_all = QPushButton("Todos")
         self.btn_select_all.setMaximumWidth(60)
-        self.btn_select_all.setStyleSheet("""
+        self.btn_select_all.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: {{BG_HOVER}};
+                color: {{FG_PRIMARY}};
                 border: none;
                 border-radius: 3px;
                 padding: 3px 8px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {{BG_SELECTED}};
             }
-        """)
+        """))
         btn_layout.addWidget(self.btn_select_all)
         
         self.btn_clear = QPushButton("Limpar")
         self.btn_clear.setMaximumWidth(60)
-        self.btn_clear.setStyleSheet("""
+        self.btn_clear.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: {{BG_HOVER}};
+                color: {{FG_PRIMARY}};
                 border: none;
                 border-radius: 3px;
                 padding: 3px 8px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {{BG_SELECTED}};
             }
-        """)
+        """))
         btn_layout.addWidget(self.btn_clear)
         
         btn_layout.addStretch()
         
         # Label de contagem
         self.lbl_count = QLabel("0 selecionado(s)")
-        self.lbl_count.setStyleSheet("color: #888; font-size: 11px;")
+        self.lbl_count.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 11px;"))
         btn_layout.addWidget(self.lbl_count)
         
         layout.addLayout(btn_layout)
@@ -203,9 +215,9 @@ class MultiSelectCombo(QWidget):
             item = QListWidgetItem()
             checkbox = QCheckBox(display)
             checkbox.setProperty("item_value", value)
-            checkbox.setStyleSheet("""
+            checkbox.setStyleSheet(_combo_qss("""
                 QCheckBox {
-                    color: #cccccc;
+                    color: {{FG_PRIMARY}};
                     spacing: 5px;
                 }
                 QCheckBox::indicator {
@@ -213,16 +225,16 @@ class MultiSelectCombo(QWidget):
                     height: 14px;
                 }
                 QCheckBox::indicator:unchecked {
-                    border: 1px solid #555;
-                    background-color: #252526;
+                    border: 1px solid {{BORDER}};
+                    background-color: {{CHECKBOX_BG}};
                     border-radius: 2px;
                 }
                 QCheckBox::indicator:checked {
-                    border: 1px solid #0078d4;
-                    background-color: #0078d4;
+                    border: 1px solid {{ACCENT}};
+                    background-color: {{ACCENT}};
                     border-radius: 2px;
                 }
-            """)
+            """))
             checkbox.stateChanged.connect(self._on_item_changed)
             
             item.setSizeHint(QSize(0, 24))
@@ -367,25 +379,25 @@ class SingleSelectCombo(QWidget):
         # Título
         if self._title:
             title_label = QLabel(self._title)
-            title_label.setStyleSheet("font-weight: bold; color: #cccccc;")
+            title_label.setStyleSheet(themed_qss("font-weight: bold; color: {{FG_PRIMARY}};"))
             layout.addWidget(title_label)
         
         # Campo de busca
         self.txt_search = QLineEdit()
         self.txt_search.setPlaceholderText(self._placeholder)
         self.txt_search.setClearButtonEnabled(True)
-        self.txt_search.setStyleSheet("""
+        self.txt_search.setStyleSheet(themed_qss("""
             QLineEdit {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}};
                 border-radius: 3px;
                 padding: 5px;
             }
             QLineEdit:focus {
-                border-color: #0078d4;
+                border-color: {{ACCENT}};
             }
-        """)
+        """))
         layout.addWidget(self.txt_search)
         
         # Lista de itens (mesmo guard anti-scroll dos combos multi-seleção)
@@ -393,23 +405,23 @@ class SingleSelectCombo(QWidget):
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list_widget.setAutoScroll(False)
         self.list_widget.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.list_widget.setStyleSheet("""
+        self.list_widget.setStyleSheet(themed_qss("""
             QListWidget {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}};
                 border-radius: 3px;
             }
             QListWidget::item {
                 padding: 5px;
             }
             QListWidget::item:hover {
-                background-color: #3e3e42;
+                background-color: {{BG_HOVER}};
             }
             QListWidget::item:selected {
-                background-color: #0078d4;
+                background-color: {{ACCENT}};
             }
-        """)
+        """))
         self.list_widget.setMinimumHeight(100)
         self.list_widget.setMaximumHeight(150)
         layout.addWidget(self.list_widget)
@@ -419,19 +431,19 @@ class SingleSelectCombo(QWidget):
         
         self.btn_clear = QPushButton("Limpar")
         self.btn_clear.setMaximumWidth(60)
-        self.btn_clear.setStyleSheet("""
+        self.btn_clear.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: {{BG_HOVER}};
+                color: {{FG_PRIMARY}};
                 border: none;
                 border-radius: 3px;
                 padding: 3px 8px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {{BG_SELECTED}};
             }
-        """)
+        """))
         btn_layout.addWidget(self.btn_clear)
         btn_layout.addStretch()
         

@@ -16,6 +16,7 @@ from PySide6.QtGui import QFont
 
 from widgets.multi_select_combo import MultiSelectCombo
 from widgets.product_search_combo import ProductSearchCombo
+from app.styles import themed_qss
 
 
 class CollapsibleSection(QWidget):
@@ -39,17 +40,17 @@ class CollapsibleSection(QWidget):
         self._btn.setCheckable(True)
         self._btn.setChecked(expanded)
         self._btn.setText(("\u25BC "+ title) if expanded else ("\u25BA "+ title))
-        self._btn.setStyleSheet("""
+        self._btn.setStyleSheet(themed_qss("""
             QPushButton {
                 text-align: left;
                 background-color: transparent;
-                color: #e6edf6;
+                color: {{FG_PRIMARY}};
                 border: none;
                 padding: 6px 4px;
                 font-weight: bold;
             }
-            QPushButton:hover { color: #ffffff; }
-        """)
+            QPushButton:hover { color: {{ACCENT_HOVER}}; }
+        """))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -123,46 +124,46 @@ class FilterPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
+        scroll.setStyleSheet(themed_qss("""
             QScrollArea {
                 border: none;
-                background-color: #1a2740;
+                background-color: {{BG_SECONDARY}};
             }
             QScrollBar:vertical {
-                background-color: #1a2740;
+                background-color: {{BG_SECONDARY}};
                 width: 10px;
                 border: none;
             }
             QScrollBar::handle:vertical {
-                background-color: #2a3a57;
+                background-color: {{BG_HOVER}};
                 border-radius: 5px;
                 min-height: 20px;
             }
             QScrollBar::handle:vertical:hover {
-                background-color: #35507e;
+                background-color: {{BG_SELECTED}};
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px;
             }
-        """)
-        
+        """))
+
         # Container dos filtros
         filter_container = QWidget()
-        filter_container.setStyleSheet("background-color: #1a2740;")
+        filter_container.setStyleSheet(themed_qss("background-color: {{BG_SECONDARY}};"))
         filter_layout = QVBoxLayout(filter_container)
         filter_layout.setContentsMargins(15, 15, 15, 15)
         filter_layout.setSpacing(15)
-        
+
         # Título
         title = QLabel("Filtros de Seleção")
         title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        title.setStyleSheet("color: #ffffff; padding-bottom: 5px;")
+        title.setStyleSheet(themed_qss("color: {{FG_PRIMARY}}; padding-bottom: 5px;"))
         filter_layout.addWidget(title)
-        
+
         # Separador
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background-color: #2a3a57;")
+        sep.setStyleSheet(themed_qss("background-color: {{BORDER}};"))
         filter_layout.addWidget(sep)
         
         # ===== FILTROS DE SELEÇÃO MÚLTIPLA =====
@@ -317,23 +318,23 @@ class FilterPanel(QWidget):
         
         # ===== BOTÕES DE AÇÃO =====
         btn_container = QWidget()
-        btn_container.setStyleSheet("background-color: #16223c;")
+        btn_container.setStyleSheet(themed_qss("background-color: {{BG_TERTIARY}};"))
         btn_layout = QVBoxLayout(btn_container)
         btn_layout.setContentsMargins(15, 15, 15, 15)
         btn_layout.setSpacing(10)
-        
+
         # Separador
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("background-color: #2a3a57;")
+        sep2.setStyleSheet(themed_qss("background-color: {{BORDER}};"))
         btn_layout.addWidget(sep2)
-        
+
         # Botão Selecionar
         self.btn_selecionar = QPushButton("Selecionar")
         self.btn_selecionar.setMinimumHeight(40)
-        self.btn_selecionar.setStyleSheet("""
+        self.btn_selecionar.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #3e9cf7;
+                background-color: {{ACCENT}};
                 color: white;
                 font-weight: bold;
                 font-size: 13px;
@@ -341,29 +342,29 @@ class FilterPanel(QWidget):
                 border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #2a7cc4;
+                background-color: {{ACCENT_HOVER}};
             }
             QPushButton:pressed {
-                background-color: #0e42b0;
+                background-color: {{ACCENT_PRESSED}};
             }
-        """)
+        """))
         btn_layout.addWidget(self.btn_selecionar)
-        
+
         # Botão Limpar Seleção
         self.btn_limpar = QPushButton("Limpar Seleção")
         self.btn_limpar.setMinimumHeight(35)
-        self.btn_limpar.setStyleSheet("""
+        self.btn_limpar.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #2a3a57;
-                color: #e6edf6;
+                background-color: {{BG_HOVER}};
+                color: {{FG_PRIMARY}};
                 font-size: 12px;
                 border: none;
                 border-radius: 8px;
             }
             QPushButton:hover {
-                background-color: #35507e;
+                background-color: {{BG_SELECTED}};
             }
-        """)
+        """))
         btn_layout.addWidget(self.btn_limpar)
         
         main_layout.addWidget(btn_container)
@@ -439,12 +440,12 @@ class FilterPanel(QWidget):
     def _create_group_box(self, title: str) -> QGroupBox:
         """Cria um GroupBox estilizado."""
         group = QGroupBox(title)
-        group.setStyleSheet("""
+        group.setStyleSheet(themed_qss("""
             QGroupBox {
-                color: #e6edf6;
+                color: {{FG_PRIMARY}};
                 font-weight: bold;
                 font-size: 12px;
-                border: 1px solid #2a3a57;
+                border: 1px solid {{BORDER}};
                 border-radius: 8px;
                 margin-top: 10px;
                 padding-top: 10px;
@@ -454,14 +455,14 @@ class FilterPanel(QWidget):
                 left: 10px;
                 padding: 0 5px;
             }
-        """)
+        """))
         return group
     
     def _style_radio(self, radio: QRadioButton):
         """Aplica estilo ao RadioButton."""
-        radio.setStyleSheet("""
+        radio.setStyleSheet(themed_qss("""
             QRadioButton {
-                color: #e6edf6;
+                color: {{FG_PRIMARY}};
                 spacing: 8px;
             }
             QRadioButton::indicator {
@@ -469,25 +470,25 @@ class FilterPanel(QWidget):
                 height: 16px;
             }
             QRadioButton::indicator:unchecked {
-                border: 2px solid #555;
+                border: 2px solid {{BORDER}};
                 border-radius: 8px;
-                background-color: #1a2740;
+                background-color: {{BG_SECONDARY}};
             }
             QRadioButton::indicator:checked {
-                border: 2px solid #3e9cf7;
+                border: 2px solid {{ACCENT}};
                 border-radius: 8px;
-                background-color: #3e9cf7;
+                background-color: {{ACCENT}};
             }
             QRadioButton::indicator:unchecked:hover {
-                border-color: #777;
+                border-color: {{BORDER_FOCUS}};
             }
-        """)
+        """))
     
     def _style_checkbox(self, checkbox: QCheckBox):
         """Aplica estilo ao CheckBox."""
-        checkbox.setStyleSheet("""
+        checkbox.setStyleSheet(themed_qss("""
             QCheckBox {
-                color: #e6edf6;
+                color: {{FG_PRIMARY}};
                 spacing: 8px;
             }
             QCheckBox::indicator {
@@ -495,19 +496,19 @@ class FilterPanel(QWidget):
                 height: 16px;
             }
             QCheckBox::indicator:unchecked {
-                border: 1px solid #555;
+                border: 1px solid {{BORDER}};
                 border-radius: 3px;
-                background-color: #1a2740;
+                background-color: {{BG_SECONDARY}};
             }
             QCheckBox::indicator:checked {
-                border: 1px solid #3e9cf7;
+                border: 1px solid {{ACCENT}};
                 border-radius: 3px;
-                background-color: #3e9cf7;
+                background-color: {{ACCENT}};
             }
             QCheckBox::indicator:unchecked:hover {
-                border-color: #777;
+                border-color: {{BORDER_FOCUS}};
             }
-        """)
+        """))
     
     def _connect_signals(self):
         """Conecta sinais dos widgets."""

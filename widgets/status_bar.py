@@ -7,12 +7,14 @@ Barra de status avançada com indicadores de progresso e status.
 from typing import Optional
 from PySide6.QtWidgets import (
     QStatusBar, QLabel, QProgressBar, QWidget,
-    QHBoxLayout, QFrame, QPushButton, QSizePolicy
+    QHBoxLayout, QFrame, QPushButton, QSizePolicy, QMessageBox
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QFont
 
 from utils.constants import Icons
+from utils.config import AppConfig
+from app.styles import themed_qss
 
 
 class StatusIndicator(QLabel):
@@ -191,9 +193,13 @@ class AppStatusBar(QStatusBar):
     
     def _setup_ui(self):
         """Configura a interface."""
-        self.setStyleSheet("""
+        # Fundo azul de destaque fixo nos dois temas (barra de status como
+        # âncora de marca) — só o tom de acento muda por tema; os textos
+        # em branco/rgba(255,255,255,x) abaixo são calibrados para esse
+        # fundo e continuam legíveis nas duas variantes do acento.
+        self.setStyleSheet(themed_qss("""
             QStatusBar {
-                background-color: #3e9cf7;
+                background-color: {{ACCENT}};
                 color: white;
                 border: none;
                 min-height: 28px;
@@ -205,7 +211,7 @@ class AppStatusBar(QStatusBar):
                 color: white;
                 padding: 0 4px;
             }
-        """)
+        """))
         
         # Mensagem principal (lado esquerdo)
         self._message_label = QLabel("Pronto")
@@ -253,13 +259,66 @@ class AppStatusBar(QStatusBar):
         self.addPermanentWidget(self._license_label)
 
         self._add_separator(permanent=True)
-        
-        # Versão
-        from utils.constants import APP_INFO
-        version_label = QLabel(f"v{APP_INFO.VERSION}")
-        version_label.setStyleSheet("color: rgba(255,255,255,0.6); font-size: 9pt;")
-        self.addPermanentWidget(version_label)
-    
+
+        # Alternar tema claro/escuro
+        self._theme_btn = QPushButton()
+        self._theme_btn.setCheckable(True)
+        self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._theme_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255,255,255,0.15);
+                color: white;
+                border: none;
+                border-radius: 10px;
+                padding: 2px 10px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: rgba(255,255,255,0.25);
+            }
+            QPushButton:checked {
+                background-color: rgba(255,255,255,0.32);
+            }
+        """)
+        self._theme_btn.setChecked(AppConfig.get_theme() == "light")
+        self._update_theme_button_text()
+        self._theme_btn.clicked.connect(self._on_theme_toggle)
+        self.addPermanentWidget(self._theme_btn)
+
+    def _update_theme_button_text(self):
+        """Atualiza o rótulo do botão de tema conforme a preferência salva."""
+        if AppConfig.get_theme() == "light":
+            self._theme_btn.setText("☀️ Claro")
+        else:
+            self._theme_btn.setText("🌙 Escuro")
+
+    def _on_theme_toggle(self):
+        """Alterna a preferência de tema e avisa que precisa reiniciar o app."""
+        novo_tema = "light" if AppConfig.get_theme() == "dark" else "dark"
+        AppConfig.set_theme(novo_tema)
+        self._theme_btn.setChecked(novo_tema == "light")
+        self._update_theme_button_text()
+
+        caixa = QMessageBox(self)
+        caixa.setIcon(QMessageBox.Icon.Information)
+        caixa.setWindowTitle("Tema alterado")
+        caixa.setText("O novo tema será aplicado a partir da próxima abertura do LogScan Manager.")
+        # Estilo explícito na instância: reforça o texto legível independente
+        # de qualquer estilização nativa do Windows para QMessageBox.
+        caixa.setStyleSheet(themed_qss("""
+            QMessageBox { background-color: {{BG_PRIMARY}}; }
+            QMessageBox QLabel, QMessageBox QLabel#qt_msgbox_label {
+                color: {{FG_PRIMARY}};
+                background-color: transparent;
+            }
+            QPushButton {
+                background-color: {{ACCENT}}; color: white;
+                border: none; border-radius: 6px; padding: 6px 18px;
+            }
+            QPushButton:hover { background-color: {{ACCENT_HOVER}}; }
+        """))
+        caixa.exec()
+
     def _add_separator(self, permanent: bool = False):
         """Adiciona separador vertical."""
         sep = QFrame()

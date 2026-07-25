@@ -28,6 +28,7 @@ from PySide6.QtGui import QFont, QIcon
 from app.styles import DarkTheme, apply_theme
 from utils.logger import get_logger, setup_logging
 from utils.error_handler import setup_exception_handler
+from utils.config import AppConfig
 from authentication import DBConfig, set_db_config
 from utils.constants import APP_INFO
 
@@ -92,8 +93,8 @@ class CSCollectManagerApp:
         if os.path.exists(icon_path):
             self.app.setWindowIcon(QIcon(icon_path))
         
-        # Aplica tema escuro
-        apply_theme(self.app, "dark")
+        # Aplica o tema salvo (padrão: escuro)
+        apply_theme(self.app, AppConfig.get_theme())
         
         logger.debug("Aplicação Qt configurada")
     

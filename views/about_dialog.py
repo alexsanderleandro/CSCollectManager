@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QPixmap, QIcon
 
 from utils.constants import APP_INFO, Icons
+from app.styles import themed_qss
 
 # Caminho do logotipo
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
@@ -77,7 +78,7 @@ class AboutDialog(QDialog):
         name_font.setPointSize(18)
         name_font.setBold(True)
         name_label.setFont(name_font)
-        name_label.setStyleSheet("color: #0078d4;")
+        name_label.setStyleSheet(themed_qss("color: {{ACCENT}};"))
         layout.addWidget(name_label)
         
         # Versão
@@ -86,62 +87,62 @@ class AboutDialog(QDialog):
         version_font = QFont()
         version_font.setPointSize(11)
         version_label.setFont(version_font)
-        version_label.setStyleSheet("color: #9d9d9d;")
+        version_label.setStyleSheet(themed_qss("color: {{FG_SECONDARY}};"))
         layout.addWidget(version_label)
         
         # Build
         build_label = QLabel(f"Build {APP_INFO.BUILD}")
         build_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        build_label.setStyleSheet("color: #666666; font-size: 9pt;")
+        build_label.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 9pt;"))
         layout.addWidget(build_label)
         
         # Separador
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #3e3e42;")
+        separator.setStyleSheet(themed_qss("background-color: {{BORDER}};"))
         layout.addWidget(separator)
         
         # Descrição
         desc_label = QLabel(APP_INFO.DESCRIPTION)
         desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet("color: #cccccc; padding: 10px;")
+        desc_label.setStyleSheet(themed_qss("color: {{FG_PRIMARY}}; padding: 10px;"))
         layout.addWidget(desc_label)
-        
+
         # Informações do desenvolvedor
         info_frame = QFrame()
-        info_frame.setStyleSheet("""
+        info_frame.setStyleSheet(themed_qss("""
             QFrame {
-                background-color: #252526;
+                background-color: {{BG_TERTIARY}};
                 border-radius: 8px;
                 padding: 10px;
             }
-        """)
+        """))
         info_layout = QVBoxLayout(info_frame)
         info_layout.setSpacing(8)
-        
+
         # Autor
         author_label = QLabel(f"👤 Desenvolvido por: {APP_INFO.AUTHOR}")
-        author_label.setStyleSheet("color: #cccccc;")
+        author_label.setStyleSheet(themed_qss("color: {{FG_PRIMARY}};"))
         info_layout.addWidget(author_label)
-        
+
         # Email
         email_label = QLabel(f"📧 {APP_INFO.EMAIL}")
-        email_label.setStyleSheet("color: #9d9d9d;")
+        email_label.setStyleSheet(themed_qss("color: {{FG_SECONDARY}};"))
         info_layout.addWidget(email_label)
-        
+
         # Website
         website_label = QLabel(f"🌐 {APP_INFO.WEBSITE}")
-        website_label.setStyleSheet("color: #0078d4;")
+        website_label.setStyleSheet(themed_qss("color: {{ACCENT}};"))
         website_label.setCursor(Qt.CursorShape.PointingHandCursor)
         info_layout.addWidget(website_label)
-        
+
         layout.addWidget(info_frame)
-        
+
         # Copyright
         copyright_label = QLabel(APP_INFO.COPYRIGHT)
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        copyright_label.setStyleSheet("color: #666666; font-size: 9pt;")
+        copyright_label.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 9pt;"))
         layout.addWidget(copyright_label)
         
         layout.addStretch()
@@ -244,12 +245,12 @@ class SystemInfoDialog(QDialog):
             row = QHBoxLayout()
             
             lbl = QLabel(f"{label}:")
-            lbl.setStyleSheet("color: #9d9d9d; font-weight: bold;")
+            lbl.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-weight: bold;"))
             lbl.setMinimumWidth(150)
             row.addWidget(lbl)
-            
+
             val = QLabel(str(value))
-            val.setStyleSheet("color: #cccccc;")
+            val.setStyleSheet(themed_qss("color: {{FG_PRIMARY}};"))
             val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             row.addWidget(val)
             

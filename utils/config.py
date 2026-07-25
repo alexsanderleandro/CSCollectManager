@@ -190,6 +190,19 @@ class AppConfig:
         settings["last_contagens_dir"] = path
         cls._save_settings(settings)
 
+    @classmethod
+    def get_theme(cls) -> str:
+        """Retorna o tema salvo ('dark' ou 'light') ou 'dark' como padrão."""
+        settings = cls._load_settings()
+        return settings.get("theme", "dark")
+
+    @classmethod
+    def set_theme(cls, theme: str) -> None:
+        """Salva a preferência de tema escolhida pelo usuário."""
+        settings = cls._load_settings()
+        settings["theme"] = theme
+        cls._save_settings(settings)
+
     # ---------------------------
     # Configurações da API CSCollect (lidas do arquivo licenca.key)
     # ---------------------------

@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, QThread, Signal, QItemSelectionModel, QItemSelect
 from PySide6.QtGui import QFont
 
 from services.product_service import ProductService
+from app.styles import themed_qss
 
 
 class ProductSearchWorker(QThread):
@@ -96,33 +97,33 @@ class ProductSearchDialog(QDialog):
         search_layout.setSpacing(8)
         
         search_label = QLabel("Buscar:")
-        search_label.setStyleSheet("color: #cccccc; font-weight: bold;")
+        search_label.setStyleSheet(themed_qss("color: {{FG_PRIMARY}}; font-weight: bold;"))
         search_layout.addWidget(search_label)
-        
+
         self.txt_search = QLineEdit()
         self.txt_search.setText(self.search_text)
         self.txt_search.setPlaceholderText("Digite para refinar resultados...")
         self.txt_search.setMinimumHeight(35)
-        self.txt_search.setStyleSheet("""
+        self.txt_search.setStyleSheet(themed_qss("""
             QLineEdit {
-                background-color: #252526;
-                color: #cccccc;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}};
                 border-radius: 5px;
                 padding: 5px;
                 font-size: 12px;
             }
             QLineEdit:focus {
-                border-color: #0078d4;
+                border-color: {{ACCENT}};
             }
-        """)
+        """))
         search_layout.addWidget(self.txt_search)
-        
+
         layout.addLayout(search_layout)
-        
+
         # Info de resultados
         self.lbl_info = QLabel("Carregando...")
-        self.lbl_info.setStyleSheet("color: #888; font-size: 11px;")
+        self.lbl_info.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 11px;"))
         layout.addWidget(self.lbl_info)
         
         # Tabela de resultados
@@ -135,42 +136,42 @@ class ProductSearchDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.setStyleSheet("""
+        self.table.setStyleSheet(themed_qss("""
             QTableWidget {
-                background-color: #252526;
-                color: #cccccc;
-                gridline-color: #3e3e42;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
+                gridline-color: {{BORDER}};
+                border: 1px solid {{BORDER}};
             }
             QTableWidget::item {
                 padding: 5px;
-                color: #cccccc;
-                background-color: #252526;
+                color: {{FG_PRIMARY}};
+                background-color: {{BG_TERTIARY}};
             }
             QTableWidget::item:selected {
-                background-color: #0078d4;
+                background-color: {{ACCENT}};
                 color: #ffffff;
             }
             QTableWidget::item:selected:active {
-                background-color: #0078d4;
+                background-color: {{ACCENT}};
                 color: #ffffff;
             }
             QTableWidget::item:selected:!active {
-                background-color: #005a9e;
+                background-color: {{ACCENT_PRESSED}};
                 color: #ffffff;
             }
             QTableWidget::item:hover {
-                background-color: #2d2d30;
-                color: #cccccc;
+                background-color: {{BG_HOVER}};
+                color: {{FG_PRIMARY}};
             }
             QHeaderView::section {
-                background-color: #2d2d30;
-                color: #cccccc;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
                 padding: 5px;
                 border: none;
                 font-weight: bold;
             }
-        """)
+        """))
         
         # Ajusta colunas
         header = self.table.horizontalHeader()
@@ -185,22 +186,22 @@ class ProductSearchDialog(QDialog):
         # Barra de progresso
         self.progress = QProgressBar()
         self.progress.setVisible(False)
-        self.progress.setStyleSheet("""
+        self.progress.setStyleSheet(themed_qss("""
             QProgressBar {
-                background-color: #252526;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                border: 1px solid {{BORDER}};
                 border-radius: 5px;
             }
             QProgressBar::chunk {
-                background-color: #0078d4;
+                background-color: {{ACCENT}};
             }
-        """)
+        """))
         layout.addWidget(self.progress)
-        
+
         # Separador
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background-color: #3e3e42;")
+        sep.setStyleSheet(themed_qss("background-color: {{BORDER}};"))
         layout.addWidget(sep)
         
         # Botões de ação (Todos, Limpar)
@@ -210,38 +211,38 @@ class ProductSearchDialog(QDialog):
         btn_all = QPushButton("Todos")
         btn_all.setMinimumHeight(32)
         btn_all.setMaximumWidth(80)
-        btn_all.setStyleSheet("""
+        btn_all.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: {{BORDER}};
+                color: {{FG_PRIMARY}};
                 border: none;
                 border-radius: 5px;
                 padding: 5px 10px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {{BG_HOVER}};
             }
-        """)
+        """))
         btn_all.clicked.connect(self._select_all)
         action_layout.addWidget(btn_all)
         
         btn_clear = QPushButton("Limpar")
         btn_clear.setMinimumHeight(32)
         btn_clear.setMaximumWidth(80)
-        btn_clear.setStyleSheet("""
+        btn_clear.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: {{BORDER}};
+                color: {{FG_PRIMARY}};
                 border: none;
                 border-radius: 5px;
                 padding: 5px 10px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {{BG_HOVER}};
             }
-        """)
+        """))
         btn_clear.clicked.connect(self._clear_selection)
         action_layout.addWidget(btn_clear)
         
@@ -253,7 +254,7 @@ class ProductSearchDialog(QDialog):
         btn_layout.setSpacing(10)
         
         lbl_count = QLabel("Nenhum produto selecionado")
-        lbl_count.setStyleSheet("color: #888; font-size: 11px;")
+        lbl_count.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 11px;"))
         self.lbl_count = lbl_count
         btn_layout.addWidget(lbl_count)
         
@@ -262,9 +263,9 @@ class ProductSearchDialog(QDialog):
         btn_select = QPushButton("Selecionar")
         btn_select.setMinimumHeight(35)
         btn_select.setMinimumWidth(120)
-        btn_select.setStyleSheet("""
+        btn_select.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #0078d4;
+                background-color: {{ACCENT}};
                 color: white;
                 font-weight: bold;
                 border: none;
@@ -272,30 +273,30 @@ class ProductSearchDialog(QDialog):
                 padding: 5px 15px;
             }
             QPushButton:hover {
-                background-color: #106ebe;
+                background-color: {{ACCENT_HOVER}};
             }
             QPushButton:pressed {
-                background-color: #005a9e;
+                background-color: {{ACCENT_PRESSED}};
             }
-        """)
+        """))
         btn_select.clicked.connect(self._on_select)
         btn_layout.addWidget(btn_select)
         
         btn_cancel = QPushButton("Cancelar")
         btn_cancel.setMinimumHeight(35)
         btn_cancel.setMinimumWidth(120)
-        btn_cancel.setStyleSheet("""
+        btn_cancel.setStyleSheet(themed_qss("""
             QPushButton {
-                background-color: #3e3e42;
-                color: #cccccc;
+                background-color: {{BORDER}};
+                color: {{FG_PRIMARY}};
                 border: none;
                 border-radius: 5px;
                 padding: 5px 15px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {{BG_HOVER}};
             }
-        """)
+        """))
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
         
@@ -309,15 +310,15 @@ class ProductSearchDialog(QDialog):
         self.table.verticalScrollBar().valueChanged.connect(self._on_scroll)
     
     def _apply_theme(self):
-        """Aplica tema escuro."""
-        self.setStyleSheet("""
+        """Aplica o tema ativo (claro/escuro)."""
+        self.setStyleSheet(themed_qss("""
             QDialog {
-                background-color: #1e1e1e;
+                background-color: {{BG_PRIMARY}};
             }
             QLabel {
-                color: #cccccc;
+                color: {{FG_PRIMARY}};
             }
-        """)
+        """))
     
     def _perform_search(self):
         """Executa a busca de produtos (primeira página)."""

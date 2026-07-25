@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
 
+from app.styles import themed_qss
+
 
 class DataTableWidget(QTableWidget):
     """
@@ -45,30 +47,30 @@ class DataTableWidget(QTableWidget):
         self.setSortingEnabled(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         
-        self.setStyleSheet("""
+        self.setStyleSheet(themed_qss("""
             QTableWidget {
-                background-color: #252526;
-                color: #cccccc;
-                gridline-color: #3e3e42;
-                border: 1px solid #3e3e42;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
+                gridline-color: {{BORDER}};
+                border: 1px solid {{BORDER}};
                 border-radius: 5px;
             }
             QTableWidget::item:selected {
-                background-color: #0078d4;
+                background-color: {{ACCENT}};
             }
             QTableWidget::item:hover {
-                background-color: #3e3e42;
+                background-color: {{BG_HOVER}};
             }
             QHeaderView::section {
-                background-color: #2d2d30;
-                color: #cccccc;
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_PRIMARY}};
                 padding: 8px;
                 border: none;
-                border-right: 1px solid #3e3e42;
-                border-bottom: 1px solid #3e3e42;
+                border-right: 1px solid {{BORDER}};
+                border-bottom: 1px solid {{BORDER}};
                 font-weight: bold;
             }
-        """)
+        """))
     
     def _connect_signals(self):
         """Conecta sinais."""

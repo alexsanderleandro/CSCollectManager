@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 
 from utils.constants import APP_INFO
+from app.styles import themed_qss
 
 # Caminho do ícone da janela (mesmo padrão de about_dialog.py)
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "icon.ico")
@@ -77,29 +78,29 @@ class HelpDialog(QDialog):
         header.addWidget(icon_label)
 
         title_label = QLabel(f"Ajuda — {APP_INFO.NAME}")
-        title_label.setStyleSheet("font-size: 15pt; font-weight: bold; color: #e6edf6;")
+        title_label.setStyleSheet(themed_qss("font-size: 15pt; font-weight: bold; color: {{FG_PRIMARY}};"))
         header.addWidget(title_label)
         header.addStretch()
         layout.addLayout(header)
 
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #2a3a57;")
+        separator.setStyleSheet(themed_qss("background-color: {{BORDER}};"))
         layout.addWidget(separator)
 
         # Conteúdo (markdown renderizado)
         self._browser = QTextBrowser()
         self._browser.setOpenExternalLinks(True)
-        self._browser.setStyleSheet("""
+        self._browser.setStyleSheet(themed_qss("""
             QTextBrowser {
-                background-color: #1a2740;
-                color: #e6edf6;
-                border: 1px solid #2a3a57;
+                background-color: {{BG_SECONDARY}};
+                color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}};
                 border-radius: 8px;
                 padding: 12px;
                 font-size: 11pt;
             }
-        """)
+        """))
         self._browser.setMarkdown(self._load_content())
         layout.addWidget(self._browser, 1)
 

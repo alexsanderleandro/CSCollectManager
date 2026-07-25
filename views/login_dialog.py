@@ -28,6 +28,7 @@ from PySide6.QtGui import QFont, QPixmap, QIcon, QCursor
 from utils.constants import APP_INFO
 from utils.logger import get_logger
 from utils.config import AppConfig
+from app.styles import get_active_theme
 from pathlib import Path
 import re
 import cscollectmanager_verify
@@ -66,26 +67,60 @@ LOGO_PNG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets
 
 
 # ==========================================================================
-# Paleta de cores — harmonizada com o splash (app/splash.py)
+# Paleta de cores — harmonizada com o splash (app/splash.py) no escuro;
+# adaptada ao tema ativo (app/styles.py) para o claro.
 # ==========================================================================
-class _C:
-    """Tokens de cor da tela de login, derivados do gradiente do splash."""
+_active_theme = get_active_theme()
+_is_light_theme = _active_theme.__name__ == "LightTheme"
 
-    BG_DIALOG = "#0f1826"       # fundo (azul-marinho profundo, casa com #0e42b0)
-    BG_PANEL = "#16223c"        # caixas de info
-    BG_INPUT = "#1a2740"        # campos
-    BG_INPUT_HOVER = "#20304e"
-    BORDER = "#2a3a57"
-    BORDER_HOVER = "#35507e"
-    ACCENT = "#3e9cf7"          # azul claro (foco/realces)
-    ACCENT_DEEP = "#1d6bb0"
-    ACCENT_DARK = "#0e42b0"
-    TEXT = "#e6edf6"
-    TEXT_MUTED = "#9db3d1"
-    TEXT_FAINT = "#6b7f9e"
-    SELECTION = "#1d6bb0"
-    BTN_DISABLED_BG = "#24314a"
-    BTN_DISABLED_FG = "#5a6b86"
+
+class _C:
+    """Tokens de cor da tela de login, adaptados ao tema ativo."""
+
+    # Cores semânticas de status (aviso/erro/sucesso) — reaproveitam
+    # diretamente os tokens do tema ativo em app/styles.py.
+    WARNING = _active_theme.WARNING
+    ERROR = _active_theme.ERROR
+    SUCCESS = _active_theme.SUCCESS
+
+    if _is_light_theme:
+        BG_DIALOG = "#f3f5f9"       # fundo (canvas claro)
+        BG_PANEL = "#e8ecf3"        # caixas de info
+        BG_INPUT = "#ffffff"        # campos
+        BG_INPUT_HOVER = "#eef2f8"
+        BORDER = "#d7deea"
+        BORDER_HOVER = "#b8c6dc"
+        ACCENT = "#2f7dd8"          # azul de marca (aprofundado p/ contraste no branco)
+        ACCENT_DEEP = "#1d6bb0"
+        ACCENT_DARK = "#123f73"
+        TEXT = "#1b2433"
+        TEXT_MUTED = "#55617a"
+        TEXT_FAINT = "#a3adc0"
+        SELECTION = "#1d6bb0"        # mantém combinação azul-escuro + texto branco
+        BTN_DISABLED_BG = "#e2e7f0"
+        BTN_DISABLED_FG = "#a3adc0"
+        HOVER_LIGHT = "#3e9cf7"      # gradiente de hover do botão primário
+        HOVER_DEEP = "#1d6bb0"
+        ALT_ROW = "#eef2f8"          # linha alternada de tabela
+    else:
+        BG_DIALOG = "#0f1826"       # fundo (azul-marinho profundo, casa com #0e42b0)
+        BG_PANEL = "#16223c"        # caixas de info
+        BG_INPUT = "#1a2740"        # campos
+        BG_INPUT_HOVER = "#20304e"
+        BORDER = "#2a3a57"
+        BORDER_HOVER = "#35507e"
+        ACCENT = "#3e9cf7"          # azul claro (foco/realces)
+        ACCENT_DEEP = "#1d6bb0"
+        ACCENT_DARK = "#0e42b0"
+        TEXT = "#e6edf6"
+        TEXT_MUTED = "#9db3d1"
+        TEXT_FAINT = "#6b7f9e"
+        SELECTION = "#1d6bb0"
+        BTN_DISABLED_BG = "#24314a"
+        BTN_DISABLED_FG = "#5a6b86"
+        HOVER_LIGHT = "#5aa9f9"      # gradiente de hover do botão primário
+        HOVER_DEEP = "#2a7cc4"
+        ALT_ROW = "#131f36"          # linha alternada de tabela
 
 
 def _primary_button_qss() -> str:
@@ -103,7 +138,7 @@ def _primary_button_qss() -> str:
         }}
         QPushButton:hover {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #5aa9f9, stop:1 #2a7cc4);
+                stop:0 {_C.HOVER_LIGHT}, stop:1 {_C.HOVER_DEEP});
         }}
         QPushButton:pressed {{
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -458,7 +493,7 @@ class LoginDialog(QDialog):
             }}
             QTableWidget {{
                 background-color: {_C.BG_DIALOG};
-                alternate-background-color: #131f36;
+                alternate-background-color: {_C.ALT_ROW};
                 border: 1px solid {_C.BORDER};
                 border-radius: 8px;
                 gridline-color: {_C.BORDER};
@@ -620,7 +655,7 @@ class LoginDialog(QDialog):
         
         # Info do arquivo XML
         xml_info = QLabel(f"📄 Arquivo: {CSLOGIN_PATH}")
-        xml_info.setStyleSheet("color: #666666; font-size: 9pt;")
+        xml_info.setStyleSheet(f"color: {_C.TEXT_FAINT}; font-size: 9pt;")
         group_layout.addWidget(xml_info)
 
         # Combo de conexões
@@ -647,14 +682,14 @@ class LoginDialog(QDialog):
 
         # Label para exibir o caption da licença. O caminho completo aparecerá em tooltip ao passar o mouse.
         self._lbl_license_file = QLabel("Licença")
-        self._lbl_license_file.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+        self._lbl_license_file.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
         self._lbl_license_file.setToolTip("")
         self._lbl_license_file.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         group_layout.addWidget(self._lbl_license_file)
 
         # Label para exibir a data de validade da licença
         self._lbl_license_expiry = QLabel("")
-        self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+        self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
         self._lbl_license_expiry.hide()
         group_layout.addWidget(self._lbl_license_expiry)
         
@@ -837,7 +872,7 @@ class LoginDialog(QDialog):
             if not os.path.exists(CSLOGIN_PATH):
                 logger.warning(f"Arquivo não encontrado: {CSLOGIN_PATH}")
                 self._lbl_connection_status.setText(f"⚠️ Arquivo não encontrado: {CSLOGIN_PATH}")
-                self._lbl_connection_status.setStyleSheet("color: #ff9800; font-size: 9pt;")
+                self._lbl_connection_status.setStyleSheet(f"color: {_C.WARNING}; font-size: 9pt;")
                 return
             
             # Lê XML
@@ -891,7 +926,7 @@ class LoginDialog(QDialog):
             
             if not self._connections:
                 self._lbl_connection_status.setText("⚠️ Nenhuma conexão encontrada no arquivo XML")
-                self._lbl_connection_status.setStyleSheet("color: #ff9800; font-size: 9pt;")
+                self._lbl_connection_status.setStyleSheet(f"color: {_C.WARNING}; font-size: 9pt;")
             elif default_index > 0:
                 # Seleciona última conexão usada
                 self._cmb_connection.setCurrentIndex(default_index)
@@ -996,10 +1031,10 @@ class LoginDialog(QDialog):
                                 _expirada = _dt < date.today()
                             if _expirada:
                                 self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
-                                self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
                             else:
                                 self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
-                                self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
                             self._lbl_license_expiry.show()
                         else:
                             self._lbl_license_expiry.hide()
@@ -1025,13 +1060,13 @@ class LoginDialog(QDialog):
                         if val_dt.tzinfo is None:
                             val_dt = val_dt.replace(tzinfo=timezone.utc)
                         if val_dt < datetime.now(timezone.utc):
-                            self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
                             QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
                             return False
                     else:
                         from datetime import date
                         if date.fromisoformat(validade) < date.today():
-                            self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
                             QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
                             return False
             except Exception:
@@ -1088,7 +1123,7 @@ class LoginDialog(QDialog):
             logger.error(f"Erro ao validar arquivo .key: {e}")
             QMessageBox.critical(self, "Erro de licença", "Erro ao validar arquivo .key. O sistema não pode prosseguir.")
             return False
-            self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
+            self._lbl_connection_status.setStyleSheet(f"color: {_C.ERROR}; font-size: 9pt;")
     
     def _load_license_on_start(self) -> bool:
         """Carrega e verifica um arquivo .key imediatamente após abrir a tela de login.
@@ -1176,10 +1211,10 @@ class LoginDialog(QDialog):
                                 _expirada = _dt < date.today()
                             if _expirada:
                                 self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
-                                self._lbl_license_expiry.setStyleSheet("color: #f44336; font-size: 8pt;")
+                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
                             else:
                                 self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
-                                self._lbl_license_expiry.setStyleSheet("color: #9d9d9d; font-size: 8pt;")
+                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
                             self._lbl_license_expiry.show()
                         else:
                             self._lbl_license_expiry.hide()
@@ -1280,7 +1315,7 @@ class LoginDialog(QDialog):
         self._btn_connect.setEnabled(False)
         self._cmb_connection.setEnabled(False)
         self._lbl_connection_status.setText("⏳ Conectando ao banco de dados...")
-        self._lbl_connection_status.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+        self._lbl_connection_status.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 9pt;")
         
         # Inicia worker
         self._worker = ConnectionWorker(connection)
@@ -1296,7 +1331,7 @@ class LoginDialog(QDialog):
         
         if success:
             self._lbl_connection_status.setText(f"✅ {message}")
-            self._lbl_connection_status.setStyleSheet("color: #4caf50; font-size: 9pt;")
+            self._lbl_connection_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")
             
             self._empresas = empresas
             # Ao conectar com sucesso, validaremos o arquivo .key contra a conexão
@@ -1319,7 +1354,7 @@ class LoginDialog(QDialog):
                 )
         else:
             self._lbl_connection_status.setText("❌ Falha ao conectar. Verifique os dados da conexão.")
-            self._lbl_connection_status.setStyleSheet("color: #f44336; font-size: 9pt;")
+            self._lbl_connection_status.setStyleSheet(f"color: {_C.ERROR}; font-size: 9pt;")
             QMessageBox.warning(
                 self,
                 "Erro de Conexão",
@@ -1465,7 +1500,7 @@ class LoginDialog(QDialog):
         self._txt_username.setEnabled(False)
         self._txt_password.setEnabled(False)
         self._lbl_auth_status.setText("⏳ Autenticando...")
-        self._lbl_auth_status.setStyleSheet("color: #9d9d9d; font-size: 9pt;")
+        self._lbl_auth_status.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 9pt;")
         
         # Cria configuração do banco
         conn = self._selected_connection
@@ -1491,7 +1526,7 @@ class LoginDialog(QDialog):
         
         if success:
             self._lbl_auth_status.setText(f"✅ {message}")
-            self._lbl_auth_status.setStyleSheet("color: #4caf50; font-size: 9pt;")
+            self._lbl_auth_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")
             
             # Salva último login
             conn = self._selected_connection
@@ -1511,7 +1546,7 @@ class LoginDialog(QDialog):
         else:
             # Atualiza label de status e exibe caixa de diálogo explícita
             self._lbl_auth_status.setText(f"❌ {message}")
-            self._lbl_auth_status.setStyleSheet("color: #f44336; font-size: 9pt;")
+            self._lbl_auth_status.setStyleSheet(f"color: {_C.ERROR}; font-size: 9pt;")
             self._txt_password.clear()
             self._txt_password.setFocus()
 
