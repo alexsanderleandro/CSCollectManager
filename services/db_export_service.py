@@ -187,8 +187,11 @@ class DbExportService:
 
                 # --- empresa (registro E) ---
                 cur.execute(
-                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local, cnpj) VALUES (?, ?, ?, ?, ?)",
-                    ("E", str(empresa.codempresa), empresa.nomeempresa, empresa.local, getattr(empresa, 'cnpj', '') or ''),
+                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local, cnpj, gap_ocioso_min) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        "E", str(empresa.codempresa), empresa.nomeempresa, empresa.local,
+                        getattr(empresa, 'cnpj', '') or '', int(getattr(empresa, 'gap_ocioso_min', 10) or 10),
+                    ),
                 )
 
                 # --- vendedor (registro V) ---
@@ -302,6 +305,8 @@ class DbExportService:
                         photos_dest = photos_output_dir or os.path.join(output_path, 'Fotos')
                         # produtos é a lista de dicts originais; extrai codproduto
                         cods = [str(p.get('codproduto')) for p in produtos if p.get('codproduto')]
+                        if progress_callback:
+                            progress_callback(96, "Extraindo fotos dos produtos...")
                         saved = exportar_imagens_para_pasta(cods, photos_dest)
                         # Se houver fotos salvas, adiciona pasta compactada separadamente
                         if saved:
@@ -370,11 +375,12 @@ class DbExportService:
             );
 
             CREATE TABLE IF NOT EXISTS empresa (
-                tipo        TEXT    NOT NULL,
-                codempresa  TEXT    NOT NULL,
-                nomeempresa TEXT    NOT NULL,
-                local       TEXT    NOT NULL,
-                cnpj        TEXT    NOT NULL DEFAULT ''
+                tipo            TEXT    NOT NULL,
+                codempresa      TEXT    NOT NULL,
+                nomeempresa     TEXT    NOT NULL,
+                local           TEXT    NOT NULL,
+                cnpj            TEXT    NOT NULL DEFAULT '',
+                gap_ocioso_min  INTEGER NOT NULL DEFAULT 10
             );
 
             CREATE TABLE IF NOT EXISTS vendedor (

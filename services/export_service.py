@@ -25,6 +25,9 @@ class EmpresaInfo:
     nomeempresa: str
     local: str = ""
     cnpj: str = ""
+    # Gap ocioso (minutos) parametrizado por cliente — usado pelo CSCollect
+    # para separar sessões de contagem nas métricas de produtividade.
+    gap_ocioso_min: int = 10
 
 
 @dataclass

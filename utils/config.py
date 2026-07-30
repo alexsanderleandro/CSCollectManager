@@ -203,6 +203,28 @@ class AppConfig:
         settings["theme"] = theme
         cls._save_settings(settings)
 
+    @classmethod
+    def get_default_gap_ocioso_min(cls) -> int:
+        """Retorna o gap ocioso padrão (minutos) usado ao gerar novas cargas —
+        parametriza, do lado do celular, quando um intervalo sem contagem vira
+        uma pausa/sessão nas métricas de produtividade. 10 é o padrão inicial."""
+        settings = cls._load_settings()
+        try:
+            return int(settings.get("default_gap_ocioso_min", 10))
+        except Exception:
+            return 10
+
+    @classmethod
+    def set_default_gap_ocioso_min(cls, minutos: int) -> None:
+        """Salva o gap ocioso padrão — chamado a cada exportação de carga com
+        o valor efetivamente usado, para que a próxima carga já venha com ele."""
+        settings = cls._load_settings()
+        try:
+            settings["default_gap_ocioso_min"] = int(minutos)
+        except Exception:
+            settings["default_gap_ocioso_min"] = 10
+        cls._save_settings(settings)
+
     # ---------------------------
     # Configurações da API CSCollect (lidas do arquivo licenca.key)
     # ---------------------------

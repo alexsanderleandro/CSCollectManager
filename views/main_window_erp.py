@@ -256,6 +256,7 @@ class MainWindowERP(QMainWindow):
     MODULE_EXPORT = "export"
     MODULE_HISTORY = "history"
     MODULE_DOWNLOAD_CONTAGENS = "download_contagens"
+    MODULE_METRICS = "metrics"
     MODULE_SETTINGS = "settings"
     
     def __init__(self, parent=None):
@@ -359,7 +360,8 @@ class MainWindowERP(QMainWindow):
         self._create_export_page()
         self._create_history_page()
         self._create_download_contagens_page()
-        
+        self._create_metrics_page()
+
         content_layout.addWidget(self._module_stack)
         
         main_layout.addWidget(content_area, 1)
@@ -405,6 +407,7 @@ class MainWindowERP(QMainWindow):
             (self.MODULE_EXPORT,              "📤", "Exportar Carga     F2"),
             (self.MODULE_HISTORY,             "📋", "Histórico           F3"),
             (self.MODULE_DOWNLOAD_CONTAGENS,  "📥", "Download Contagens F4"),
+            (self.MODULE_METRICS,             "📊", "Métricas            F7"),
         ]
         
         for module_id, icon, text in modules:
@@ -549,7 +552,7 @@ class MainWindowERP(QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
 
-        from PySide6.QtWidgets import QCheckBox, QLineEdit, QComboBox
+        from PySide6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QSpinBox
 
         # Área rolável: em telas menores (notebook, sessão remota com
         # resolução reduzida) os grupos de campos podem não caber na altura
@@ -652,6 +655,48 @@ class MainWindowERP(QMainWindow):
         dir_layout.addWidget(btn_browse)
 
         fields_layout.addWidget(dir_group)
+
+        # ===== GRUPO: MÉTRICAS DE PRODUTIVIDADE =====
+        metrics_group = QGroupBox("📊 Métricas de produtividade")
+        metrics_group.setStyleSheet(themed_qss("""
+            QGroupBox {
+                color: {{FG_PRIMARY}};
+                font-weight: bold;
+                border: 2px solid {{ACCENT}};
+                border-radius: 8px;
+                margin-top: 16px;
+                padding: 20px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+            }
+        """))
+        metrics_layout = QHBoxLayout(metrics_group)
+        metrics_layout.setSpacing(10)
+
+        gap_label = QLabel("Gap ocioso (minutos):")
+        gap_label.setStyleSheet(themed_qss("QLabel { color: {{FG_PRIMARY}}; font-weight: normal; }"))
+        metrics_layout.addWidget(gap_label)
+
+        self._spn_gap_ocioso = QSpinBox()
+        self._spn_gap_ocioso.setRange(1, 240)
+        try:
+            from utils.config import AppConfig
+            self._spn_gap_ocioso.setValue(AppConfig.get_default_gap_ocioso_min())
+        except Exception:
+            self._spn_gap_ocioso.setValue(10)
+        self._spn_gap_ocioso.setMinimumHeight(36)
+        self._spn_gap_ocioso.setToolTip(
+            "Intervalo sem nenhuma contagem que o celular considera uma pausa "
+            "ao calcular sessões de trabalho nas métricas de produtividade do "
+            "conferente. Fica salvo como padrão para as próximas cargas."
+        )
+        metrics_layout.addWidget(self._spn_gap_ocioso)
+        metrics_layout.addStretch(1)
+
+        fields_layout.addWidget(metrics_group)
 
         # ===== GRUPO: VENDEDOR (obrigatório) =====
         vendedor_group = QGroupBox("👤 Conferente  (obrigatório)")
@@ -1188,6 +1233,7 @@ class MainWindowERP(QMainWindow):
             (Qt.Key.Key_F4,  lambda: self._switch_module(self.MODULE_DOWNLOAD_CONTAGENS)),
             (Qt.Key.Key_F5,  self._on_refresh_shortcut),
             (Qt.Key.Key_F6,  self._on_clear_selection),
+            (Qt.Key.Key_F7,  lambda: self._switch_module(self.MODULE_METRICS)),
             (Qt.Key.Key_F8,  self._on_contagem_download),
             (Qt.Key.Key_F9,  self._on_select_all),
             (Qt.Key.Key_F11, self._on_start_export_shortcut),
@@ -1226,6 +1272,8 @@ class MainWindowERP(QMainWindow):
         # Ao entrar no módulo de download de contagens, recarrega a lista automaticamente
         if module_id == self.MODULE_DOWNLOAD_CONTAGENS:
             self._on_contagens_refresh()
+        elif module_id == self.MODULE_METRICS:
+            self._on_metrics_refresh()
 
         logger.debug(f"Módulo alterado para: {module_id}")
     
@@ -1967,6 +2015,17 @@ class MainWindowERP(QMainWindow):
             except Exception:
                 empresa_cnpj = ""
 
+        gap_ocioso_min = 10
+        try:
+            gap_ocioso_min = int(self._spn_gap_ocioso.value())
+        except Exception:
+            pass
+        try:
+            from utils.config import AppConfig
+            AppConfig.set_default_gap_ocioso_min(gap_ocioso_min)
+        except Exception:
+            pass
+
         empresa = EmpresaInfo(
             codempresa=int(self._empresa_info.get("codigo", 1) or 1),
             nomeempresa=self._empresa_info.get("nome", ""),
@@ -1976,6 +2035,7 @@ class MainWindowERP(QMainWindow):
                 else self._local_estoque  # valor ENDLOCALESTOQUE (modo "T")
             ),
             cnpj=empresa_cnpj,
+            gap_ocioso_min=gap_ocioso_min,
         )
         # Busca nome do vendedor diretamente no banco para garantir consistência
         cod_vendedor = int(self._export_vendedor.get("codigo", 0) or 0)
@@ -2070,12 +2130,24 @@ class MainWindowERP(QMainWindow):
             lambda: self._status_bar.show_message("Exportação cancelada.", 4000)
         )
 
+        # Cria diálogo de progresso centralizado (feedback visual principal)
+        self._export_progress_dialog = ProgressDialog(
+            title="Exportando Carga",
+            message=f"Exportando {len(produtos):,} produto(s)...",
+            parent=self,
+            cancelable=False,
+            auto_close=False
+        )
+        self._export_worker.progress.connect(self._export_progress_dialog.update_progress)
+        self._export_worker.cancelled.connect(self._export_progress_dialog.close)
+
         # 6. Desabilita botão e inicia
         self._btn_start_export.setEnabled(False)
         self._btn_start_export.setText("⏳  Exportando...")
         self._status_bar.show_progress(
             f"Exportando {len(produtos):,} produto(s)...", cancelable=False
         )
+        self._export_progress_dialog.show()
         logger.info(f"Iniciando exportação: {len(produtos)} produtos → {output_dir}")
         self._export_worker.start()
 
@@ -2085,6 +2157,7 @@ class MainWindowERP(QMainWindow):
 
     def _on_export_finished(self, filepath: str):
         """Callback quando exportação termina com sucesso."""
+        self._export_progress_dialog.finish(True, "Exportação concluída!")
         self._btn_start_export.setEnabled(True)
         self._btn_start_export.setText("📤  Iniciar Exportação  [F11]")
         self._status_bar.hide_progress()
@@ -2618,6 +2691,7 @@ class MainWindowERP(QMainWindow):
 
     def _on_export_error(self, error: Exception):
         """Callback de erro na exportação."""
+        self._export_progress_dialog.show_error(error)
         self._btn_start_export.setEnabled(True)
         self._btn_start_export.setText("📤  Iniciar Exportação  [F11]")
         self._status_bar.hide_progress()
@@ -2777,6 +2851,240 @@ class MainWindowERP(QMainWindow):
         # Conecta botões
         btn_refresh.clicked.connect(self._on_contagens_refresh)
         btn_download.clicked.connect(self._on_contagem_download)
+
+    def _create_metrics_page(self):
+        """Cria a página de métricas de produtividade do conferente, lidas dos
+        arquivos `_metricas.enc` já presentes nos zips de contagem baixados."""
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = ModuleHeader(
+            "📊",
+            "Métricas de Produtividade",
+            "Resumo de produtividade do conferente extraído das contagens já baixadas",
+        )
+        btn_refresh = header.add_action_button("Atualizar  [F5]", "🔄")
+        btn_detalhes = header.add_action_button("Ver Detalhes", "🔍", primary=True)
+        layout.addWidget(header)
+
+        content = QWidget()
+        content.setStyleSheet(themed_qss("background-color: {{BG_PRIMARY}};"))
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 16, 24, 16)
+        content_layout.setSpacing(12)
+
+        lbl_info = QLabel(
+            "Lidas a partir dos zips já baixados na pasta de contagens configurada. "
+            "Selecione uma linha e clique em 🔍 Ver Detalhes (ou dê duplo-clique)."
+        )
+        lbl_info.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 10pt; padding: 4px 0;"))
+        content_layout.addWidget(lbl_info)
+
+        self._metrics_table = QTableWidget()
+        self._metrics_table.setColumnCount(8)
+        self._metrics_table.setHorizontalHeaderLabels([
+            "Arquivo", "Vendedor", "Início", "Fim", "Leituras",
+            "Não Encontrados", "Duplicados", "Ajustes Manuais",
+        ])
+        self._metrics_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._metrics_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._metrics_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._metrics_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._metrics_table.setAlternatingRowColors(True)
+        self._metrics_table.verticalHeader().setVisible(False)
+        self._metrics_table.setStyleSheet(themed_qss("""
+            QTableWidget {
+                background-color: {{BG_SECONDARY}};
+                color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}};
+                gridline-color: {{BORDER}};
+                font-size: 10pt;
+            }
+            QTableWidget::item:selected {
+                background-color: {{ACCENT}};
+                color: #ffffff;
+            }
+            QHeaderView::section {
+                background-color: {{BG_TERTIARY}};
+                color: {{FG_SECONDARY}};
+                border: none;
+                border-bottom: 1px solid {{BORDER}};
+                padding: 6px 8px;
+                font-weight: bold;
+            }
+            QTableWidget::item:alternate {
+                background-color: {{BG_TERTIARY}};
+            }
+        """))
+        self._metrics_table.doubleClicked.connect(self._on_metrics_ver_detalhes)
+        content_layout.addWidget(self._metrics_table)
+
+        self._lbl_metrics_status = QLabel("")
+        self._lbl_metrics_status.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 9pt;"))
+        content_layout.addWidget(self._lbl_metrics_status)
+
+        layout.addWidget(content)
+
+        self._module_stack.addWidget(page)
+        self._pages[self.MODULE_METRICS] = self._module_stack.count() - 1
+
+        btn_refresh.clicked.connect(self._on_metrics_refresh)
+        btn_detalhes.clicked.connect(self._on_metrics_ver_detalhes)
+
+    def _on_metrics_refresh(self):
+        """Recarrega a tabela de métricas a partir dos zips na pasta de contagens."""
+        from PySide6.QtWidgets import QTableWidgetItem
+
+        try:
+            from utils.config import AppConfig
+            pasta = AppConfig.get_last_contagens_dir()
+        except Exception:
+            pasta = None
+
+        self._metrics_results = []
+        try:
+            from services.metrics_service import listar_exports_com_metricas
+            self._metrics_results = listar_exports_com_metricas(pasta) if pasta else []
+        except Exception as e:
+            logger.exception(f"Erro ao ler métricas: {e}")
+            self._lbl_metrics_status.setText(f"Erro ao ler métricas: {e}")
+            self._metrics_results = []
+
+        table = self._metrics_table
+        table.setRowCount(0)
+        for row_idx, item in enumerate(self._metrics_results):
+            table.insertRow(row_idx)
+            if item.get('ok'):
+                m = item.get('metricas') or {}
+                resumo = m.get('resumo') or {}
+                periodo = m.get('periodo') or {}
+                valores = [
+                    item['arquivo_zip'],
+                    f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -'),
+                    str(periodo.get('inicio', '')),
+                    str(periodo.get('fim', '')),
+                    str(resumo.get('total_leituras', '')),
+                    str(resumo.get('total_nao_encontrado', '')),
+                    str(resumo.get('total_duplicado', '')),
+                    str(resumo.get('total_ajustes_manuais', '')),
+                ]
+            else:
+                valores = [item['arquivo_zip'], '', '', '', '', '', '', f"⚠️ {item.get('erro', 'erro desconhecido')}"]
+            for col_idx, valor in enumerate(valores):
+                table.setItem(row_idx, col_idx, QTableWidgetItem(valor))
+
+        self._lbl_metrics_status.setText(
+            f"{len(self._metrics_results)} export(s) com métricas encontrados em: {pasta or '(pasta não configurada)'}"
+        )
+
+    def _on_metrics_ver_detalhes(self, *args):
+        """Abre um diálogo com o detalhe completo das métricas da linha selecionada."""
+        row = self._metrics_table.currentRow()
+        if row < 0 or row >= len(getattr(self, '_metrics_results', [])):
+            return
+        item = self._metrics_results[row]
+        if not item.get('ok'):
+            self._show_metrics_error_dialog(item)
+            return
+        self._show_metrics_detail_dialog(item)
+
+    def _show_metrics_error_dialog(self, item):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(
+            self, "Não foi possível ler as métricas",
+            f"{item['arquivo_zip']}\n\n{item.get('erro', 'Erro desconhecido')}",
+        )
+
+    def _show_metrics_detail_dialog(self, item):
+        """Diálogo simples (tabelas de texto) com o resumo completo de um export."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout as _QVBoxLayout, QTabWidget, QTableWidget,
+            QTableWidgetItem, QHeaderView, QLabel as _QLabel, QDialogButtonBox,
+        )
+
+        m = item.get('metricas') or {}
+        resumo = m.get('resumo') or {}
+        ritmo = m.get('ritmo') or {}
+        sessoes = m.get('sessoes') or []
+        por_localizacao = m.get('por_localizacao') or []
+        por_grupo = m.get('por_grupo') or []
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Métricas — {item['arquivo_zip']}")
+        dlg.resize(640, 520)
+        layout = _QVBoxLayout(dlg)
+
+        cabecalho = _QLabel(
+            f"<b>{m.get('nomeusuario', '')}</b> (cód. {m.get('codusuario', '')}) — "
+            f"{(m.get('periodo') or {}).get('inicio', '')} a {(m.get('periodo') or {}).get('fim', '')}"
+        )
+        layout.addWidget(cabecalho)
+
+        resumo_texto = _QLabel(
+            f"Total de leituras: {resumo.get('total_leituras', 0)}   |   "
+            f"EANs únicos: {resumo.get('total_codean_unicos', 0)}   |   "
+            f"Não encontrados: {resumo.get('total_nao_encontrado', 0)} "
+            f"({resumo.get('taxa_nao_encontrado_pct', 0)}%)   |   "
+            f"Duplicados: {resumo.get('total_duplicado', 0)}   |   "
+            f"Ajustes manuais: {resumo.get('total_ajustes_manuais', 0)} "
+            f"({resumo.get('taxa_ajuste_manual_pct', 0)}%)\n"
+            f"Tempo médio entre leituras: {ritmo.get('tempo_medio_entre_leituras_seg', 0)}s   |   "
+            f"Tempo mediano: {ritmo.get('tempo_mediano_entre_leituras_seg', 0)}s"
+        )
+        resumo_texto.setWordWrap(True)
+        layout.addWidget(resumo_texto)
+
+        abas = QTabWidget()
+
+        def _tabela(colunas, linhas):
+            t = QTableWidget()
+            t.setColumnCount(len(colunas))
+            t.setHorizontalHeaderLabels(colunas)
+            t.setRowCount(len(linhas))
+            t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            t.verticalHeader().setVisible(False)
+            t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            for r, linha in enumerate(linhas):
+                for c, valor in enumerate(linha):
+                    t.setItem(r, c, QTableWidgetItem(str(valor)))
+            return t
+
+        leituras_por_hora = ritmo.get('leituras_por_hora') or {}
+        abas.addTab(
+            _tabela(["Hora", "Leituras"], [[f"{h}h", q] for h, q in sorted(leituras_por_hora.items())]),
+            "Leituras por hora",
+        )
+        abas.addTab(
+            _tabela(
+                ["Início", "Fim", "Duração (min)", "Leituras", "Ociosidade (min)"],
+                [[s.get('inicio'), s.get('fim'), s.get('duracao_min'), s.get('leituras'), s.get('tempo_ocioso_min')]
+                 for s in sessoes],
+            ),
+            "Sessões",
+        )
+        abas.addTab(
+            _tabela(["Localização", "Leituras"], [[p.get('localizacao'), p.get('leituras')] for p in por_localizacao]),
+            "Por localização",
+        )
+        abas.addTab(
+            _tabela(
+                ["Grupo", "Nome", "Leituras"],
+                [[g.get('codgrupo'), g.get('nomegrupo'), g.get('leituras')] for g in por_grupo],
+            ),
+            "Por grupo",
+        )
+        layout.addWidget(abas, 1)
+
+        botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        botoes.rejected.connect(dlg.reject)
+        botoes.accepted.connect(dlg.accept)
+        layout.addWidget(botoes)
+
+        dlg.exec()
 
     def _on_contagens_refresh(self):
         """Carrega a lista de contagens da API/banco Neon filtrada pelo CNPJ da empresa logada."""
