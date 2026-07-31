@@ -422,7 +422,7 @@ class MainWindowERP(QMainWindow):
         
         # Info do usuário na parte inferior
         user_frame = QFrame()
-        user_frame.setMinimumHeight(50)
+        user_frame.setMinimumHeight(90)
         user_frame.setStyleSheet(themed_qss("""
             QFrame {
                 background-color: {{BG_SECONDARY}};
@@ -430,9 +430,36 @@ class MainWindowERP(QMainWindow):
                 border-right: none;
             }
         """))
-        user_layout = QHBoxLayout(user_frame)
+        user_layout = QVBoxLayout(user_frame)
         user_layout.setContentsMargins(8, 8, 8, 8)
-        user_layout.setSpacing(0)
+        user_layout.setSpacing(2)
+
+        # Botão de logoff (volta à tela de login para trocar usuário/empresa)
+        btn_logoff = QPushButton("  🔓  Logoff")
+        btn_logoff.setToolTip("Fazer logoff e voltar à tela de login")
+        btn_logoff.setMinimumHeight(36)
+        btn_logoff.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_logoff.setStyleSheet(_mw_qss("""
+            QPushButton {
+                background-color: transparent;
+                color: {{FG_SECONDARY}};
+                border: none;
+                border-radius: 8px;
+                text-align: left;
+                padding: 8px 10px;
+                font-size: 10pt;
+            }
+            QPushButton:hover {
+                background-color: {{BG_HOVER}};
+                color: {{FG_PRIMARY}};
+            }
+            QPushButton:pressed {
+                background-color: {{ACCENT}};
+                color: {{FG_PRIMARY}};
+            }
+        """))
+        btn_logoff.clicked.connect(self._on_logout)
+        user_layout.addWidget(btn_logoff)
 
         # Botão de sair do aplicativo
         btn_exit = QPushButton("  🚪  Sair  (F10)")
@@ -1176,11 +1203,7 @@ class MainWindowERP(QMainWindow):
         menu_file.addAction(action_new)
         
         menu_file.addSeparator()
-        
-        action_logout = QAction("Trocar Usuário", self)
-        action_logout.triggered.connect(self._on_logout)
-        menu_file.addAction(action_logout)
-        
+
         action_quit = QAction("Sair", self)
         action_quit.setShortcut(Shortcuts.QUIT)
         action_quit.triggered.connect(self.close)
@@ -3423,15 +3446,8 @@ class MainWindowERP(QMainWindow):
     # =========================================================================
 
     def _on_logout(self):
-        """Solicita logout."""
-        reply = QMessageBox.question(
-            self,
-            "Confirmar",
-            "Deseja trocar de usuário?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.logout_requested.emit()
+        """Faz logoff e volta à tela de login."""
+        self.logout_requested.emit()
     
     def _on_docs(self):
         """Abre a documentação de ajuda do aplicativo."""
