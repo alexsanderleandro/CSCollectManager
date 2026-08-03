@@ -37,7 +37,9 @@ class ProductData:
     estoque: float = 0.0
     customedio: float = 0.0
     precovenda: float = 0.0
-    
+    cod_dun: str = ""
+    vol_emb: Optional[int] = None
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProductData":
         """Cria instância a partir de dicionário."""
@@ -54,6 +56,8 @@ class ProductData:
             estoque=float(data.get("estoque", 0) or 0),
             customedio=float(data.get("customedio", 0) or 0),
             precovenda=float(data.get("precovenda", 0) or 0),
+            cod_dun=data.get("coddun14", "") or "",
+            vol_emb=data.get("volumesporembalagem"),
         )
     
     @staticmethod
@@ -105,6 +109,8 @@ class LazyTableModel(QAbstractTableModel):
         ("codproduto",        "Código",           80),
         ("descricaoproduto",  "Descrição",        300),
         ("codeanunidade",     "Cód. EAN", 130),
+        ("cod_dun",           "Cód. DUN",          130),
+        ("vol_emb",           "Vol. embalagem",    110),
         ("codgrupo",          "Cód. grupo",        110),
         ("nomegrupo",         "Grupo",             150),
         ("nomeLocalEstoque",  "Local estoque",     130),
@@ -221,13 +227,13 @@ class LazyTableModel(QAbstractTableModel):
             if column_key == "codproduto":
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             elif column_key in (
-                "codeanunidade", "codgrupo", "nomegrupo",
+                "codeanunidade", "cod_dun", "vol_emb", "codgrupo", "nomegrupo",
                 "nomeLocalEstoque", "numlote",
                 "datafabricacao", "datavalidade",
             ):
                 return Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        
+
         elif role == Qt.ItemDataRole.ForegroundRole:
             if column_key == "datavalidade" and product.datavalidade:
                 return self._get_expiry_color(product.datavalidade)
@@ -287,7 +293,7 @@ class LazyTableModel(QAbstractTableModel):
                 if key == "codproduto":
                     return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 elif key in (
-                    "codeanunidade", "codgrupo", "nomegrupo",
+                    "codeanunidade", "cod_dun", "vol_emb", "codgrupo", "nomegrupo",
                     "nomeLocalEstoque", "numlote",
                     "datafabricacao", "datavalidade",
                 ):

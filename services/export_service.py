@@ -55,10 +55,13 @@ class ProdutoExport:
     codgrupo: int
     nomegrupo: str
     localizacao: str
-    
+    cod_dun: str = ""
+    vol_emb: Optional[int] = None
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProdutoExport":
         """Cria instância a partir de dicionário."""
+        vol_emb_raw = data.get("vol_emb", data.get("volumesporembalagem"))
         return cls(
             codean=str(data.get("codean", data.get("codeanunidade", ""))).split("/")[0],
             codproduto=data.get("codproduto", 0),
@@ -72,6 +75,8 @@ class ProdutoExport:
             codgrupo=data.get("codgrupo", 0),
             nomegrupo=data.get("nomegrupo", ""),
             localizacao=(data.get("localizacao") or data.get("nomeLocalEstoque") or "").strip(),
+            cod_dun=str(data.get("cod_dun", data.get("coddun14", "")) or ""),
+            vol_emb=int(vol_emb_raw) if vol_emb_raw not in (None, "") else None,
         )
     
     @staticmethod
@@ -103,7 +108,8 @@ class ExportService:
     - Registro V: |V|codusuario|nomeusuario|
     - Registro P: |P|CODEAN|CODPRODUTO|DESCRICAOPRODUTO|UNIDADE|CASASDECIMAIS|
                      CONTROLALOTESN|NUMLOTE|DATAFAB|DATAVAL|CODGRUPO|NOMEGRUPO|LOCALIZACAO|
-    
+                     CODDUN14|VOLEMB|
+
     Formato de data: DDMMAAAA
     Nome do arquivo: CARGA-CODEMPRESA-CODUSUARIO-DATAHORA.txt
     """
@@ -234,10 +240,11 @@ class ExportService:
     def build_registro_p(self, produto: ProdutoExport) -> str:
         """
         Monta registro P (Produto).
-        
+
         Layout: |P|CODEAN|CODPRODUTO|DESCRICAOPRODUTO|UNIDADE|CASASDECIMAIS|
                    CONTROLALOTESN|NUMLOTE|DATAFAB|DATAVAL|CODGRUPO|NOMEGRUPO|LOCALIZACAO|
-        
+                   CODDUN14|VOLEMB|
+
         Args:
             produto: Dados do produto
             
@@ -259,9 +266,11 @@ class ExportService:
             str(produto.codgrupo),
             produto.nomegrupo,
             produto.localizacao.strip(),
+            produto.cod_dun,
+            str(produto.vol_emb) if produto.vol_emb is not None else "",
             ""   # Final com pipe
         ])
-    
+
     def export_carga(
         self,
         empresa: EmpresaInfo,

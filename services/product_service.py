@@ -68,7 +68,7 @@ class ProductService:
     - Preparar dados para a grid
     
     Tabelas de referência:
-    - produtos: codproduto, descricaoproduto, unidade, codgrupo, controlarestoque, codeanunidade, codtipoproduto, PesoVariavel
+    - produtos: codproduto, descricaoproduto, unidade, codgrupo, controlarestoque, codeanunidade, codtipoproduto, PesoVariavel, CodDUN14, VolumesPorEmbalagem
     - produtosestoque: codempresa, codproduto, situacao ('A'), localizacao, estoquedeposito, estoqueloja, codfornecedor, CompoeVenda, EncomendaSN
     - LocalEstoque: codlocal, NomeLocalEstoque
     - GrupoEstoque: codgrupo, NomeGrupo, chavegrupo, ordemnomegrupo
@@ -90,6 +90,8 @@ class ProductService:
             COALESCE(pe.codfornecedor, 0) AS codfornecedor,
             p.codtipoproduto,
             COALESCE(p.PesoVariavel, 0) AS pesovariavel,
+            COALESCE(p.CodDUN14, '') AS coddun14,
+            p.VolumesPorEmbalagem AS volumesporembalagem,
             COALESCE(pe.CompoeVenda, 0) AS compoevenda,
             COALESCE(pe.EncomendaSN, 0) AS encomenda,
             pe.localizacao,
@@ -455,6 +457,8 @@ class ProductService:
             "datavalidade": row.datavalidade.strftime("%Y-%m-%d") if row.datavalidade else None,
             "codfornecedor": int(row.codfornecedor or 0),
             "codtipoproduto": row.codtipoproduto,
+            "coddun14": row.coddun14 or "",
+            "volumesporembalagem": int(row.volumesporembalagem) if row.volumesporembalagem is not None else None,
             "pesovariavel": bool(row.pesovariavel),
             "compoevenda": bool(row.compoevenda),
             "encomenda": bool(row.encomenda),

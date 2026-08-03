@@ -37,7 +37,7 @@ from utils.config import AppConfig
 from utils.crypto import ensure_keypair, sign_file
 
 # Versão do layout — incrementar se o esquema mudar
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3
 
 
 class DbExportService:
@@ -50,7 +50,8 @@ class DbExportService:
     empresa    : codempresa, nomeempresa, local
     vendedor   : codusuario, nomeusuario
     produtos   : seq, codean, codproduto, descricaoproduto, unidade, casasdecimais,
-                 controlalote, numlote, datafab, dataval, codgrupo, nomegrupo, localizacao
+                 controlalote, numlote, datafab, dataval, codgrupo, nomegrupo, localizacao,
+                 coddun14, volumesporembalagem
     """
 
     def __init__(self, output_dir: str = None):
@@ -228,6 +229,8 @@ class DbExportService:
                         str(p.codgrupo),
                         p.nomegrupo,
                         p.localizacao.strip(),
+                        p.cod_dun,
+                        p.vol_emb,
                     ))
 
                     if len(batch) >= BATCH_SIZE:
@@ -235,8 +238,8 @@ class DbExportService:
                             """INSERT INTO produtos
                                (tipo, codean, codproduto, descricaoproduto, unidade, casasdecimais,
                                 controlalote, numlote, datafab, dataval,
-                                codgrupo, nomegrupo, localizacao)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                codgrupo, nomegrupo, localizacao, coddun14, volumesporembalagem)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             batch,
                         )
                         conn.commit()
@@ -252,8 +255,8 @@ class DbExportService:
                         """INSERT INTO produtos
                            (tipo, codean, codproduto, descricaoproduto, unidade, casasdecimais,
                             controlalote, numlote, datafab, dataval,
-                            codgrupo, nomegrupo, localizacao)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            codgrupo, nomegrupo, localizacao, coddun14, volumesporembalagem)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         batch,
                     )
                     conn.commit()
@@ -406,7 +409,9 @@ class DbExportService:
                 dataval          TEXT    NOT NULL DEFAULT '',
                 codgrupo         TEXT NOT NULL DEFAULT '0',
                 nomegrupo        TEXT    NOT NULL DEFAULT '',
-                localizacao      TEXT    NOT NULL DEFAULT ''
+                localizacao      TEXT    NOT NULL DEFAULT '',
+                coddun14            TEXT    NOT NULL DEFAULT '',
+                volumesporembalagem INTEGER
             );
 
             CREATE INDEX IF NOT EXISTS idx_produtos_codean
