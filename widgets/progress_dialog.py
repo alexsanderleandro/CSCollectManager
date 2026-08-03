@@ -206,7 +206,8 @@ class ProgressDialog(QDialog):
         
         self._btn_cancel.setVisible(False)
         self._btn_close.setVisible(True)
-        
+        self.adjustSize()
+
         if self._auto_close and success:
             QTimer.singleShot(1500, self.accept)
     
@@ -222,7 +223,8 @@ class ProgressDialog(QDialog):
         
         self._btn_cancel.setVisible(False)
         self._btn_close.setVisible(True)
-    
+        self.adjustSize()
+
     def _on_cancel(self):
         """Handler de cancelamento."""
         self._was_cancelled = True
@@ -238,6 +240,16 @@ class ProgressDialog(QDialog):
             self._on_cancel()
         else:
             event.accept()
+
+    def showEvent(self, event):
+        """Garante que a janela seja exibida com o tamanho correto do conteúdo.
+
+        No Windows, o primeiro show() pode calcular a geometria antes do label
+        com word-wrap ter sua largura final, deixando a janela menor que o
+        necessário até um resize manual. Recalcular aqui evita isso.
+        """
+        super().showEvent(event)
+        self.adjustSize()
 
 
 class ProgressOverlay(QWidget):

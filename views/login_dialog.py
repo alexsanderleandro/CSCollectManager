@@ -252,7 +252,7 @@ class ConnectionWorker(QThread):
                             NomeEmpresa,
                             ISNULL(CNPJ, '') as CNPJ
                         FROM Empresas
-                        ORDER BY NomeEmpresa
+                        ORDER BY CodEmpresa
                     """))
                     
                     empresas = []
@@ -305,7 +305,7 @@ class ConnectionWorker(QThread):
                     NomeEmpresa,
                     ISNULL(CNPJ, '') as CNPJ
                 FROM Empresas
-                ORDER BY NomeEmpresa
+                ORDER BY CodEmpresa
             """)
             
             empresas = []
