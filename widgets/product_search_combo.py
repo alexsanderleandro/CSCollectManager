@@ -7,7 +7,7 @@ Implementa lazy loading para melhor performance.
 
 from typing import List, Tuple, Optional
 from PySide6.QtWidgets import QWidget, QListWidgetItem, QCheckBox
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QKeyEvent
 
 from widgets.multi_select_combo import MultiSelectCombo, _combo_qss
@@ -51,6 +51,7 @@ class ProductSearchCombo(MultiSelectCombo):
 
     def clear_selection(self):
         """Remove todos os produtos adicionados dinamicamente e limpa o campo."""
+        restore_scroll = self._begin_scroll_guard()
         # Limpa a lista interna de itens
         self._items.clear()
         # Limpa o widget de lista (checkboxes dinâmicos)
@@ -60,6 +61,12 @@ class ProductSearchCombo(MultiSelectCombo):
         self.txt_search.clear()
         self.txt_search.blockSignals(False)
         self._update_count()
+
+        # Restaura já (rolagem síncrona) e no próximo ciclo do event loop, que
+        # é quando uma eventual rolagem disparada por mudança de foco ocorre.
+        restore_scroll()
+        QTimer.singleShot(0, restore_scroll)
+
         self.selection_changed.emit([])
 
     def _setup_search_key_handler(self):
@@ -127,6 +134,9 @@ class ProductSearchCombo(MultiSelectCombo):
                         }
                     """))
                     checkbox.setChecked(True)
+                    # Mesmo motivo do MultiSelectCombo._populate_list(): evita
+                    # que destruir um checkbox focado role o painel de filtros.
+                    checkbox.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                     checkbox.stateChanged.connect(self._on_item_changed)
                     item.setSizeHint(QSize(0, 24))
                     self.list_widget.addItem(item)

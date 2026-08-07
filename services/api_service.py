@@ -473,8 +473,9 @@ class ApiService:
                 if resp.status_code == 404:
                     detail = (
                         f"{detail}\n\n"
-                        "O arquivo pode ter sido removido do servidor após um reinício automático (Render.com usa "
-                        "armazenamento efêmero). O registro no banco será removido ao confirmar o problema."
+                        "O arquivo não está mais disponível no servidor. Solicite a reexportação "
+                        "da contagem para gerar um novo arquivo e reenviá-lo. O registro atual "
+                        "será removido ao confirmar o problema."
                     )
                 return False, f"Erro ao baixar arquivo ({resp.status_code}): {detail}"
 

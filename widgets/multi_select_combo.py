@@ -8,9 +8,9 @@ from typing import List, Tuple, Optional, Any
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QLabel,
-    QFrame, QCheckBox, QAbstractItemView, QMenu
+    QFrame, QCheckBox, QAbstractItemView, QMenu, QScrollArea
 )
-from PySide6.QtCore import Qt, Signal, QSize, QEvent
+from PySide6.QtCore import Qt, Signal, QSize, QEvent, QTimer
 from PySide6.QtGui import QIcon, QAction
 
 from app.styles import themed_qss, get_active_theme
@@ -201,7 +201,23 @@ class MultiSelectCombo(QWidget):
         """
         self._items = [(item, item) for item in items]
         self._populate_list()
-    
+
+    def _begin_scroll_guard(self):
+        """Snapshot da rolagem do painel; devolve callable que a restaura.
+
+        Reconstruir a lista destrói e recria widgets, o que pode mover o foco e
+        fazer a QScrollArea ancestral rolar sozinha até o novo widget focado.
+        """
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, QScrollArea):
+            parent = parent.parentWidget()
+        if parent is None:
+            return lambda: None
+
+        bar = parent.verticalScrollBar()
+        pos = bar.value()
+        return lambda: bar.setValue(pos)
+
     def _populate_list(self, filter_text: str = ""):
         """Popula lista com itens."""
         self.list_widget.clear()
@@ -235,8 +251,13 @@ class MultiSelectCombo(QWidget):
                     border-radius: 2px;
                 }
             """))
+            # Sem foco de teclado: se um checkbox focado for destruído em
+            # _populate_list(), o Qt transfere o foco para um widget mais abaixo
+            # no painel e a QScrollArea rola até ele. A lista (ClickFocus)
+            # continua recebendo o clique normalmente.
+            checkbox.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             checkbox.stateChanged.connect(self._on_item_changed)
-            
+
             item.setSizeHint(QSize(0, 24))
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, checkbox)
@@ -245,10 +266,11 @@ class MultiSelectCombo(QWidget):
         """Filtra itens pelo texto."""
         # Salva seleção atual
         selected = self.get_selected_values()
-        
+        cursor_pos = self.txt_search.cursorPosition()
+
         # Repopula com filtro
         self._populate_list(text)
-        
+
         # Restaura seleção
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
@@ -259,8 +281,13 @@ class MultiSelectCombo(QWidget):
                     checkbox.blockSignals(True)
                     checkbox.setChecked(True)
                     checkbox.blockSignals(False)
-        
+
         self._update_count()
+
+        # _populate_list() recria os QCheckBox da lista a cada tecla digitada,
+        # o que rouba o foco de txt_search — devolve o foco e o cursor.
+        self.txt_search.setFocus()
+        self.txt_search.setCursorPosition(cursor_pos)
     
     def _on_item_changed(self, state: int):
         """Callback quando item é marcado/desmarcado."""
@@ -307,25 +334,27 @@ class MultiSelectCombo(QWidget):
     
     def clear_selection(self):
         """Limpa seleção e campo de busca."""
+        restore_scroll = self._begin_scroll_guard()
+
         # Limpa o texto digitado no campo de filtro
         self.txt_search.blockSignals(True)
         self.txt_search.clear()
         self.txt_search.blockSignals(False)
-        # Exibe todos os itens (desfaz filtro local)
-        for i in range(self.list_widget.count()):
-            self.list_widget.setRowHidden(i, False)
-        # Desmarca todos os checkboxes
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            checkbox = self.list_widget.itemWidget(item)
-            if checkbox:
-                checkbox.blockSignals(True)
-                checkbox.setChecked(False)
-                checkbox.blockSignals(False)
-        
+
+        # Repopula a lista completa (sem filtro) — a filtragem remove itens da
+        # lista em vez de apenas ocultá-los, então só assim os itens
+        # excluídos por uma busca anterior voltam a aparecer.
+        self._populate_list()
+
         self._update_count()
+
+        # Restaura já (rolagem síncrona) e no próximo ciclo do event loop, que
+        # é quando uma eventual rolagem disparada por mudança de foco ocorre.
+        restore_scroll()
+        QTimer.singleShot(0, restore_scroll)
+
         self.selection_changed.emit([])
-    
+
     def set_selected_values(self, values: List[Any]):
         """
         Define itens selecionados por valor.

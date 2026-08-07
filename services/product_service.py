@@ -36,6 +36,7 @@ class ProductFilter:
     filtro_encomenda: str = "ambos"      # "somente_encomenda" | "somente_nao_encomenda" | "ambos"
     somente_peso_variavel: bool = False  # p.PesoVariavel = 1
     somente_venda: bool = False          # pe.CompoeVenda = 1
+    incluir_sem_gtin: bool = False       # inclui produtos com codeanunidade = 'SEM GTIN'
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProductFilter":
@@ -54,6 +55,7 @@ class ProductFilter:
             filtro_encomenda=data.get("filtro_encomenda", "ambos"),
             somente_peso_variavel=bool(data.get("somente_peso_variavel", False)),
             somente_venda=bool(data.get("somente_venda", False)),
+            incluir_sem_gtin=bool(data.get("incluir_sem_gtin", False)),
         )
 
 
@@ -361,6 +363,9 @@ class ProductService:
 
         if filters.somente_venda:
             conditions.append("pe.CompoeVenda = 1")
+
+        if not filters.incluir_sem_gtin:
+            conditions.append("p.codeanunidade != 'SEM GTIN'")
 
         if conditions:
             return " AND " + " AND ".join(conditions)

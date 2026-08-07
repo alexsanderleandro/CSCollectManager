@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QPushButton, QButtonGroup, QFrame, QSizePolicy,
     QSpacerItem
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 
 from widgets.multi_select_combo import MultiSelectCombo
@@ -122,6 +122,7 @@ class FilterPanel(QWidget):
         
         # Área de scroll para os filtros
         scroll = QScrollArea()
+        self._scroll_area = scroll
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet(themed_qss("""
@@ -302,8 +303,9 @@ class FilterPanel(QWidget):
         
         self.chk_peso_variavel = QCheckBox("Somente peso variável")
         self.chk_produtos_venda = QCheckBox("Somente produtos para venda")
+        self.chk_sem_gtin = QCheckBox("Incluir produtos SEM GTIN")
 
-        for chk in [self.chk_peso_variavel, self.chk_produtos_venda]:
+        for chk in [self.chk_peso_variavel, self.chk_produtos_venda, self.chk_sem_gtin]:
             self._style_checkbox(chk)
             group_opc_layout.addWidget(chk)
         
@@ -533,6 +535,7 @@ class FilterPanel(QWidget):
         # Checkboxes
         self.chk_peso_variavel.stateChanged.connect(self._on_filter_changed)
         self.chk_produtos_venda.stateChanged.connect(self._on_filter_changed)
+        self.chk_sem_gtin.stateChanged.connect(self._on_filter_changed)
     
     def _on_filter_changed(self, *args):
         """Callback quando filtro muda."""
@@ -540,6 +543,12 @@ class FilterPanel(QWidget):
     
     def _on_clear_clicked(self):
         """Limpa todos os filtros."""
+        # Reconstruir as listas dos combos pode fazer algum item ganhar foco,
+        # e a QScrollArea rola automaticamente até o widget focado — guarda a
+        # posição para restaurá-la depois que isso acontecer.
+        scrollbar = self._scroll_area.verticalScrollBar()
+        scroll_pos = scrollbar.value()
+
         # Limpa seleções múltiplas
         self.filter_produto.clear_selection()
         self.filter_grupo.clear_selection()
@@ -559,7 +568,12 @@ class FilterPanel(QWidget):
         # Desmarca checkboxes
         self.chk_peso_variavel.setChecked(False)
         self.chk_produtos_venda.setChecked(False)
-        
+        self.chk_sem_gtin.setChecked(False)
+
+        # O foco (e a rolagem automática que ele dispara) só é processado no
+        # próximo ciclo do event loop — reagenda a restauração para depois disso.
+        QTimer.singleShot(0, lambda: scrollbar.setValue(scroll_pos))
+
         self.clear_clicked.emit()
     
     def get_filters(self) -> Dict[str, Any]:
@@ -609,6 +623,7 @@ class FilterPanel(QWidget):
             # Opções
             "somente_peso_variavel": self.chk_peso_variavel.isChecked(),
             "somente_venda": self.chk_produtos_venda.isChecked(),
+            "incluir_sem_gtin": self.chk_sem_gtin.isChecked(),
         }
     
     def load_filter_data(

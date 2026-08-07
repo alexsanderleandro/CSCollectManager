@@ -1678,6 +1678,7 @@ class MainWindowERP(QMainWindow):
             filtro_encomenda=filters.get("filtro_encomenda", "ambos"),
             somente_peso_variavel=bool(filters.get("somente_peso_variavel", False)),
             somente_venda=bool(filters.get("somente_venda", False)),
+            incluir_sem_gtin=bool(filters.get("incluir_sem_gtin", False)),
         )
     
     def _on_load_progress(self, current: int, total: int, percentage: float, message: str):
@@ -1982,7 +1983,10 @@ class MainWindowERP(QMainWindow):
                     from services.product_service import ProductService, ProductFilter
 
                     svc = ProductService()
-                    pf = ProductFilter.from_dict({"produtos": selecionados})
+                    pf = ProductFilter.from_dict({
+                        "produtos": selecionados,
+                        "incluir_sem_gtin": filtros.get("incluir_sem_gtin", False),
+                    })
                     produtos = svc.get_products(pf)
             except Exception:
                 produtos = []
@@ -2704,6 +2708,7 @@ class MainWindowERP(QMainWindow):
                 f"  Filtro encomenda    : {map_encomenda.get(filtros.get('filtro_encomenda','ambos'), 'Ambos')}",
                 f"  Somente peso variável: {'Sim' if filtros.get('somente_peso_variavel') else 'Não'}",
                 f"  Somente venda       : {'Sim' if filtros.get('somente_venda') else 'Não'}",
+                f"  Incluir SEM GTIN    : {'Sim' if filtros.get('incluir_sem_gtin') else 'Não'}",
                 "=" * 72,
             ]
 
@@ -3332,6 +3337,7 @@ class MainWindowERP(QMainWindow):
         ok, msg = api.download_contagem_file(url_arquivo, dest_path)
 
         if not ok:
+            logger.error(f"Falha ao baixar contagem '{filename}' ({url_arquivo}): {msg}")
             self._lbl_contagens_status.setText(f"❌  Erro no download: {msg}")
             # Se for 404, o arquivo foi perdido no servidor (filesystem efêmero do Render).
             # Oferece remover o registro inválido do banco para não poluir a lista.
