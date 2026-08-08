@@ -602,16 +602,24 @@ class ApiService:
                             h.update(chunk)
                     return h.hexdigest()
 
-                # 4a. TXT
+                # 4a. Arquivo de dados: .db (formato atual) ou .txt (formato legado)
+                db_names = [n for n in names if n.lower().endswith(".db")]
                 txt_names = [n for n in names if n.lower().endswith(".txt")]
-                if txt_names:
+
+                if db_names:
+                    h = _sha256_entry(db_names[0])
+                    if h != payload.get("hash_db", ""):
+                        erros.append(
+                            f"Hash DB diverge — esperado={payload.get('hash_db')} calculado={h}"
+                        )
+                elif txt_names:
                     h = _sha256_entry(txt_names[0])
                     if h != payload.get("hash_txt", ""):
                         erros.append(
                             f"Hash TXT diverge — esperado={payload.get('hash_txt')} calculado={h}"
                         )
                 else:
-                    erros.append("Arquivo TXT não encontrado no ZIP")
+                    erros.append("Arquivo de dados (.db ou .txt) não encontrado no ZIP")
 
                 # 4b. PDF (opcional)
                 pdf_names = [n for n in names if n.lower().endswith(".pdf")]

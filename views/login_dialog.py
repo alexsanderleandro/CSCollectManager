@@ -731,24 +731,35 @@ class LoginDialog(QDialog):
             background-color: {_C.BG_PANEL};
             border: 1px solid {_C.BORDER};
             border-radius: 8px;
-            padding: 12px;
+            padding: 10px 12px;
             color: {_C.TEXT_MUTED};
+            font-size: 9pt;
         """)
         layout.addWidget(self._lbl_selected_connection)
-        
+
         # Grupo de empresa
         group = QGroupBox("🏢 Selecione a Empresa")
         group_layout = QVBoxLayout(group)
-        group_layout.setSpacing(12)
+        group_layout.setSpacing(8)
         group_layout.setContentsMargins(16, 20, 16, 16)
-        
+
         # Lista suspensa de empresas
+        lbl_empresa = QLabel("Empresa:")
+        group_layout.addWidget(lbl_empresa)
+
         self._cmb_empresa = QComboBox()
         self._cmb_empresa.setMinimumHeight(40)
         group_layout.addWidget(self._cmb_empresa)
-        
+
+        # Legenda com a quantidade de empresas carregadas
+        self._lbl_empresa_count = QLabel("")
+        self._lbl_empresa_count.setStyleSheet(f"color: {_C.TEXT_FAINT}; font-size: 8pt;")
+        group_layout.addWidget(self._lbl_empresa_count)
+
         layout.addWidget(group)
-        
+
+        layout.addStretch()
+
         # Botões
         btn_layout = QHBoxLayout()
         
@@ -1366,7 +1377,8 @@ class LoginDialog(QDialog):
         # Atualiza info da conexão
         conn = self._selected_connection
         self._lbl_selected_connection.setText(
-            f"🔌 Conectado a: [{conn.get('type')}] {conn.get('server')} / {conn.get('database')}"
+            f"🔌 Servidor: {conn.get('server')}  ·  Tipo: {conn.get('type')}\n"
+            f"🗂️ Base de dados: {conn.get('database')}"
         )
         
         # Carrega último login para pré-selecionar empresa
@@ -1388,6 +1400,11 @@ class LoginDialog(QDialog):
                     conn.get("database", "").lower() == last_login.get("db", "").lower() and
                     codigo == str(last_login.get("codempresa", ""))):
                     default_index = idx
+
+        qtd = len(self._empresas)
+        self._lbl_empresa_count.setText(
+            f"{qtd} empresa{'s' if qtd != 1 else ''} disponíve{'is' if qtd != 1 else 'l'} nesta base"
+        )
 
         # Muda para step de empresa
         self._stack.setCurrentIndex(self.STEP_EMPRESA)
