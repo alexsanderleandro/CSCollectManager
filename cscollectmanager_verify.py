@@ -283,6 +283,8 @@ def load_and_verify_file(path: str, master_key: Optional[str] = None) -> Dict[st
                 payload['database_url'] = decrypt_field(db_url_raw) if is_encrypted(db_url_raw) else db_url_raw
             if licenca_json.get('api_url'):
                 payload['api_url'] = licenca_json.get('api_url')
+            if licenca_json.get('tipo_licenca'):
+                payload['tipo_licenca'] = licenca_json.get('tipo_licenca')
             return payload
         else:
             # Formato JSON puro — token da API, valida online contra Neon
@@ -303,6 +305,7 @@ def get_relevant_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
         'sql_servidor': payload.get('sql_servidor', ''),
         'sql_banco': payload.get('sql_banco', ''),
         'validade': payload.get('validade', ''),
+        'tipo_licenca': payload.get('tipo_licenca', ''),
         'gerado_em': payload.get('gerado_em', ''),
         'cnpjs': payload.get('cnpjs', []),
         'ids_celular': payload.get('ids_celular', []),

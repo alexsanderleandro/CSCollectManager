@@ -355,6 +355,7 @@ def carregar_licenca_de_arquivo(caminho="licenca.key"):
                     'cnpjs': cnpjs,
                     'ids_celular': ids,
                     'validade': doc.get('validade', ''),
+                    'tipo_licenca': doc.get('tipo_licenca', ''),
                     'nome_cliente': doc.get('nome_cliente', ''),
                     'sql_servidor': doc.get('sql_servidor', ''),
                     'sql_banco': doc.get('sql_banco', ''),

@@ -699,7 +699,11 @@ class ProductService:
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
-              AND ISNULL(p.codeanunidade, '') != ''
+              AND pe.CompoeInventario = 1
+              AND (
+                    (p.codeanunidade NOT LIKE '%[^0-9]%' AND LTRIM(RTRIM(ISNULL(p.codeanunidade, ''))) <> '')
+                 OR UPPER(LTRIM(RTRIM(p.codeanunidade))) = 'SEM GTIN'
+                  )
         """
         
         params = {"offset": offset, "limit": limit}
@@ -739,6 +743,8 @@ class ProductService:
                 COALESCE(pe.CompoeVenda, 0) AS compoevenda,
                 COALESCE(pe.EncomendaSN, 0) AS encomenda,
                 pe.localizacao,
+                COALESCE(p.CodDUN14, '') AS coddun14,
+                p.VolumesPorEmbalagem AS volumesporembalagem,
                 '' AS numlote, NULL AS datafabricacao, NULL AS datavalidade
             FROM produtosestoque pe
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
@@ -746,7 +752,11 @@ class ProductService:
             LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
-              AND ISNULL(p.codeanunidade, '') != ''
+              AND pe.CompoeInventario = 1
+              AND (
+                    (p.codeanunidade NOT LIKE '%[^0-9]%' AND LTRIM(RTRIM(ISNULL(p.codeanunidade, ''))) <> '')
+                 OR UPPER(LTRIM(RTRIM(p.codeanunidade))) = 'SEM GTIN'
+                  )
         """
         
         if company_code:

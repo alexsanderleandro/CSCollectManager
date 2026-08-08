@@ -1330,7 +1330,8 @@ class MainWindowERP(QMainWindow):
         self._status_bar.set_connected(servidor)
         self._status_bar.set_database_info(database, cnpj)
         validade_licenca = (licenca or {}).get("validade", "")
-        self._status_bar.set_license_validity(validade_licenca)
+        tipo_licenca = (licenca or {}).get("tipo_licenca", "")
+        self._status_bar.set_license_validity(validade_licenca, tipo_licenca)
         
         self.setWindowTitle(f"{APP_INFO.NAME} - v{APP_INFO.VERSION}")
         

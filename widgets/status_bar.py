@@ -491,18 +491,22 @@ class AppStatusBar(QStatusBar):
 
     # ===== Licença =====
 
-    def set_license_validity(self, validade: str = ""):
+    def set_license_validity(self, validade: str = "", tipo_licenca: str = ""):
         """
-        Exibe a data de validade da licença no rodapé.
+        Exibe o tipo e a data de validade da licença no rodapé.
 
         Args:
             validade: String de validade vinda do payload .key (YYYY-MM-DD ou ISO).
                       Vazio ou None exibe 'Sem data limite'.
+            tipo_licenca: Tipo da licença vindo do payload .key (ex.: 'Pro', 'Lite').
+                          Vazio não exibe nenhum prefixo de tipo.
         """
         from datetime import date, datetime
 
+        prefixo = f"[{tipo_licenca}] " if tipo_licenca else ""
+
         if not validade:
-            self._license_label.setText("🔑 Sem data limite")
+            self._license_label.setText(f"🔑 {prefixo}Sem data limite")
             self._license_label.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 9pt;")
             return
 
@@ -517,14 +521,14 @@ class AppStatusBar(QStatusBar):
             dias = (val_date - hoje).days
 
             if dias < 0:
-                self._license_label.setText(f"🔑 Licença expirada em: {label}")
+                self._license_label.setText(f"🔑 {prefixo}Licença expirada em: {label}")
                 self._license_label.setStyleSheet("color: #ef9a9a; font-size: 9pt; font-weight: bold;")
             elif dias <= 30:
-                self._license_label.setText(f"🔑 Licença expira em: {label}")
+                self._license_label.setText(f"🔑 {prefixo}Licença expira em: {label}")
                 self._license_label.setStyleSheet("color: #ffe082; font-size: 9pt; font-weight: bold;")
             else:
-                self._license_label.setText(f"🔑 Licença expira em: {label}")
+                self._license_label.setText(f"🔑 {prefixo}Licença expira em: {label}")
                 self._license_label.setStyleSheet("color: rgba(255,255,255,0.8); font-size: 9pt;")
         except Exception:
-            self._license_label.setText(f"🔑 Validade: {validade}")
+            self._license_label.setText(f"🔑 {prefixo}Validade: {validade}")
             self._license_label.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 9pt;")
