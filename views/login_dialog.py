@@ -1026,6 +1026,8 @@ class LoginDialog(QDialog):
                     # Exibir data de validade da licença
                     try:
                         _val = payload_dict.get('validade') or ''
+                        _tipo = (payload_dict.get('tipo_licenca') or '').strip()
+                        _tipo_sufixo = f" · Licença {_tipo}" if _tipo else ""
                         if _val:
                             from datetime import datetime, date, timezone as _tz
                             _expirada = False
@@ -1041,11 +1043,15 @@ class LoginDialog(QDialog):
                                 _val_fmt = _dt.strftime('%d/%m/%Y')
                                 _expirada = _dt < date.today()
                             if _expirada:
-                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
+                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada){_tipo_sufixo}")
                                 self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
                             else:
-                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
+                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}{_tipo_sufixo}")
                                 self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
+                            self._lbl_license_expiry.show()
+                        elif _tipo:
+                            self._lbl_license_expiry.setText(f"🔑 Licença {_tipo}")
+                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
                             self._lbl_license_expiry.show()
                         else:
                             self._lbl_license_expiry.hide()
@@ -1206,6 +1212,8 @@ class LoginDialog(QDialog):
                     # Exibe data de validade imediatamente
                     try:
                         _val = payload_dict.get('validade') or ''
+                        _tipo = (payload_dict.get('tipo_licenca') or '').strip()
+                        _tipo_sufixo = f" · Licença {_tipo}" if _tipo else ""
                         if _val:
                             from datetime import datetime, date, timezone as _tz
                             _expirada = False
@@ -1221,11 +1229,15 @@ class LoginDialog(QDialog):
                                 _val_fmt = _dt.strftime('%d/%m/%Y')
                                 _expirada = _dt < date.today()
                             if _expirada:
-                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada)")
+                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada){_tipo_sufixo}")
                                 self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
                             else:
-                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}")
+                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}{_tipo_sufixo}")
                                 self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
+                            self._lbl_license_expiry.show()
+                        elif _tipo:
+                            self._lbl_license_expiry.setText(f"🔑 Licença {_tipo}")
+                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
                             self._lbl_license_expiry.show()
                         else:
                             self._lbl_license_expiry.hide()

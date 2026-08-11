@@ -162,7 +162,7 @@ class LazyProductTable(QWidget):
         toolbar.addSeparator()
 
         # Ação de exportação (mantida como ação única)
-        self._act_export = QAction("Exportar Carga", self)
+        self._act_export = QAction("Exportar Carga  [F2]", self)
         self._act_export.triggered.connect(self._on_export_clicked)
         toolbar.addAction(self._act_export)
         
@@ -218,9 +218,16 @@ class LazyProductTable(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSortIndicatorShown(True)
         
-        # Larguras das colunas
-        for i, (_, _, width) in enumerate(self._model.COLUMNS):
-            self._table.setColumnWidth(i, width)
+        # Larguras das colunas: nunca menor que o necessário para o
+        # cabeçalho completo (a coluna continua "Interactive" — o usuário
+        # pode redimensionar depois — mas o rótulo não nasce cortado).
+        # ResizeToContents em todas as colunas não é usado aqui de propósito:
+        # essa tabela sustenta lazy loading de 50.000+ produtos, e recalcular
+        # a largura pelo conteúdo carregado a cada scroll/página seria caro.
+        metrics = self._table.horizontalHeader().fontMetrics()
+        for i, (_, header_text, width) in enumerate(self._model.COLUMNS):
+            largura_minima = metrics.horizontalAdvance(header_text) + 32  # padding + seta de ordenação
+            self._table.setColumnWidth(i, max(width, largura_minima))
         
         # Vertical header
         self._table.verticalHeader().setDefaultSectionSize(25)

@@ -255,6 +255,10 @@ class ProductSearchDialog(QDialog):
         
         lbl_count = QLabel("Nenhum produto selecionado")
         lbl_count.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 11px;"))
+        # Mesma largura combinada de "Todos" (80px) + espaçamento (8px) + "Limpar" (80px),
+        # para acomodar textos maiores ("N produtos selecionados") sem espremer o layout.
+        lbl_count.setMinimumWidth(168)
+        lbl_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_count = lbl_count
         btn_layout.addWidget(lbl_count)
         

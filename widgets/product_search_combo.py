@@ -6,11 +6,11 @@ Implementa lazy loading para melhor performance.
 """
 
 from typing import List, Tuple, Optional
-from PySide6.QtWidgets import QWidget, QListWidgetItem, QCheckBox
-from PySide6.QtCore import Qt, Signal, QSize, QTimer
+from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QKeyEvent
 
-from widgets.multi_select_combo import MultiSelectCombo, _combo_qss
+from widgets.multi_select_combo import MultiSelectCombo
 from widgets.product_search_dialog import ProductSearchDialog
 
 
@@ -95,63 +95,38 @@ class ProductSearchCombo(MultiSelectCombo):
         dialog = ProductSearchDialog(search_text, self._company_code, self)
         
         if dialog.exec() == ProductSearchDialog.Accepted and hasattr(dialog, '_last_selected'):
-            # Adiciona produtos selecionados
-            for codigo, descricao in dialog._last_selected:
-                # Procura se o produto já está na lista
-                item_index = -1
-                for i in range(len(self._items)):
-                    if self._items[i][0] == codigo:
-                        item_index = i
-                        break
-                
-                # Se não existe, adiciona
-                if item_index == -1:
-                    self._items.append((codigo, descricao))
+            # Códigos que devem ficar marcados ao final: os que já estavam
+            # selecionados (antes de qualquer filtro local ativo em txt_search)
+            # + os recém-escolhidos. Todo item inserido nesta lista deve vir
+            # marcado por padrão.
+            already_selected = set(self.get_selected_values())
+            newly_selected = set()
 
-                    # Cria item com QCheckBox (igual ao MultiSelectCombo._populate_list)
-                    # para que select_all / clear_selection / get_selected_values funcionem
-                    item = QListWidgetItem()
-                    checkbox = QCheckBox(descricao)
-                    checkbox.setProperty("item_value", codigo)
-                    checkbox.setStyleSheet(_combo_qss("""
-                        QCheckBox {
-                            color: {{FG_PRIMARY}};
-                            spacing: 5px;
-                        }
-                        QCheckBox::indicator {
-                            width: 14px;
-                            height: 14px;
-                        }
-                        QCheckBox::indicator:unchecked {
-                            border: 1px solid {{BORDER}};
-                            background-color: {{CHECKBOX_BG}};
-                            border-radius: 2px;
-                        }
-                        QCheckBox::indicator:checked {
-                            border: 1px solid {{ACCENT}};
-                            background-color: {{ACCENT}};
-                            border-radius: 2px;
-                        }
-                    """))
-                    checkbox.setChecked(True)
-                    # Mesmo motivo do MultiSelectCombo._populate_list(): evita
-                    # que destruir um checkbox focado role o painel de filtros.
-                    checkbox.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-                    checkbox.stateChanged.connect(self._on_item_changed)
-                    item.setSizeHint(QSize(0, 24))
-                    self.list_widget.addItem(item)
-                    self.list_widget.setItemWidget(item, checkbox)
-                else:
-                    # Se já existe, marca o checkbox como selecionado
-                    widget = self.list_widget.itemWidget(self.list_widget.item(item_index))
-                    if widget:
-                        widget.blockSignals(True)
-                        widget.setChecked(True)
-                        widget.blockSignals(False)
-            
-            # Limpa campo de busca
+            existing_codes = {codigo for codigo, _ in self._items}
+            for codigo, descricao in dialog._last_selected:
+                newly_selected.add(codigo)
+                if codigo not in existing_codes:
+                    self._items.append((codigo, descricao))
+                    existing_codes.add(codigo)
+
+            # Limpa o campo de busca sem disparar _filter_items (evita
+            # repopular a lista duas vezes) e repopula a lista completa, sem
+            # filtro — necessário caso txt_search tivesse texto residual e
+            # list_widget estivesse mostrando um subconjunto filtrado.
+            self.txt_search.blockSignals(True)
             self.txt_search.clear()
-            
+            self.txt_search.blockSignals(False)
+            self._populate_list()
+
+            to_check = already_selected | newly_selected
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                checkbox = self.list_widget.itemWidget(item)
+                if checkbox and checkbox.property("item_value") in to_check:
+                    checkbox.blockSignals(True)
+                    checkbox.setChecked(True)
+                    checkbox.blockSignals(False)
+
             # Atualiza contagem e emite sinal
             self._update_count()
             self.selection_changed.emit(self.get_selected_values())

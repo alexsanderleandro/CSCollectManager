@@ -191,6 +191,19 @@ class AppConfig:
         cls._save_settings(settings)
 
     @classmethod
+    def get_last_pdf_dir(cls) -> str:
+        """Retorna o último diretório de anexo de PDF de contagem salvo, ou a pasta do usuário."""
+        settings = cls._load_settings()
+        return settings.get("last_pdf_dir", str(Path.home() / "Documents"))
+
+    @classmethod
+    def set_last_pdf_dir(cls, path: str) -> None:
+        """Salva o último diretório usado para anexar PDFs de contagem."""
+        settings = cls._load_settings()
+        settings["last_pdf_dir"] = path
+        cls._save_settings(settings)
+
+    @classmethod
     def get_theme(cls) -> str:
         """Retorna o tema salvo ('dark' ou 'light') ou 'dark' como padrão."""
         settings = cls._load_settings()

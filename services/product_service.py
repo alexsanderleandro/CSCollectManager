@@ -97,6 +97,7 @@ class ProductService:
             COALESCE(pe.CompoeVenda, 0) AS compoevenda,
             COALESCE(pe.EncomendaSN, 0) AS encomenda,
             pe.localizacao,
+            COALESCE(u.numdecimais, 3) AS numdecimais,
             CASE WHEN COALESCE(p.controlarlote, 0) != 0
                  THEN COALESCE(lote.numlote, '')
                  ELSE '' END AS numlote,
@@ -110,6 +111,7 @@ class ProductService:
         INNER JOIN produtos p ON p.codproduto = pe.codproduto
         LEFT JOIN GrupoEstoque g ON g.codgrupo = p.codgrupo
         LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
+        LEFT JOIN unidades u ON u.unidade = p.unidade
         OUTER APPLY (
             SELECT TOP 1
                 pl.numlote,
@@ -455,7 +457,7 @@ class ProductService:
             "estoquedeposito": float(row.estoquedeposito or 0),
             "estoque": float(row.estoque or 0),
             "localizacao": (row.localizacao or row.nomeLocalEstoque or "").strip(),
-            "casasdecimais": 3,
+            "casasdecimais": int(row.numdecimais) if row.numdecimais is not None else 3,
             "controlalote": True if row.numlote else False,
             "numlote": row.numlote or "",
             "datafabricacao": row.datafabricacao.strftime("%Y-%m-%d") if row.datafabricacao else None,

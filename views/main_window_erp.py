@@ -32,6 +32,16 @@ def _utc_to_local(dt_str: str) -> str:
     except Exception:
         return dt_str[:19]
 
+def _fmt_data_hora_br(dt_str: str) -> str:
+    """Formata um timestamp cru (ISO, com microssegundos) como 'dd/mm/aaaa hh:mm:ss'."""
+    if not dt_str:
+        return dt_str
+    try:
+        dt = datetime.fromisoformat(dt_str[:19])
+        return dt.strftime("%d/%m/%Y %H:%M:%S")
+    except Exception:
+        return dt_str[:19]
+
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QSplitter, QFrame, QLabel, QPushButton, QToolBar, QDockWidget,
@@ -93,7 +103,31 @@ logger = get_logger(__name__)
 
 class SidebarButton(QPushButton):
     """Botão estilizado para sidebar."""
-    
+
+    # __COR__ é substituído por texto simples (não por .format) antes de ir
+    # para themed_qss(), assim os placeholders {{TOKEN}} do tema não colidem
+    # com a sintaxe de chaves do Python.
+    _QSS = """
+        QPushButton {
+            background-color: transparent;
+            color: __COR__;
+            text-align: left;
+            padding: 10px 12px;
+            border: none;
+            border-radius: 0;
+            font-size: 10.5pt;
+        }
+        QPushButton:hover {
+            background-color: {{BG_TERTIARY}};
+            color: {{FG_PRIMARY}};
+        }
+        QPushButton:checked {
+            background-color: #1d6bb0;
+            color: #ffffff;
+            border-left: 3px solid {{ACCENT}};
+        }
+    """
+
     def __init__(self, icon: str, text: str, parent=None):
         """
         Inicializa o botão da barra lateral.
@@ -104,30 +138,31 @@ class SidebarButton(QPushButton):
             parent: Widget pai (opcional).
         """
         super().__init__(parent)
-        self.setText(f"  {icon}  {text}")
+        self._icon = icon
+        self._label = text
+        self._locked = False
         self.setCheckable(True)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setMinimumHeight(44)
-        self.setStyleSheet(themed_qss("""
-            QPushButton {
-                background-color: transparent;
-                color: {{FG_SECONDARY}};
-                text-align: left;
-                padding: 10px 12px;
-                border: none;
-                border-radius: 0;
-                font-size: 10.5pt;
-            }
-            QPushButton:hover {
-                background-color: {{BG_TERTIARY}};
-                color: {{FG_PRIMARY}};
-            }
-            QPushButton:checked {
-                background-color: #1d6bb0;
-                color: #ffffff;
-                border-left: 3px solid {{ACCENT}};
-            }
-        """))
+        self._apply_visual()
+
+    def set_locked(self, locked: bool):
+        """Alterna o visual "bloqueado" (🔒 + cor esmaecida) sem desabilitar o clique.
+
+        O botão continua clicável de propósito — quem decide o que fazer com
+        o clique num módulo bloqueado é o handler externo (mostrar aviso de
+        upgrade), não este widget.
+        """
+        if locked == self._locked:
+            return
+        self._locked = locked
+        self._apply_visual()
+
+    def _apply_visual(self):
+        icon = "🔒" if self._locked else self._icon
+        self.setText(f"  {icon}  {self._label}")
+        cor = "{{FG_DISABLED}}" if self._locked else "{{FG_SECONDARY}}"
+        self.setStyleSheet(themed_qss(self._QSS.replace("__COR__", cor)))
 
 
 class ModuleHeader(QFrame):
@@ -257,8 +292,16 @@ class MainWindowERP(QMainWindow):
     MODULE_HISTORY = "history"
     MODULE_DOWNLOAD_CONTAGENS = "download_contagens"
     MODULE_METRICS = "metrics"
+    MODULE_STOCK_ANALYSIS = "stock_analysis"
     MODULE_SETTINGS = "settings"
-    
+
+    # Módulos indisponíveis quando a licença é do tipo "Lite" — Produtos,
+    # Exportar Carga e Histórico continuam liberados em qualquer tipo.
+    LICENSE_LOCKED_MODULES = {
+        MODULE_DOWNLOAD_CONTAGENS, MODULE_METRICS,
+        MODULE_STOCK_ANALYSIS, MODULE_SETTINGS,
+    }
+
     def __init__(self, parent=None):
         """
         Inicializa a janela principal ERP.
@@ -276,6 +319,7 @@ class MainWindowERP(QMainWindow):
         self._current_module = self.MODULE_PRODUCTS
         self._empresa_info = {}
         self._usuario_info = {}
+        self._tipo_licenca: str = ""  # "Lite" bloqueia rotinas premium, ver LICENSE_LOCKED_MODULES
         self._local_estoque: str = "loja"  # Valor selecionado no filtro Loja/Depósito
         self._export_vendedor: Dict[str, Any] = {}  # Vendedor selecionado na tela de exportação
         self._connection_info = {}
@@ -361,6 +405,8 @@ class MainWindowERP(QMainWindow):
         self._create_history_page()
         self._create_download_contagens_page()
         self._create_metrics_page()
+        self._create_stock_analysis_page()
+        self._create_ai_settings_page()
 
         content_layout.addWidget(self._module_stack)
         
@@ -408,11 +454,13 @@ class MainWindowERP(QMainWindow):
             (self.MODULE_HISTORY,             "📋", "Histórico           F3"),
             (self.MODULE_DOWNLOAD_CONTAGENS,  "📥", "Download Contagens F4"),
             (self.MODULE_METRICS,             "📊", "Métricas            F7"),
+            (self.MODULE_STOCK_ANALYSIS,      "🔎", "Análise de Estoque"),
+            (self.MODULE_SETTINGS,            "⚙️", "Configurações      F12"),
         ]
         
         for module_id, icon, text in modules:
             btn = SidebarButton(icon, text)
-            btn.clicked.connect(lambda checked, m=module_id: self._switch_module(m))
+            btn.clicked.connect(lambda checked, m=module_id: self._on_sidebar_click(m))
             nav_layout.addWidget(btn)
             self._sidebar_buttons[module_id] = btn
         
@@ -1006,10 +1054,12 @@ class MainWindowERP(QMainWindow):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(8)
 
-        btn_refresh = QPushButton("🔄 Atualizar  [F5]")
-        btn_refresh.setMinimumHeight(36)
-        btn_refresh.clicked.connect(self._refresh_history)
-        controls_layout.addWidget(btn_refresh)
+        # Botão removido: histórico agora atualiza automaticamente ao acessar
+        # a rotina (via _switch_module) e continua disponível pelo F5.
+        # btn_refresh = QPushButton("🔄 Atualizar  [F5]")
+        # btn_refresh.setMinimumHeight(36)
+        # btn_refresh.clicked.connect(self._refresh_history)
+        # controls_layout.addWidget(btn_refresh)
 
         btn_open = QPushButton("📂 Abrir Pasta")
         btn_open.setMinimumHeight(36)
@@ -1130,6 +1180,10 @@ class MainWindowERP(QMainWindow):
 
     def _on_resend_history_to_api(self, item):
         """Reenvia para a API a carga do item de histórico selecionado."""
+        if self._tipo_licenca.strip().lower() == "lite":
+            self._mostrar_mensagem_recurso_pro()
+            return
+
         entry = item.data(Qt.ItemDataRole.UserRole)
         if not entry:
             return
@@ -1217,9 +1271,8 @@ class MainWindowERP(QMainWindow):
         action_select_all.triggered.connect(self._on_select_all)
         menu_edit.addAction(action_select_all)
         
-        action_refresh = QAction("Atualizar", self)
-        action_refresh.setShortcut(Shortcuts.REFRESH)
-        action_refresh.triggered.connect(self._on_refresh)
+        action_refresh = QAction("Atualizar  [F5]", self)
+        action_refresh.triggered.connect(self._on_refresh_shortcut)
         menu_edit.addAction(action_refresh)
         
         # Menu Visualizar
@@ -1253,13 +1306,14 @@ class MainWindowERP(QMainWindow):
             (Qt.Key.Key_F1,  lambda: self._switch_module(self.MODULE_PRODUCTS)),
             (Qt.Key.Key_F2,  lambda: self._switch_module(self.MODULE_EXPORT)),
             (Qt.Key.Key_F3,  lambda: self._switch_module(self.MODULE_HISTORY)),
-            (Qt.Key.Key_F4,  lambda: self._switch_module(self.MODULE_DOWNLOAD_CONTAGENS)),
+            (Qt.Key.Key_F4,  lambda: self._on_sidebar_click(self.MODULE_DOWNLOAD_CONTAGENS)),
             (Qt.Key.Key_F5,  self._on_refresh_shortcut),
             (Qt.Key.Key_F6,  self._on_clear_selection),
-            (Qt.Key.Key_F7,  lambda: self._switch_module(self.MODULE_METRICS)),
+            (Qt.Key.Key_F7,  lambda: self._on_sidebar_click(self.MODULE_METRICS)),
             (Qt.Key.Key_F8,  self._on_contagem_download),
             (Qt.Key.Key_F9,  self._on_select_all),
             (Qt.Key.Key_F11, self._on_start_export_shortcut),
+            (Qt.Key.Key_F12, lambda: self._on_sidebar_click(self.MODULE_SETTINGS)),
             (Qt.Key.Key_Escape, self._on_cancel_export_shortcut),
         ]
         for key, slot in shortcuts:
@@ -1280,6 +1334,42 @@ class MainWindowERP(QMainWindow):
     # NAVIGATION
     # ==========================================
     
+    def _is_module_locked(self, module_id: str) -> bool:
+        """Diz se `module_id` está bloqueado pela licença atual (só licença 'Lite')."""
+        return (
+            module_id in self.LICENSE_LOCKED_MODULES
+            and self._tipo_licenca.strip().lower() == "lite"
+        )
+
+    def _mostrar_mensagem_recurso_pro(self):
+        """Mensagem única exibida para qualquer rotina/ação bloqueada pela licença Lite."""
+        QMessageBox.information(
+            self,
+            "Recurso Pro",
+            "Este recurso está disponível apenas na licença Pro.\n\n"
+            "Entre em contato com o setor comercial da CEOsoftware.",
+        )
+
+    def _on_sidebar_click(self, module_id: str):
+        """Handler de clique da sidebar — intercepta módulos bloqueados pela licença.
+
+        Não usa `setEnabled(False)` nos botões de propósito: o pedido é que o
+        botão continue clicável e mostre a mensagem de upgrade, em vez de
+        simplesmente não reagir ao clique.
+        """
+        if self._is_module_locked(module_id):
+            # Mantém o botão do módulo atual marcado (o clique no bloqueado não deve "grudar")
+            if module_id in self._sidebar_buttons:
+                self._sidebar_buttons[module_id].setChecked(module_id == self._current_module)
+            self._mostrar_mensagem_recurso_pro()
+            return
+        self._switch_module(module_id)
+
+    def _atualizar_bloqueio_licenca(self):
+        """Aplica o visual de bloqueio (🔒) nos módulos indisponíveis na licença atual."""
+        for module_id, btn in self._sidebar_buttons.items():
+            btn.set_locked(self._is_module_locked(module_id))
+
     def _switch_module(self, module_id: str):
         """Alterna entre módulos."""
         if module_id not in self._pages:
@@ -1297,6 +1387,8 @@ class MainWindowERP(QMainWindow):
             self._on_contagens_refresh()
         elif module_id == self.MODULE_METRICS:
             self._on_metrics_refresh()
+        elif module_id == self.MODULE_HISTORY:
+            self._refresh_history()
 
         logger.debug(f"Módulo alterado para: {module_id}")
     
@@ -1313,6 +1405,10 @@ class MainWindowERP(QMainWindow):
         # Define código da empresa no painel de filtros para buscas dinâmicas
         if hasattr(self, "_filter_panel") and self._filter_panel:
             self._filter_panel.set_company_code(empresa.get("codigo"))
+
+        # Define a empresa logada na análise de estoque, para validar os PDFs anexados
+        if hasattr(self, "_stock_analysis_page") and self._stock_analysis_page:
+            self._stock_analysis_page.set_empresa_info(empresa.get("codigo"), empresa.get("nome"))
 
         if licenca:
             self._licenca_payload = licenca
@@ -1332,7 +1428,12 @@ class MainWindowERP(QMainWindow):
         validade_licenca = (licenca or {}).get("validade", "")
         tipo_licenca = (licenca or {}).get("tipo_licenca", "")
         self._status_bar.set_license_validity(validade_licenca, tipo_licenca)
-        
+
+        # Bloqueia (visualmente, sem desabilitar o clique) os módulos
+        # indisponíveis para licença "Lite" — ver LICENSE_LOCKED_MODULES.
+        self._tipo_licenca = tipo_licenca
+        self._atualizar_bloqueio_licenca()
+
         self.setWindowTitle(f"{APP_INFO.NAME} - v{APP_INFO.VERSION}")
         
         logger.info(f"Conexão configurada: {empresa_nome} / {usuario_nome}")
@@ -1565,6 +1666,9 @@ class MainWindowERP(QMainWindow):
             end_locais = filter_data.get("end_locais_estoque") or []
             self._filter_panel.configure_local_estoque(modo_local, end_locais)
 
+            if hasattr(self, "_stock_analysis_page") and self._stock_analysis_page:
+                self._stock_analysis_page.configure_local_estoque(modo_local, end_locais)
+
             self._status_bar.show_message("Filtros carregados", 3000)
             logger.info("Dados dos filtros carregados com sucesso")
         except Exception as e:
@@ -1756,11 +1860,20 @@ class MainWindowERP(QMainWindow):
             self._btn_start_export.click()
 
     def _on_refresh_shortcut(self):
-        """F5: Atualizar — roteia para o módulo ativo."""
-        if self._current_module == self.MODULE_HISTORY:
+        """F5 (e menu Editar → Atualizar): Atualizar — roteia para o módulo ativo.
+
+        Único ponto que reage à tecla F5 — não duplicar em outro QShortcut/
+        QAction com a mesma tecla: dois bindings ativos ao mesmo tempo tornam
+        a ativação ambígua para o Qt e nenhum dos dois dispara.
+        """
+        if self._current_module == self.MODULE_PRODUCTS:
+            self._on_refresh()
+        elif self._current_module == self.MODULE_HISTORY:
             self._refresh_history()
         elif self._current_module == self.MODULE_DOWNLOAD_CONTAGENS:
             self._on_contagens_refresh()
+        elif self._current_module == self.MODULE_METRICS:
+            self._on_metrics_refresh()
 
     def _on_cancel_export_shortcut(self):
         """Aciona Cancelar via ESC (apenas quando no módulo de exportação)."""
@@ -2308,6 +2421,9 @@ class MainWindowERP(QMainWindow):
         Parâmetros opcionais _override_* permitem forçar os valores de identificação
         (usado no reenvio a partir do histórico).
         """
+        if self._tipo_licenca.strip().lower() == "lite":
+            return
+
         from utils.config import AppConfig
         try:
             api_configured = AppConfig.is_api_configured()
@@ -2833,8 +2949,10 @@ class MainWindowERP(QMainWindow):
         self._contagens_table.setHorizontalHeaderLabels([
             "ID", "Nome do Arquivo", "Vendedor", "Aparelho", "CNPJ", "Data Envio", "URL",
         ])
-        self._contagens_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._contagens_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        _contagens_header = self._contagens_table.horizontalHeader()
+        for _col in (0, 2, 3, 4, 5):
+            _contagens_header.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
+        _contagens_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._contagens_table.setColumnHidden(6, True)   # URL oculta
         self._contagens_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._contagens_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -2919,7 +3037,10 @@ class MainWindowERP(QMainWindow):
             "Arquivo", "Vendedor", "Início", "Fim", "Leituras",
             "Não Encontrados", "Duplicados", "Ajustes Manuais",
         ])
-        self._metrics_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        _metrics_header = self._metrics_table.horizontalHeader()
+        _metrics_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for _col in range(1, self._metrics_table.columnCount()):
+            _metrics_header.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
         self._metrics_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._metrics_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._metrics_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -2964,6 +3085,22 @@ class MainWindowERP(QMainWindow):
         btn_refresh.clicked.connect(self._on_metrics_refresh)
         btn_detalhes.clicked.connect(self._on_metrics_ver_detalhes)
 
+    def _create_ai_settings_page(self):
+        """Cria a página de configuração do provedor de IA (F12)."""
+        from views.ai_settings_page import AISettingsPage
+
+        page = AISettingsPage()
+        self._module_stack.addWidget(page)
+        self._pages[self.MODULE_SETTINGS] = self._module_stack.count() - 1
+
+    def _create_stock_analysis_page(self):
+        """Cria a página de análise de estoque (PDFs de contagem × ERP × IA)."""
+        from views.stock_analysis_page import StockAnalysisPage
+
+        self._stock_analysis_page = StockAnalysisPage()
+        self._module_stack.addWidget(self._stock_analysis_page)
+        self._pages[self.MODULE_STOCK_ANALYSIS] = self._module_stack.count() - 1
+
     def _on_metrics_refresh(self):
         """Recarrega a tabela de métricas a partir dos zips na pasta de contagens."""
         from PySide6.QtWidgets import QTableWidgetItem
@@ -2994,8 +3131,8 @@ class MainWindowERP(QMainWindow):
                 valores = [
                     item['arquivo_zip'],
                     f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -'),
-                    str(periodo.get('inicio', '')),
-                    str(periodo.get('fim', '')),
+                    _fmt_data_hora_br(str(periodo.get('inicio', ''))),
+                    _fmt_data_hora_br(str(periodo.get('fim', ''))),
                     str(resumo.get('total_leituras', '')),
                     str(resumo.get('total_nao_encontrado', '')),
                     str(resumo.get('total_duplicado', '')),
@@ -3042,14 +3179,20 @@ class MainWindowERP(QMainWindow):
         por_localizacao = m.get('por_localizacao') or []
         por_grupo = m.get('por_grupo') or []
 
+        from PySide6.QtGui import QGuiApplication
+
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Métricas — {item['arquivo_zip']}")
-        dlg.resize(640, 520)
+        tela = QGuiApplication.primaryScreen().availableGeometry()
+        largura, altura = int(tela.width() * 0.85), int(tela.height() * 0.85)
+        dlg.resize(largura, altura)
+        dlg.move(tela.center().x() - largura // 2, tela.center().y() - altura // 2)
         layout = _QVBoxLayout(dlg)
 
         cabecalho = _QLabel(
             f"<b>{m.get('nomeusuario', '')}</b> (cód. {m.get('codusuario', '')}) — "
-            f"{(m.get('periodo') or {}).get('inicio', '')} a {(m.get('periodo') or {}).get('fim', '')}"
+            f"{_fmt_data_hora_br((m.get('periodo') or {}).get('inicio', ''))} a "
+            f"{_fmt_data_hora_br((m.get('periodo') or {}).get('fim', ''))}"
         )
         layout.addWidget(cabecalho)
 
@@ -3074,7 +3217,9 @@ class MainWindowERP(QMainWindow):
             t.setColumnCount(len(colunas))
             t.setHorizontalHeaderLabels(colunas)
             t.setRowCount(len(linhas))
-            t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            header = t.horizontalHeader()
+            header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            header.setStretchLastSection(True)
             t.verticalHeader().setVisible(False)
             t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
             for r, linha in enumerate(linhas):
@@ -3090,7 +3235,8 @@ class MainWindowERP(QMainWindow):
         abas.addTab(
             _tabela(
                 ["Início", "Fim", "Duração (min)", "Leituras", "Ociosidade (min)"],
-                [[s.get('inicio'), s.get('fim'), s.get('duracao_min'), s.get('leituras'), s.get('tempo_ocioso_min')]
+                [[_fmt_data_hora_br(s.get('inicio')), _fmt_data_hora_br(s.get('fim')),
+                  s.get('duracao_min'), s.get('leituras'), s.get('tempo_ocioso_min')]
                  for s in sessoes],
             ),
             "Sessões",
