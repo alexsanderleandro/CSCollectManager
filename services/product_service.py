@@ -747,11 +747,13 @@ class ProductService:
                 pe.localizacao,
                 COALESCE(p.CodDUN14, '') AS coddun14,
                 p.VolumesPorEmbalagem AS volumesporembalagem,
+                COALESCE(u.numdecimais, 3) AS numdecimais,
                 '' AS numlote, NULL AS datafabricacao, NULL AS datavalidade
             FROM produtosestoque pe
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
             LEFT JOIN GrupoEstoque g ON g.codgrupo = p.codgrupo
             LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
+            LEFT JOIN unidades u ON u.unidade = p.unidade
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
               AND pe.CompoeInventario = 1

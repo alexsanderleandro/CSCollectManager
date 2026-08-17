@@ -238,6 +238,21 @@ class AppConfig:
             settings["default_gap_ocioso_min"] = 10
         cls._save_settings(settings)
 
+    @classmethod
+    def get_ultima_verificacao_licenca_online(cls) -> str:
+        """Retorna o timestamp ISO da última verificação de licença online
+        bem-sucedida (usado para a tolerância offline), ou string vazia se
+        nunca houve uma."""
+        settings = cls._load_settings()
+        return settings.get("ultima_verificacao_licenca_online", "")
+
+    @classmethod
+    def set_ultima_verificacao_licenca_online(cls, timestamp_iso: str) -> None:
+        """Salva o timestamp ISO da última verificação de licença online bem-sucedida."""
+        settings = cls._load_settings()
+        settings["ultima_verificacao_licenca_online"] = timestamp_iso
+        cls._save_settings(settings)
+
     # ---------------------------
     # Configurações da API CSCollect (lidas do arquivo licenca.key)
     # ---------------------------

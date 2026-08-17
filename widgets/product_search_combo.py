@@ -54,6 +54,7 @@ class ProductSearchCombo(MultiSelectCombo):
         restore_scroll = self._begin_scroll_guard()
         # Limpa a lista interna de itens
         self._items.clear()
+        self._checked_values.clear()
         # Limpa o widget de lista (checkboxes dinâmicos)
         self.list_widget.clear()
         # Limpa o campo de busca
@@ -95,37 +96,27 @@ class ProductSearchCombo(MultiSelectCombo):
         dialog = ProductSearchDialog(search_text, self._company_code, self)
         
         if dialog.exec() == ProductSearchDialog.Accepted and hasattr(dialog, '_last_selected'):
-            # Códigos que devem ficar marcados ao final: os que já estavam
-            # selecionados (antes de qualquer filtro local ativo em txt_search)
-            # + os recém-escolhidos. Todo item inserido nesta lista deve vir
-            # marcado por padrão.
-            already_selected = set(self.get_selected_values())
-            newly_selected = set()
-
             existing_codes = {codigo for codigo, _ in self._items}
             for codigo, descricao in dialog._last_selected:
-                newly_selected.add(codigo)
                 if codigo not in existing_codes:
                     self._items.append((codigo, descricao))
                     existing_codes.add(codigo)
+                # Todo item inserido nesta lista deve vir marcado por padrão.
+                # Usa _checked_values (fonte da verdade persistente, ver
+                # MultiSelectCombo) em vez de get_selected_values(), que só
+                # enxerga o que está renderizado — se txt_search tiver texto
+                # residual de uma busca anterior, list_widget pode estar
+                # mostrando um subconjunto filtrado no momento do Enter.
+                self._checked_values.add(codigo)
 
             # Limpa o campo de busca sem disparar _filter_items (evita
             # repopular a lista duas vezes) e repopula a lista completa, sem
-            # filtro — necessário caso txt_search tivesse texto residual e
-            # list_widget estivesse mostrando um subconjunto filtrado.
+            # filtro. O estado marcado vem de _checked_values, então é
+            # preservado independentemente de qualquer filtro local ativo.
             self.txt_search.blockSignals(True)
             self.txt_search.clear()
             self.txt_search.blockSignals(False)
             self._populate_list()
-
-            to_check = already_selected | newly_selected
-            for i in range(self.list_widget.count()):
-                item = self.list_widget.item(i)
-                checkbox = self.list_widget.itemWidget(item)
-                if checkbox and checkbox.property("item_value") in to_check:
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(True)
-                    checkbox.blockSignals(False)
 
             # Atualiza contagem e emite sinal
             self._update_count()

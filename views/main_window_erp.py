@@ -320,6 +320,7 @@ class MainWindowERP(QMainWindow):
         self._empresa_info = {}
         self._usuario_info = {}
         self._tipo_licenca: str = ""  # "Lite" bloqueia rotinas premium, ver LICENSE_LOCKED_MODULES
+        self._sessao_bloqueada_por_licenca: bool = False
         self._local_estoque: str = "loja"  # Valor selecionado no filtro Loja/Depósito
         self._export_vendedor: Dict[str, Any] = {}  # Vendedor selecionado na tela de exportação
         self._connection_info = {}
@@ -1370,6 +1371,22 @@ class MainWindowERP(QMainWindow):
         for module_id, btn in self._sidebar_buttons.items():
             btn.set_locked(self._is_module_locked(module_id))
 
+    def _bloquear_sessao_por_licenca(self, mensagem: str):
+        """Bloqueia a sessão atual imediatamente — chamado pela verificação de
+        licença em background (`services/licenca_online.py`) ao detectar que a
+        licença caiu (bloqueada no Neon) ou expirou. Diferente do bloqueio por
+        licença "Lite" (`_is_module_locked`), aqui TODOS os módulos ficam
+        inacessíveis, não só os premium — não há mais sessão válida.
+        """
+        if self._sessao_bloqueada_por_licenca:
+            return
+        self._sessao_bloqueada_por_licenca = True
+
+        for btn in self._sidebar_buttons.values():
+            btn.setEnabled(False)
+
+        QMessageBox.critical(self, "Licença bloqueada", mensagem)
+
     def _switch_module(self, module_id: str):
         """Alterna entre módulos."""
         if module_id not in self._pages:
@@ -1433,6 +1450,14 @@ class MainWindowERP(QMainWindow):
         # indisponíveis para licença "Lite" — ver LICENSE_LOCKED_MODULES.
         self._tipo_licenca = tipo_licenca
         self._atualizar_bloqueio_licenca()
+
+        # Checagem periódica de licença em background — bloqueia a sessão na
+        # hora se o status cair (Neon) ou a licença expirar.
+        try:
+            from services.licenca_online import iniciar_verificacao_background
+            iniciar_verificacao_background(self)
+        except Exception as e:
+            logger.error(f"Falha ao iniciar verificação de licença em background: {e}")
 
         self.setWindowTitle(f"{APP_INFO.NAME} - v{APP_INFO.VERSION}")
         

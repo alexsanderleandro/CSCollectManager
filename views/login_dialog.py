@@ -31,7 +31,7 @@ from utils.config import AppConfig
 from app.styles import get_active_theme
 from pathlib import Path
 import re
-import cscollectmanager_verify
+from services import licenca_online
 import sys
 
 
@@ -991,25 +991,14 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado, o sistema não poderá ser aberto.\nEntre em contato com o suporte para obter uma licença válida.")
                 return False
 
-            # Tenta verificar cada arquivo .key usando a biblioteca utilitária,
-            # que espera uma MASTER_KEY (via argumento ou env MASTER_KEY).
+            # Sincroniza cada arquivo .key candidato com o Neon (via CSCollectAPI);
+            # cai no .key local (dentro da tolerância offline) se não houver rede.
             payload_dict = None
             licenca_erro = None
-            # Obtém MASTER_KEY centralmente (env -> .env -> AppConfig file)
-            mk_source = None
-            try:
-                from utils.master_key import load_master_key
-                master_key, mk_source = load_master_key()
-            except Exception:
-                master_key = None
 
             for cand in key_files:
                 try:
-                    # Se master_key for None, a função utilitária tentará usar env internamente
-                    if master_key is not None:
-                        payload = cscollectmanager_verify.load_and_verify_file(str(cand), master_key)
-                    else:
-                        payload = cscollectmanager_verify.load_and_verify_file(str(cand))
+                    payload = licenca_online.sincronizar_licenca(str(cand))
                     payload_dict = payload
                     # Mostrar caminho do arquivo de licença verificado na UI (tela de conexão)
                     try:
@@ -1184,22 +1173,11 @@ class LoginDialog(QDialog):
                 QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado. O sistema não poderá ser aberto sem uma licença válida.")
                 return False
 
-            # Obtém MASTER_KEY (registra a origem em mk_source para debug)
-            mk_source = None
-            try:
-                from utils.master_key import load_master_key
-                master_key, mk_source = load_master_key()
-            except Exception:
-                master_key = None
-
             payload_dict = None
             last_error = None
             for cand in key_files:
                 try:
-                    if master_key is not None:
-                        payload = cscollectmanager_verify.load_and_verify_file(str(cand), master_key)
-                    else:
-                        payload = cscollectmanager_verify.load_and_verify_file(str(cand))
+                    payload = licenca_online.sincronizar_licenca(str(cand))
                     payload_dict = payload
                     try:
                         import os as _os

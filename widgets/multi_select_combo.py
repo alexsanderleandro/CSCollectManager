@@ -70,7 +70,11 @@ class MultiSelectCombo(QWidget):
         self._title = title
         self._placeholder = placeholder
         self._items: List[Tuple[Any, str]] = []  # (value, display_text)
-        
+        # Fonte da verdade do estado "marcado", independente de qual
+        # subconjunto de _items está renderizado no momento em list_widget
+        # (filtro local ativo esconde/recria checkboxes, que são efêmeros).
+        self._checked_values: set = set()
+
         self._setup_ui()
         self._connect_signals()
     
@@ -256,6 +260,10 @@ class MultiSelectCombo(QWidget):
             # no painel e a QScrollArea rola até ele. A lista (ClickFocus)
             # continua recebendo o clique normalmente.
             checkbox.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            # Estado inicial vem de _checked_values (fonte da verdade
+            # persistente) — definido antes de conectar o sinal, para não
+            # reemitir stateChanged durante a construção da lista.
+            checkbox.setChecked(value in self._checked_values)
             checkbox.stateChanged.connect(self._on_item_changed)
 
             item.setSizeHint(QSize(0, 24))
@@ -264,23 +272,11 @@ class MultiSelectCombo(QWidget):
     
     def _filter_items(self, text: str):
         """Filtra itens pelo texto."""
-        # Salva seleção atual
-        selected = self.get_selected_values()
         cursor_pos = self.txt_search.cursorPosition()
 
-        # Repopula com filtro
+        # Repopula com filtro — o estado marcado vem de _checked_values,
+        # que não é afetado por itens escondidos/recriados pelo filtro.
         self._populate_list(text)
-
-        # Restaura seleção
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            checkbox = self.list_widget.itemWidget(item)
-            if checkbox:
-                value = checkbox.property("item_value")
-                if value in selected:
-                    checkbox.blockSignals(True)
-                    checkbox.setChecked(True)
-                    checkbox.blockSignals(False)
 
         self._update_count()
 
@@ -288,9 +284,16 @@ class MultiSelectCombo(QWidget):
         # o que rouba o foco de txt_search — devolve o foco e o cursor.
         self.txt_search.setFocus()
         self.txt_search.setCursorPosition(cursor_pos)
-    
+
     def _on_item_changed(self, state: int):
         """Callback quando item é marcado/desmarcado."""
+        checkbox = self.sender()
+        if checkbox is not None:
+            value = checkbox.property("item_value")
+            if checkbox.isChecked():
+                self._checked_values.add(value)
+            else:
+                self._checked_values.discard(value)
         self._update_count()
         self.selection_changed.emit(self.get_selected_values())
     
@@ -328,13 +331,16 @@ class MultiSelectCombo(QWidget):
                 checkbox.blockSignals(True)
                 checkbox.setChecked(True)
                 checkbox.blockSignals(False)
-        
+                self._checked_values.add(checkbox.property("item_value"))
+
         self._update_count()
         self.selection_changed.emit(self.get_selected_values())
-    
+
     def clear_selection(self):
         """Limpa seleção e campo de busca."""
         restore_scroll = self._begin_scroll_guard()
+
+        self._checked_values.clear()
 
         # Limpa o texto digitado no campo de filtro
         self.txt_search.blockSignals(True)
@@ -362,6 +368,7 @@ class MultiSelectCombo(QWidget):
         Args:
             values: Lista de valores a selecionar
         """
+        self._checked_values = set(values)
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             checkbox = self.list_widget.itemWidget(item)
