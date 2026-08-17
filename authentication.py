@@ -237,26 +237,46 @@ def list_companies(
 # Autenticação de usuário (padrão CEOSoftware)
 # -----------------------------
 
+class LoginNegado(Exception):
+    """Login negado por regra de negócio (usuário inativo, nível de acesso
+    insuficiente, empresa não autorizada, ou dados do usuário não
+    encontrados) — diferente de senha incorreta, que continua retornando
+    None a partir de `verify_user`."""
+
+    def __init__(self, motivo: str):
+        self.motivo = motivo
+        super().__init__(motivo)
+
+
 def verify_user(
     username: str,
     password: str,
     cfg: Optional[DBConfig] = None,
     require_active: bool = True,
     require_manager: bool = False,
+    require_nivel_supervisor: bool = False,
+    nivel_supervisor_valor: int = 0,
+    empresa_codigo: Optional[str] = None,
     sp_validate_password: str = "dbo.csspValidaSenha",
     user_table: str = "Usuarios",
     username_field: str = "NomeUsuario",
+    nivel_field: str = "NivelUsuario",
+    empresas_field: str = "EmpresasAutorizado",
 ) -> Optional[Dict[str, Any]]:
     """
     Verifica credenciais no padrão:
       1) Executa stored procedure csspValidaSenha (username, password) -> retorna 1/True se válido
       2) Busca dados do usuário na tabela Usuarios
-      3) (Opcional) Exige InativosN=0 e/ou PDVGerenteSN=1
+      3) (Opcional) Exige InativosN=0, PDVGerenteSN=1, NivelUsuario=nivel_supervisor_valor
+         e/ou que `empresa_codigo` esteja na lista de EmpresasAutorizado
 
-    Retorna dict com dados do usuário em caso de sucesso, ou None em falha.
+    Retorna dict com dados do usuário em caso de sucesso, ou None se a senha
+    estiver incorreta. Levanta `LoginNegado` (com `.motivo`) quando a senha
+    está correta mas alguma regra de negócio barra o acesso — permite à UI
+    mostrar uma mensagem específica em vez de "usuário ou senha inválidos".
 
     Campos retornados (quando disponíveis):
-      CodUsuario, NomeUsuario, InativosN, PDVGerenteSN
+      CodUsuario, NomeUsuario, InativosN, PDVGerenteSN, NivelUsuario, EmpresasAutorizado
     """
     if not username:
         return None
@@ -282,7 +302,8 @@ def verify_user(
         try:
             cur.execute(
                 f"""
-                SELECT CodUsuario, {username_field} AS NomeUsuario, InativosN, PDVGerenteSN
+                SELECT CodUsuario, {username_field} AS NomeUsuario, InativosN, PDVGerenteSN,
+                       {nivel_field} AS NivelUsuario, {empresas_field} AS EmpresasAutorizado
                 FROM {user_table} WITH (NOLOCK)
                 WHERE {username_field} = ?
                 """,
@@ -293,22 +314,35 @@ def verify_user(
             row = None
 
         if not row:
-            # usuário validou na SP mas não achou registro detalhado
-            return {"CodUsuario": 0, "NomeUsuario": username}
+            # usuário validou na SP mas não achou registro detalhado —
+            # sem os dados não dá pra checar ativo/nível/empresa, então nega.
+            raise LoginNegado("Não foi possível verificar os dados do usuário.")
 
         cod = int(row[0]) if row[0] is not None else 0
         nome_usuario = str(row[1]) if row[1] is not None else ""
         inativos = int(row[2]) if row[2] is not None else 1
         gerente = int(row[3]) if row[3] is not None else 0
+        # NULL nunca bate com nivel_supervisor_valor (fail-safe, nega por padrão)
+        nivel = int(row[4]) if row[4] is not None else -1
+        empresas_raw = str(row[5]) if row[5] is not None else ""
 
         if require_active and inativos != 0:
-            return None
+            raise LoginNegado("Usuário inativo.")
         if require_manager and gerente != 1:
-            return None
+            raise LoginNegado("Usuário sem permissão de gerente.")
+        if require_nivel_supervisor and nivel != nivel_supervisor_valor:
+            raise LoginNegado("Nível de acesso insuficiente (requer supervisor).")
+        if empresa_codigo is not None:
+            empresas_norm = f",{empresas_raw.strip().strip(',')}," if empresas_raw.strip() else ""
+            alvo = f",{str(empresa_codigo).strip()},"
+            if alvo not in empresas_norm:
+                raise LoginNegado("Usuário não autorizado para esta empresa.")
 
         return {
             "CodUsuario": cod,
             "NomeUsuario": nome_usuario,
             "InativosN": inativos,
             "PDVGerenteSN": gerente,
+            "NivelUsuario": nivel,
+            "EmpresasAutorizado": empresas_raw,
         }

@@ -48,18 +48,23 @@ class AuthService:
         """
         if not username or not password:
             return None
-        
+
         # Usa o módulo authentication existente
-        user_data = auth_module.verify_user(
-            username=username,
-            password=password,
-            require_active=require_active,
-            require_manager=require_manager
-        )
-        
+        try:
+            user_data = auth_module.verify_user(
+                username=username,
+                password=password,
+                require_active=require_active,
+                require_manager=require_manager
+            )
+        except auth_module.LoginNegado:
+            # Regra de negócio (inativo/nível/empresa) barrou o acesso —
+            # este método só expõe Optional[User], sem o motivo detalhado.
+            return None
+
         if user_data:
             return User.from_dict(user_data)
-        
+
         return None
     
     def validate_session(self, user: User) -> bool:

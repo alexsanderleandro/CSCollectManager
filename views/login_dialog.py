@@ -51,7 +51,7 @@ def _extract_api_token(token: str) -> str:
 
 # Importações para persistência e autenticação
 import login as login_module
-from authentication import DBConfig, verify_user, get_connection
+from authentication import DBConfig, verify_user, get_connection, LoginNegado
 
 logger = get_logger(__name__)
 
@@ -365,7 +365,7 @@ class AuthWorker(QThread):
     
     finished = Signal(bool, str, dict)  # sucesso, mensagem, dados_usuario
     
-    def __init__(self, username: str, password: str, db_config: DBConfig):
+    def __init__(self, username: str, password: str, db_config: DBConfig, empresa_codigo: str = ""):
         """
         Inicializa o worker de autenticação.
 
@@ -373,32 +373,40 @@ class AuthWorker(QThread):
             username: Nome de usuário para autenticar.
             password: Senha do usuário.
             db_config: Configuração de conexão com o banco de dados.
+            empresa_codigo: Código da empresa selecionada na tela de login —
+                usuário precisa estar autorizado para ela (EmpresasAutorizado).
         """
         super().__init__()
         self._username = username
         self._password = password
         self._db_config = db_config
-    
+        self._empresa_codigo = empresa_codigo
+
     def run(self):
         """Executa autenticação."""
         try:
             logger.info(f"Autenticando usuário: {self._username}")
-            
+
             user_data = verify_user(
                 username=self._username,
                 password=self._password,
                 cfg=self._db_config,
                 require_active=True,
-                require_manager=False
+                require_manager=False,
+                require_nivel_supervisor=True,
+                empresa_codigo=self._empresa_codigo,
             )
-            
+
             if user_data:
                 logger.info(f"Usuário autenticado: {user_data.get('NomeUsuario')}")
                 self.finished.emit(True, "Autenticação bem-sucedida!", user_data)
             else:
                 logger.warning(f"Falha na autenticação: {self._username}")
                 self.finished.emit(False, "Usuário ou senha inválidos.", {})
-                
+
+        except LoginNegado as e:
+            logger.warning(f"Login negado ({self._username}): {e.motivo}")
+            self.finished.emit(False, e.motivo, {})
         except Exception as e:
             logger.error(f"Erro na autenticação: {e}")
             self.finished.emit(False, f"Erro ao autenticar: {str(e)}", {})
@@ -1501,7 +1509,8 @@ class LoginDialog(QDialog):
         )
         
         # Inicia worker de autenticação
-        self._auth_worker = AuthWorker(username, password, db_config)
+        empresa_codigo = str((self._selected_empresa or {}).get("codigo", ""))
+        self._auth_worker = AuthWorker(username, password, db_config, empresa_codigo=empresa_codigo)
         self._auth_worker.finished.connect(self._on_auth_finished)
         self._auth_worker.start()
     
