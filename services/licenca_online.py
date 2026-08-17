@@ -5,15 +5,21 @@ Verificação de licença online contra o CSCollectAPI (Neon, tabela `clientes`)
 substituindo a verificação HMAC local que existia em `cscollectmanager_verify.py`.
 
 Fluxo:
-- `sincronizar_licenca()`: consulta `GET /licenca/{cnpj}` no CSCollectAPI. Se
-  responder, atualiza `validade`/`tipo_licenca` no `.key` local (únicos campos
-  regravados — o restante do arquivo, incluindo dados de conexão com o ERP,
-  não é tocado). Se não responder, usa o `.key` local como fallback, mas só
-  dentro de uma janela de tolerância offline (`OFFLINE_TOLERANCIA_DIAS`),
-  rastreada via `AppConfig.get/set_ultima_verificacao_licenca_online`.
+- `sincronizar_licenca()`: no máximo uma vez por dia (mesma regra do app
+  mobile, para manter consistência), consulta `GET /licenca/{cnpj}` no
+  CSCollectAPI. Se responder, atualiza `validade`/`tipo_licenca` no `.key`
+  local (únicos campos regravados — o restante do arquivo, incluindo dados
+  de conexão com o ERP, não é tocado). Se já verificou hoje, ou se a rede
+  falhar, usa o `.key` local como fallback — nesse segundo caso, só dentro
+  de uma janela de tolerância offline (`OFFLINE_TOLERANCIA_DIAS`), rastreada
+  via `AppConfig.get/set_ultima_verificacao_licenca_online`.
 - `iniciar_verificacao_background()`: repete a checagem periodicamente com o
-  app aberto, bloqueando a sessão na hora se a licença cair (`ativo=False`
-  no Neon) ou expirar.
+  app aberto (na prática, por causa do limite de uma vez por dia, só bate
+  rede de fato na primeira chamada do dia — as demais são leitura local
+  instantânea), bloqueando a sessão na hora se a licença cair (`ativo=False`
+  no Neon) ou expirar. Roda sempre em thread separada — mesmo a checagem
+  "só uma vez por dia" pode, na única vez que bate rede, levar até
+  `TIMEOUT_SEGUNDOS`, e isso nunca deve travar a UI.
 
 Licença bloqueada/expirada é representada localmente escrevendo `validade`
 com uma data já vencida — reaproveita o bloqueio por expiração que já existe
@@ -33,7 +39,7 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 OFFLINE_TOLERANCIA_DIAS = 4
-TIMEOUT_SEGUNDOS = 8
+TIMEOUT_SEGUNDOS = 60
 INTERVALO_BACKGROUND_MIN = 30
 
 
@@ -73,6 +79,18 @@ def _data_vencida_ontem() -> str:
     return (date.today() - timedelta(days=1)).isoformat()
 
 
+def _ja_verificou_online_hoje() -> bool:
+    """Diz se já houve uma verificação online bem-sucedida hoje — mesma regra
+    do app mobile (no máximo uma verificação online por dia)."""
+    ultima = AppConfig.get_ultima_verificacao_licenca_online()
+    if not ultima:
+        return False
+    try:
+        return datetime.fromisoformat(ultima).date() == date.today()
+    except Exception:
+        return False
+
+
 def consultar_licenca_online(
     cnpj: str, api_url: str, api_authorization: str, timeout: int = TIMEOUT_SEGUNDOS
 ) -> Optional[Dict[str, Any]]:
@@ -109,6 +127,17 @@ def sincronizar_licenca(caminho_key: Optional[str] = None) -> Dict[str, Any]:
         raise FileNotFoundError("Nenhum arquivo .key encontrado.")
 
     payload = _ler_key_local(caminho_key)
+
+    if _ja_verificou_online_hoje() and not _licenca_bloqueada(payload):
+        # Já verificou online hoje e a licença local está válida — mesma
+        # regra do app mobile: no máximo uma verificação online por dia. Usa
+        # o .key local direto, sem rede.
+        #
+        # Exceção: se o .key local está marcando bloqueio/expiração, o limite
+        # de 1x/dia é ignorado e tenta online de novo a cada carregamento —
+        # senão o cliente ficaria preso no bloqueio até o dia seguinte, mesmo
+        # que o suporte já tenha corrigido a licença no Neon.
+        return payload
 
     cnpjs = payload.get('cnpjs') or []
     cnpj = (cnpjs[0] if cnpjs else '').strip()
@@ -176,23 +205,38 @@ def iniciar_verificacao_background(main_window, intervalo_min: int = INTERVALO_B
     app está aberto, bloqueando a sessão imediatamente (via
     ``main_window._bloquear_sessao_por_licenca``) se o status cair para
     bloqueado/expirado.
+
+    A checagem em si roda numa QThread separada — mesmo com o limite de uma
+    verificação online por dia, a única chamada do dia que bate rede pode
+    levar até ``TIMEOUT_SEGUNDOS``, e isso nunca deve travar a UI.
     """
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import QThread, QTimer, Signal
+
+    class _VerificacaoWorker(QThread):
+        resultado = Signal(object)  # payload (dict) ou None em caso de erro
+
+        def run(self):
+            try:
+                self.resultado.emit(sincronizar_licenca())
+            except Exception as e:
+                logger.error(f"[licenca_online] Falha na verificação em background: {e}")
+                self.resultado.emit(None)
 
     timer = QTimer(main_window)
 
-    def _checar():
-        try:
-            payload = sincronizar_licenca()
-        except Exception as e:
-            logger.error(f"[licenca_online] Falha na verificação em background: {e}")
-            return
-
-        if _licenca_bloqueada(payload):
+    def _tratar_resultado(payload):
+        if payload and _licenca_bloqueada(payload):
             main_window._bloquear_sessao_por_licenca(
                 "Sua licença foi bloqueada ou expirou.\n\n"
                 "Entre em contato com o setor comercial da CEOsoftware."
             )
+
+    def _checar():
+        worker = _VerificacaoWorker(main_window)
+        worker.resultado.connect(_tratar_resultado)
+        # Mantém a referência viva até o worker terminar sozinho.
+        main_window._licenca_online_worker = worker
+        worker.start()
 
     timer.timeout.connect(_checar)
     timer.start(intervalo_min * 60_000)

@@ -111,7 +111,11 @@ class ProductService:
         INNER JOIN produtos p ON p.codproduto = pe.codproduto
         LEFT JOIN GrupoEstoque g ON g.codgrupo = p.codgrupo
         LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
-        LEFT JOIN unidades u ON u.unidade = p.unidade
+        OUTER APPLY (
+            SELECT TOP 1 un.numdecimais
+            FROM unidades un
+            WHERE un.unidade = p.unidade
+        ) AS u
         OUTER APPLY (
             SELECT TOP 1
                 pl.numlote,
@@ -753,7 +757,11 @@ class ProductService:
             INNER JOIN produtos p ON p.codproduto = pe.codproduto
             LEFT JOIN GrupoEstoque g ON g.codgrupo = p.codgrupo
             LEFT JOIN LocalEstoque le ON le.NomeLocalEstoque = pe.localizacao
-            LEFT JOIN unidades u ON u.unidade = p.unidade
+            OUTER APPLY (
+                SELECT TOP 1 un.numdecimais
+                FROM unidades un
+                WHERE un.unidade = p.unidade
+            ) AS u
             WHERE pe.situacao = 'A'
               AND p.controlarestoque = 1
               AND pe.CompoeInventario = 1

@@ -329,6 +329,37 @@ class ConnectionWorker(QThread):
             self.finished.emit(False, _friendly_connection_error(e, banco, servidor), [])
 
 
+class LicencaOnlineWorker(QThread):
+    """Worker para sincronizar a licença online (Neon, via CSCollectAPI) em
+    background, sem travar a UI — a checagem online (no máximo uma por dia,
+    ver `services/licenca_online.py`) pode levar até 60s na primeira
+    verificação do dia (ex.: cold start do servidor no Render).
+
+    Tenta cada arquivo .key candidato em sequência até um dar certo, mesma
+    lógica que antes rodava direto na thread da UI.
+    """
+
+    finished = Signal(str, object, object)  # caminho do .key usado, payload (dict|None), erro (str|None)
+
+    def __init__(self, key_files: list):
+        super().__init__()
+        self._key_files = key_files
+
+    def run(self):
+        payload_dict = None
+        erro = None
+        cand_path = ""
+        for cand in self._key_files:
+            try:
+                payload_dict = licenca_online.sincronizar_licenca(str(cand))
+                cand_path = str(cand)
+                break
+            except Exception as exc:
+                erro = str(exc)
+                continue
+        self.finished.emit(cand_path, payload_dict, erro)
+
+
 class AuthWorker(QThread):
     """Worker para autenticar usuário em background."""
     
@@ -411,6 +442,12 @@ class LoginDialog(QDialog):
         self._auth_worker: Optional[AuthWorker] = None
         self._licenca_payload: dict = {}  # Payload do arquivo .key (dispositivos, cnpjs, etc.)
         self._licenca_token_raw: str = ""  # Token bruto do arquivo .key (para api_authorization)
+        self._license_worker: Optional[LicencaOnlineWorker] = None
+        self._startup_license_worker: Optional[LicencaOnlineWorker] = None
+        self._license_connection: dict = {}  # Conexão sendo validada (usada no callback assíncrono)
+        self._license_on_success = None  # Callback chamado quando a licença é validada com sucesso
+        self._license_elapsed_timer: Optional[QTimer] = None  # Contador de segundos exibido durante a verificação
+        self._license_elapsed_seconds: int = 0
         
         self._setup_ui()
         self._connect_signals()
@@ -946,340 +983,281 @@ class LoginDialog(QDialog):
             logger.error(f"Erro ao carregar conexões: {e}")
             self._lbl_connection_status.setText(f"❌ Erro ao ler arquivo: {str(e)}")
     
-    def _validate_license_for_connection(self, connection: dict) -> bool:
+    def _discover_key_files(self) -> list:
+        """Procura arquivos .key em locais comuns: pasta do app, cwd e
+        C:\\ceosoftware. Quando empacotado, inclui também o _MEIPASS e a
+        pasta do executável. Remove duplicatas mantendo a ordem."""
+        search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
+        try:
+            if getattr(sys, 'frozen', False):
+                meipass = getattr(sys, '_MEIPASS', None)
+                if meipass:
+                    search_paths.insert(0, Path(meipass))
+                exe_dir = Path(sys.executable).parent
+                search_paths.insert(0, exe_dir)
+        except Exception:
+            pass
+        key_files = []
+        for p in search_paths:
+            try:
+                if p.exists():
+                    key_files.extend(list(p.glob("*.key")))
+            except Exception:
+                continue
+        seen = set()
+        key_files_unique = []
+        for k in key_files:
+            kp = str(k.resolve())
+            if kp not in seen:
+                seen.add(kp)
+                key_files_unique.append(k)
+        return key_files_unique
+
+    def _render_licenca_labels(self, cand_path: str, payload_dict: dict):
+        """Atualiza os labels de arquivo/validade da licença exibidos na tela de login."""
+        try:
+            _nome_key = os.path.basename(cand_path)
+            self._lbl_license_file.setToolTip(cand_path)
+            self._lbl_license_file.setText(f"📄 Licença: {_nome_key}")
+            self._lbl_license_file.show()
+        except Exception:
+            pass
+
+        _val = payload_dict.get('validade') or ''
+        _tipo = (payload_dict.get('tipo_licenca') or '').strip()
+        _tipo_sufixo = f" · Licença {_tipo}" if _tipo else ""
+        try:
+            if _val:
+                from datetime import datetime, date, timezone as _tz
+                _expirada = False
+                if 'T' in _val or _val.endswith('Z'):
+                    _v = _val.replace('Z', '+00:00')
+                    _dt = datetime.fromisoformat(_v)
+                    if _dt.tzinfo is None:
+                        _dt = _dt.replace(tzinfo=_tz.utc)
+                    _val_fmt = _dt.strftime('%d/%m/%Y')
+                    _expirada = _dt < datetime.now(_tz.utc)
+                else:
+                    _dt = date.fromisoformat(_val)
+                    _val_fmt = _dt.strftime('%d/%m/%Y')
+                    _expirada = _dt < date.today()
+                if _expirada:
+                    self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada){_tipo_sufixo}")
+                    self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
+                else:
+                    self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}{_tipo_sufixo}")
+                    self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
+                self._lbl_license_expiry.show()
+            elif _tipo:
+                self._lbl_license_expiry.setText(f"🔑 Licença {_tipo}")
+                self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
+                self._lbl_license_expiry.show()
+            else:
+                self._lbl_license_expiry.hide()
+        except Exception:
+            self._lbl_license_expiry.hide()
+
+    def _licenca_expirada_bloqueia(self, payload_dict: dict) -> bool:
+        """Se `validade` já passou, mostra o critical de licença expirada e
+        retorna True (chamador deve interromper o fluxo)."""
+        validade = payload_dict.get('validade') or ''
+        try:
+            if validade:
+                if 'T' in validade or validade.endswith('Z'):
+                    from datetime import datetime, timezone
+                    v = validade.replace('Z', '+00:00')
+                    val_dt = datetime.fromisoformat(v)
+                    if val_dt.tzinfo is None:
+                        val_dt = val_dt.replace(tzinfo=timezone.utc)
+                    if val_dt < datetime.now(timezone.utc):
+                        self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
+                        QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                        return True
+                else:
+                    from datetime import date
+                    if date.fromisoformat(validade) < date.today():
+                        self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
+                        QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _armazenar_licenca_payload(self, cand_path: str, payload_dict: dict):
+        """Guarda o payload validado em `self._licenca_payload`/`self._licenca_token_raw`."""
+        self._licenca_payload = payload_dict
+        # Registrar api_authorization descriptografado (vindo do Neon) no AppConfig
+        _api_auth = payload_dict.get('_api_authorization', '')
+        if _api_auth:
+            AppConfig.set_api_authorization_override(_api_auth)
+        try:
+            import json as _json
+            _kraw = None
+            for _enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
+                try:
+                    with open(cand_path, 'r', encoding=_enc) as _kf:
+                        _kraw = _kf.read().strip()
+                    break
+                except (UnicodeDecodeError, LookupError):
+                    continue
+            if _kraw:
+                try:
+                    _kdata = _json.loads(_kraw)
+                    self._licenca_token_raw = _extract_api_token(_kdata.get('token', _kraw))
+                except Exception:
+                    self._licenca_token_raw = _extract_api_token(_kraw)
+        except Exception:
+            pass
+
+    def _validate_license_for_connection(self, connection: dict, on_success=None):
         """
-        Lê e valida o arquivo .key contra a conexão fornecida.
-        Valida presença de `sql_servidor` e `sql_banco` (<=30 chars), verifica assinatura HMAC
-        e se os campos batem com a conexão selecionada. Armazena payload em
-        `self._licenca_payload` quando válido.
+        Inicia (em background) a leitura/validação do arquivo .key contra a
+        conexão fornecida. Valida presença de `sql_servidor` e `sql_banco`
+        (<=30 chars) e se os campos batem com a conexão selecionada. Ao
+        terminar, armazena o payload em `self._licenca_payload` e chama
+        `on_success()` — a verificação online (no máximo uma por dia) pode
+        levar até 60s na primeira do dia, por isso roda numa QThread
+        (`LicencaOnlineWorker`) com um spinner na tela, em vez de travar a UI.
         """
         try:
-            # Esconde label de licença até encontrarmos um arquivo válido
-            try:
-                self._lbl_license_file.hide()
-            except Exception:
-                pass
-            # Procura arquivos .key em locais comuns: pasta do app, cwd e C:\ceosoftware
-            # Quando empacotado, inclui o _MEIPASS e a pasta do executável
-            search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
-            try:
-                if getattr(sys, 'frozen', False):
-                    meipass = getattr(sys, '_MEIPASS', None)
-                    if meipass:
-                        search_paths.insert(0, Path(meipass))
-                    exe_dir = Path(sys.executable).parent
-                    search_paths.insert(0, exe_dir)
-            except Exception:
-                pass
-            key_files = []
-            for p in search_paths:
-                try:
-                    if p.exists():
-                        key_files.extend(list(p.glob("*.key")))
-                except Exception:
-                    continue
-            # Remover duplicatas mantendo ordem
-            seen = set()
-            key_files_unique = []
-            for k in key_files:
-                kp = str(k.resolve())
-                if kp not in seen:
-                    seen.add(kp)
-                    key_files_unique.append(k)
-            key_files = key_files_unique
-            if not key_files:
-                QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado, o sistema não poderá ser aberto.\nEntre em contato com o suporte para obter uma licença válida.")
-                return False
+            self._lbl_license_file.hide()
+        except Exception:
+            pass
 
-            # Sincroniza cada arquivo .key candidato com o Neon (via CSCollectAPI);
-            # cai no .key local (dentro da tolerância offline) se não houver rede.
-            payload_dict = None
-            licenca_erro = None
+        key_files = self._discover_key_files()
+        if not key_files:
+            QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado, o sistema não poderá ser aberto.\nEntre em contato com o suporte para obter uma licença válida.")
+            return
 
-            for cand in key_files:
-                try:
-                    payload = licenca_online.sincronizar_licenca(str(cand))
-                    payload_dict = payload
-                    # Mostrar caminho do arquivo de licença verificado na UI (tela de conexão)
-                    try:
-                        try:
-                            import os as _os
-                            _nome_key = _os.path.basename(str(cand))
-                            self._lbl_license_file.setToolTip(str(cand))
-                            self._lbl_license_file.setText(f"📄 Licença: {_nome_key}")
-                            self._lbl_license_file.show()
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                    # Exibir data de validade da licença
-                    try:
-                        _val = payload_dict.get('validade') or ''
-                        _tipo = (payload_dict.get('tipo_licenca') or '').strip()
-                        _tipo_sufixo = f" · Licença {_tipo}" if _tipo else ""
-                        if _val:
-                            from datetime import datetime, date, timezone as _tz
-                            _expirada = False
-                            if 'T' in _val or _val.endswith('Z'):
-                                _v = _val.replace('Z', '+00:00')
-                                _dt = datetime.fromisoformat(_v)
-                                if _dt.tzinfo is None:
-                                    _dt = _dt.replace(tzinfo=_tz.utc)
-                                _val_fmt = _dt.strftime('%d/%m/%Y')
-                                _expirada = _dt < datetime.now(_tz.utc)
-                            else:
-                                _dt = date.fromisoformat(_val)
-                                _val_fmt = _dt.strftime('%d/%m/%Y')
-                                _expirada = _dt < date.today()
-                            if _expirada:
-                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada){_tipo_sufixo}")
-                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
-                            else:
-                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}{_tipo_sufixo}")
-                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
-                            self._lbl_license_expiry.show()
-                        elif _tipo:
-                            self._lbl_license_expiry.setText(f"🔑 Licença {_tipo}")
-                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
-                            self._lbl_license_expiry.show()
-                        else:
-                            self._lbl_license_expiry.hide()
-                    except Exception:
-                        self._lbl_license_expiry.hide()
-                    break
-                except Exception as exc:
-                    licenca_erro = str(exc)
-                    continue
+        self._license_connection = connection
+        self._license_on_success = on_success
 
-            if payload_dict is None:
-                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{licenca_erro or ''}")
-                return False
+        self._progress.setRange(0, 0)  # Indeterminado (spinner)
+        self._progress.show()
+        self._btn_connect.setEnabled(False)
+        self._iniciar_contador_verificacao_licenca()
 
-            # Verificar validade da licença (data) — exibe a data e bloqueia se expirada
-            validade = payload_dict.get('validade') or ''
-            try:
-                if validade:
-                    if 'T' in validade or validade.endswith('Z'):
-                        from datetime import datetime, timezone
-                        v = validade.replace('Z', '+00:00')
-                        val_dt = datetime.fromisoformat(v)
-                        if val_dt.tzinfo is None:
-                            val_dt = val_dt.replace(tzinfo=timezone.utc)
-                        if val_dt < datetime.now(timezone.utc):
-                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
-                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
-                            return False
-                    else:
-                        from datetime import date
-                        if date.fromisoformat(validade) < date.today():
-                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
-                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
-                            return False
-            except Exception:
-                pass
+        self._license_worker = LicencaOnlineWorker(key_files)
+        self._license_worker.finished.connect(self._on_connection_license_finished)
+        self._license_worker.start()
 
-            # Validação de sql_servidor/sql_banco (apenas para licenças assinadas que contêm esses campos)
-            sql_servidor = (payload_dict.get('sql_servidor') or '').strip()
-            sql_banco = (payload_dict.get('sql_banco') or '').strip()
-            if sql_servidor and sql_banco:
-                if len(sql_servidor) > 30 or len(sql_banco) > 30:
-                    QMessageBox.critical(self, "Campo inválido", "Arquivo de licença inválido: 'sql_servidor' ou 'sql_banco' excede 30 caracteres.")
-                    return False
-                conn_srv = (connection.get('server') or '').strip()
-                conn_db = (connection.get('database') or '').strip()
-                if conn_srv.lower() != sql_servidor.lower() or conn_db.lower() != sql_banco.lower():
-                    QMessageBox.critical(
-                        self,
-                        "Servidor ou banco inválidos",
-                        f"A licença autoriza:\n"
-                        f"  Servidor: {sql_servidor}\n"
-                        f"  Banco:    {sql_banco}\n\n"
-                        f"Conexão selecionada:\n"
-                        f"  Servidor: {conn_srv}\n"
-                        f"  Banco:    {conn_db}"
-                    )
-                    return False
+    def _iniciar_contador_verificacao_licenca(self):
+        """Mostra e atualiza a cada segundo o texto "Verificando licença
+        online... (Ns)" em `self._lbl_connection_status`, para o usuário
+        acompanhar visualmente que o processo está avançando (não travado),
+        até o limite de `licenca_online.TIMEOUT_SEGUNDOS`.
+        """
+        self._license_elapsed_seconds = 0
+        self._lbl_connection_status.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 9pt;")
+        # Exibe "(0s)" imediatamente, sem esperar o primeiro tick do timer (1s depois)
+        self._lbl_connection_status.setText(
+            f"⏳ Verificando licença online... ({self._license_elapsed_seconds}s)"
+        )
 
-            # Tudo OK: armazena payload e token raw
-            self._licenca_payload = payload_dict
-            # Registrar api_authorization descriptografado (vindo do Neon) no AppConfig
-            _api_auth = payload_dict.get('_api_authorization', '')
-            if _api_auth:
-                AppConfig.set_api_authorization_override(_api_auth)
-            try:
-                import json as _json
-                _kraw = None
-                for _enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
-                    try:
-                        with open(str(cand), 'r', encoding=_enc) as _kf:
-                            _kraw = _kf.read().strip()
-                        break
-                    except (UnicodeDecodeError, LookupError):
-                        continue
-                if _kraw:
-                    try:
-                        _kdata = _json.loads(_kraw)
-                        self._licenca_token_raw = _extract_api_token(_kdata.get('token', _kraw))
-                    except Exception:
-                        self._licenca_token_raw = _extract_api_token(_kraw)
-            except Exception:
-                pass
-            return True
-        except Exception as e:
-            logger.error(f"Erro ao validar arquivo .key: {e}")
-            QMessageBox.critical(self, "Erro de licença", "Erro ao validar arquivo .key. O sistema não pode prosseguir.")
-            return False
+        def _tick():
+            self._license_elapsed_seconds += 1
+            self._lbl_connection_status.setText(
+                f"⏳ Verificando licença online... ({self._license_elapsed_seconds}s)"
+            )
+
+        if self._license_elapsed_timer is None:
+            self._license_elapsed_timer = QTimer(self)
+            self._license_elapsed_timer.timeout.connect(_tick)
+        else:
+            self._license_elapsed_timer.timeout.disconnect()
+            self._license_elapsed_timer.timeout.connect(_tick)
+        self._license_elapsed_timer.start(1000)
+
+    def _parar_contador_verificacao_licenca(self):
+        if self._license_elapsed_timer is not None:
+            self._license_elapsed_timer.stop()
+
+    def _on_connection_license_finished(self, cand_path: str, payload_dict, erro):
+        """Callback do `LicencaOnlineWorker` disparado por `_validate_license_for_connection`."""
+        self._parar_contador_verificacao_licenca()
+        self._progress.hide()
+        self._progress.setRange(0, 100)
+        # O botão "Conectar" só é reabilitado se a licença for válida — ver
+        # o resto deste método; em caso de falha, o usuário troca de conexão
+        # (o que já reabilita o botão via `_on_connection_changed`) ou
+        # resolve a licença antes de tentar de novo.
+
+        if payload_dict is None:
+            self._lbl_connection_status.setText("❌ Falha ao validar licença.")
             self._lbl_connection_status.setStyleSheet(f"color: {_C.ERROR}; font-size: 9pt;")
-    
-    def _load_license_on_start(self) -> bool:
-        """Carrega e verifica um arquivo .key imediatamente após abrir a tela de login.
+            QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{erro or ''}")
+            return
 
-        Esta rotina apenas verifica assinatura e validade, e armazena o payload em
+        self._render_licenca_labels(cand_path, payload_dict)
+
+        if self._licenca_expirada_bloqueia(payload_dict):
+            return
+
+        # Validação de sql_servidor/sql_banco (apenas para licenças que contêm esses campos)
+        connection = self._license_connection or {}
+        sql_servidor = (payload_dict.get('sql_servidor') or '').strip()
+        sql_banco = (payload_dict.get('sql_banco') or '').strip()
+        if sql_servidor and sql_banco:
+            if len(sql_servidor) > 30 or len(sql_banco) > 30:
+                QMessageBox.critical(self, "Campo inválido", "Arquivo de licença inválido: 'sql_servidor' ou 'sql_banco' excede 30 caracteres.")
+                return
+            conn_srv = (connection.get('server') or '').strip()
+            conn_db = (connection.get('database') or '').strip()
+            if conn_srv.lower() != sql_servidor.lower() or conn_db.lower() != sql_banco.lower():
+                QMessageBox.critical(
+                    self,
+                    "Servidor ou banco inválidos",
+                    f"A licença autoriza:\n"
+                    f"  Servidor: {sql_servidor}\n"
+                    f"  Banco:    {sql_banco}\n\n"
+                    f"Conexão selecionada:\n"
+                    f"  Servidor: {conn_srv}\n"
+                    f"  Banco:    {conn_db}"
+                )
+                return
+
+        self._armazenar_licenca_payload(cand_path, payload_dict)
+
+        # Licença válida: só agora o botão "Conectar" é liberado de novo.
+        self._btn_connect.setEnabled(True)
+        self._lbl_connection_status.setText("✅ Licença válida.")
+        self._lbl_connection_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")
+
+        on_success = self._license_on_success
+        self._license_on_success = None
+        if on_success:
+            on_success()
+
+    def _load_license_on_start(self):
+        """Carrega e verifica um arquivo .key (em background) imediatamente
+        após abrir a tela de login.
+
+        Esta rotina apenas verifica validade e armazena o payload em
         `self._licenca_payload`. A correspondência com a conexão selecionada será
         feita quando o usuário tentar conectar (via `_validate_license_for_connection`).
         """
-        try:
-            # Procura arquivos .key em locais comuns (AppConfig, cwd, C:\ceosoftware)
-            # e, quando empacotado, também em sys._MEIPASS e na pasta do executável
-            search_paths = [Path(AppConfig.BASE_DIR), Path.cwd(), Path(r"C:\ceosoftware")]
-            try:
-                if getattr(sys, 'frozen', False):
-                    meipass = getattr(sys, '_MEIPASS', None)
-                    if meipass:
-                        search_paths.insert(0, Path(meipass))
-                    exe_dir = Path(sys.executable).parent
-                    search_paths.insert(0, exe_dir)
-            except Exception:
-                pass
-            key_files = []
-            for p in search_paths:
-                try:
-                    if p.exists():
-                        key_files.extend(list(p.glob("*.key")))
-                except Exception:
-                    continue
+        key_files = self._discover_key_files()
+        if not key_files:
+            QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado. O sistema não poderá ser aberto sem uma licença válida.")
+            return
 
-            # Remover duplicatas mantendo ordem
-            seen = set()
-            key_files_unique = []
-            for k in key_files:
-                kp = str(k.resolve())
-                if kp not in seen:
-                    seen.add(kp)
-                    key_files_unique.append(k)
-            key_files = key_files_unique
+        self._startup_license_worker = LicencaOnlineWorker(key_files)
+        self._startup_license_worker.finished.connect(self._on_startup_license_finished)
+        self._startup_license_worker.start()
 
-            if not key_files:
-                QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado. O sistema não poderá ser aberto sem uma licença válida.")
-                return False
+    def _on_startup_license_finished(self, cand_path: str, payload_dict, erro):
+        """Callback do `LicencaOnlineWorker` disparado por `_load_license_on_start`."""
+        if payload_dict is None:
+            QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença.\n{erro or ''}")
+            return
 
-            payload_dict = None
-            last_error = None
-            for cand in key_files:
-                try:
-                    payload = licenca_online.sincronizar_licenca(str(cand))
-                    payload_dict = payload
-                    try:
-                        import os as _os
-                        _nome_key = _os.path.basename(str(cand))
-                        self._lbl_license_file.setToolTip(str(cand))
-                        self._lbl_license_file.setText(f"📄 Licença: {_nome_key}")
-                        self._lbl_license_file.show()
-                    except Exception:
-                        pass
-                    # Exibe data de validade imediatamente
-                    try:
-                        _val = payload_dict.get('validade') or ''
-                        _tipo = (payload_dict.get('tipo_licenca') or '').strip()
-                        _tipo_sufixo = f" · Licença {_tipo}" if _tipo else ""
-                        if _val:
-                            from datetime import datetime, date, timezone as _tz
-                            _expirada = False
-                            if 'T' in _val or _val.endswith('Z'):
-                                _v = _val.replace('Z', '+00:00')
-                                _dt = datetime.fromisoformat(_v)
-                                if _dt.tzinfo is None:
-                                    _dt = _dt.replace(tzinfo=_tz.utc)
-                                _val_fmt = _dt.strftime('%d/%m/%Y')
-                                _expirada = _dt < datetime.now(_tz.utc)
-                            else:
-                                _dt = date.fromisoformat(_val)
-                                _val_fmt = _dt.strftime('%d/%m/%Y')
-                                _expirada = _dt < date.today()
-                            if _expirada:
-                                self._lbl_license_expiry.setText(f"⚠️ Validade: {_val_fmt} (expirada){_tipo_sufixo}")
-                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.ERROR}; font-size: 8pt;")
-                            else:
-                                self._lbl_license_expiry.setText(f"📅 Validade: {_val_fmt}{_tipo_sufixo}")
-                                self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
-                            self._lbl_license_expiry.show()
-                        elif _tipo:
-                            self._lbl_license_expiry.setText(f"🔑 Licença {_tipo}")
-                            self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
-                            self._lbl_license_expiry.show()
-                        else:
-                            self._lbl_license_expiry.hide()
-                    except Exception:
-                        self._lbl_license_expiry.hide()
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    continue
+        self._render_licenca_labels(cand_path, payload_dict)
 
-            if payload_dict is None:
-                QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença.\n{last_error or ''}")
-                return False
+        if self._licenca_expirada_bloqueia(payload_dict):
+            return
 
-            # Verifica validade e bloqueia se expirada
-            validade = payload_dict.get('validade') or ''
-            try:
-                if validade:
-                    if 'T' in validade or validade.endswith('Z'):
-                        from datetime import datetime, timezone
-                        v = validade.replace('Z', '+00:00')
-                        val_dt = datetime.fromisoformat(v)
-                        if val_dt.tzinfo is None:
-                            val_dt = val_dt.replace(tzinfo=timezone.utc)
-                        if val_dt < datetime.now(timezone.utc):
-                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
-                            return False
-                    else:
-                        from datetime import date
-                        if date.fromisoformat(validade) < date.today():
-                            QMessageBox.critical(self, "Licença expirada", "A licença de uso está expirada. Contate o suporte.")
-                            return False
-            except Exception:
-                pass
+        self._armazenar_licenca_payload(cand_path, payload_dict)
 
-            self._licenca_payload = payload_dict
-            # Registrar api_authorization descriptografado (vindo do Neon) no AppConfig
-            _api_auth = payload_dict.get('_api_authorization', '')
-            if _api_auth:
-                AppConfig.set_api_authorization_override(_api_auth)
-            try:
-                import json as _json
-                _kraw = None
-                for _enc in ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252'):
-                    try:
-                        with open(str(cand), 'r', encoding=_enc) as _kf:
-                            _kraw = _kf.read().strip()
-                        break
-                    except (UnicodeDecodeError, LookupError):
-                        continue
-                if _kraw:
-                    try:
-                        _kdata = _json.loads(_kraw)
-                        self._licenca_token_raw = _extract_api_token(_kdata.get('token', _kraw))
-                    except Exception:
-                        self._licenca_token_raw = _extract_api_token(_kraw)
-            except Exception:
-                pass
-            return True
-        except Exception as e:
-            logger.error(f"Erro ao carregar licença na inicialização: {e}")
-            QMessageBox.critical(self, "Erro de licença", "Erro ao carregar arquivo de licença na inicialização.")
-            return False
-    
     def _on_connection_changed(self, index: int):
         """Quando conexão é alterada."""
         self._btn_connect.setEnabled(index > 0)
@@ -1333,26 +1311,12 @@ class LoginDialog(QDialog):
         if success:
             self._lbl_connection_status.setText(f"✅ {message}")
             self._lbl_connection_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")
-            
+
             self._empresas = empresas
-            # Ao conectar com sucesso, validaremos o arquivo .key contra a conexão
-            try:
-                valid = self._validate_license_for_connection(self._selected_connection)
-            except Exception:
-                valid = False
-
-            if not valid:
-                # Mensagem já exibida em _validate_license_for_connection
-                return
-
-            if empresas:
-                # Avança para seleção de empresa
-                QTimer.singleShot(500, self._show_empresa_step)
-            else:
-                QMessageBox.warning(
-                    self, "Aviso",
-                    "Nenhuma empresa encontrada no banco de dados."
-                )
+            # Ao conectar com sucesso, valida o arquivo .key (online, em
+            # background) contra a conexão; ao terminar, avança para a
+            # seleção de empresa (ou mostra o erro apropriado).
+            self._validate_license_for_connection(self._selected_connection, on_success=self._advance_after_license_ok)
         else:
             self._lbl_connection_status.setText("❌ Falha ao conectar. Verifique os dados da conexão.")
             self._lbl_connection_status.setStyleSheet(f"color: {_C.ERROR}; font-size: 9pt;")
@@ -1361,7 +1325,16 @@ class LoginDialog(QDialog):
                 "Erro de Conexão",
                 message
             )
-    
+
+    def _advance_after_license_ok(self):
+        """Continuação de `_on_connection_finished` após a licença ser
+        validada com sucesso (via `_validate_license_for_connection`) para a
+        conexão recém-testada."""
+        if self._empresas:
+            QTimer.singleShot(500, self._show_empresa_step)
+        else:
+            QMessageBox.warning(self, "Aviso", "Nenhuma empresa encontrada no banco de dados.")
+
     def _show_empresa_step(self):
         """Mostra etapa de seleção de empresa."""
         # Atualiza info da conexão
@@ -1420,21 +1393,31 @@ class LoginDialog(QDialog):
 
         if not empresa:
             return
-        
+
         self._selected_empresa = empresa
-        # Validação de CNPJ usando payload já validado para a conexão
+
+        if not self._licenca_payload:
+            # Por algum motivo o payload não foi carregado ao conectar —
+            # tenta agora (em background, mesma checagem de sql_servidor/
+            # sql_banco), e só continua no callback de sucesso.
+            self._validate_license_for_connection(
+                self._selected_connection,
+                on_success=lambda: self._continuar_next_to_auth(empresa)
+            )
+            return
+
+        self._continuar_next_to_auth(empresa)
+
+    def _continuar_next_to_auth(self, empresa: dict):
+        """Continuação de `_on_next_to_auth` — chamada direto quando a
+        licença já está carregada, ou pelo callback assíncrono quando
+        precisou ser (re)validada agora."""
         try:
             cnpj_raw = (empresa.get('cnpj') or "").strip()
             cnpj_clean = re.sub(r"\D", "", cnpj_raw)
             if not cnpj_clean:
                 QMessageBox.critical(self, "Empresa sem CNPJ", "A empresa selecionada não possui CNPJ cadastrado. Não é possível validar autorização.")
                 return
-
-            # Se por algum motivo o payload não foi carregado ao conectar, tenta carregar agora
-            if not self._licenca_payload:
-                ok = self._validate_license_for_connection(self._selected_connection)
-                if not ok:
-                    return
 
             payload_dict = self._licenca_payload or {}
             raw_cnpjs = payload_dict.get('cnpjs', []) or []
@@ -1452,34 +1435,34 @@ class LoginDialog(QDialog):
             logger.error(f"Erro ao validar arquivo .key: {e}")
             QMessageBox.critical(self, "Erro de licença", "Erro ao validar arquivo .key. O sistema não pode prosseguir.")
             return
-        
+
         # Atualiza contexto
         conn = self._selected_connection
         self._lbl_selected_context.setText(
             f"🔌 Servidor: [{conn.get('type')}] {conn.get('server')} / {conn.get('database')}\n"
             f"🏢 Empresa: {empresa.get('codigo')} - {empresa.get('nome')}"
         )
-        
+
         # Limpa campos
         self._txt_password.clear()
         self._lbl_auth_status.clear()
-        
+
         # Carrega último usuário para este servidor/banco
         last_login = login_module.load_last_login()
         if last_login:
             if (conn.get("server", "").lower() == last_login.get("srv", "").lower() and
                 conn.get("database", "").lower() == last_login.get("db", "").lower()):
                 self._txt_username.setText(last_login.get("user", ""))
-        
+
         # Muda para step de autenticação
         self._stack.setCurrentIndex(self.STEP_AUTH)
-        
+
         # Foco no campo apropriado
         if self._txt_username.text():
             self._txt_password.setFocus()
         else:
             self._txt_username.setFocus()
-    
+
     def _on_back_to_empresa(self):
         """Volta para seleção de empresa."""
         self._stack.setCurrentIndex(self.STEP_EMPRESA)
