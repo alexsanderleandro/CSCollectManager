@@ -339,7 +339,10 @@ class StockAnalysisPage(QWidget):
 
         self._contagens = candidatas
         for c in novas_contagens:
-            item = QListWidgetItem(f"✓ {os.path.basename(c.arquivo)} · {len(c.itens)} itens")
+            item = QListWidgetItem(
+                f"✓ {os.path.basename(c.arquivo)} · "
+                f"{c.total_produtos_contados} produtos · {c.total_registros} registros"
+            )
             self._pdf_list.addItem(item)
 
         self._lbl_pdf_info.setText(f"{len(self._contagens)} PDF(s) anexado(s).")
@@ -408,8 +411,8 @@ class StockAnalysisPage(QWidget):
         self._btn_exportar.setEnabled(True)
 
         self._lbl_status.setText(
-            f"✅ {resultado.total_itens} itens · {total_divergencias} divergências · "
-            f"{resultado.total_lote_novo} lotes novos"
+            f"✅ {resultado.total_produtos} produtos · {resultado.total_itens} registros · "
+            f"{total_divergencias} divergências · {resultado.total_lote_novo} lotes novos"
         )
         self._lbl_status.setStyleSheet(themed_qss("color: {{SUCCESS}}; font-size: 9pt;"))
 
@@ -555,12 +558,18 @@ class StockAnalysisPage(QWidget):
         data_str = self._date_referencia.date().toString("dd/MM/yyyy")
         empresa = html_lib.escape(self._nome_empresa or self._codempresa)
         total_div = 0
+        total_produtos = 0
+        total_registros = 0
         if self._resultado:
             total_div = self._resultado.total_falta + self._resultado.total_sobra
+            total_produtos = self._resultado.total_produtos
+            total_registros = self._resultado.total_itens
         return (
             f"<h2>Análise de Estoque</h2>"
             f"<p><b>Empresa:</b> {empresa} &nbsp;·&nbsp; "
             f"<b>Data de referência:</b> {data_str} &nbsp;·&nbsp; "
+            f"<b>Produtos:</b> {total_produtos} &nbsp;·&nbsp; "
+            f"<b>Registros:</b> {total_registros} &nbsp;·&nbsp; "
             f"<b>Divergências:</b> {total_div}</p>"
         )
 

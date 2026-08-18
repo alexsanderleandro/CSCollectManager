@@ -46,9 +46,17 @@ class ItemAnalise:
 
 @dataclass
 class ResultadoAnalise:
-    """Resultado completo da análise: itens + totais agregados."""
+    """Resultado completo da análise: itens + totais agregados.
+
+    ``total_itens`` conta **registros** (uma linha por produto+lote, que é
+    como o estoque precisa ser comparado); ``total_produtos`` conta produtos
+    distintos. Um produto com N lotes soma N registros e 1 produto — a mesma
+    separação que o rodapé do PDF faz entre "Total de registros" e "Total de
+    produtos contados".
+    """
     itens: List[ItemAnalise] = field(default_factory=list)
     total_itens: int = 0
+    total_produtos: int = 0
     total_confere: int = 0
     total_falta: int = 0
     total_sobra: int = 0
@@ -176,6 +184,7 @@ class StockAnalysisService:
         return ResultadoAnalise(
             itens=itens,
             total_itens=len(itens),
+            total_produtos=len({i.codigo for i in itens}),
             total_confere=totais["confere"],
             total_falta=totais["falta"],
             total_sobra=totais["sobra"],
@@ -353,7 +362,8 @@ class StockAnalysisService:
         linhas = [
             f"# Contagem — {empresa_nome} — {data_referencia.strftime('%d/%m/%Y')}",
             "",
-            f"Itens contados: {resultado.total_itens}",
+            f"Produtos contados: {resultado.total_produtos}",
+            f"Registros (produto+lote): {resultado.total_itens}",
             f"Conferem: {resultado.total_confere}",
             f"Divergências: {resultado.total_falta + resultado.total_sobra}"
             f"  (falta: {resultado.total_falta} · sobra: {resultado.total_sobra})",

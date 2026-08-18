@@ -4,9 +4,25 @@ pdf_contagem_parser.py
 Parser determinístico de PDFs de contagem exportados pelo LOGSCAN (coletor
 mobile), formato "LOGSCAN vX.Y.Z rev. N | RELATÓRIO DE CONTAGEM DE ESTOQUE".
 
-Cobre os dois layouts do relatório — Modelo 1 (por produto) e Modelo 2 (por
-grupo de estoque) — que diferem apenas por Modelo 2 intercalar linhas
-"Grupo: <cod> - <nome>" entre os itens.
+Cobre os dois layouts do relatório, que diferem em mais do que a ordem das
+linhas — têm **conjuntos de colunas diferentes**:
+
+- Modelo 1 (por produto):
+  ``Código EAN Descrição Lote Fabricação Validade Qtde Unid. Localização``
+- Modelo 2 (por grupo de estoque):
+  ``Código EAN Descrição Qtde Unid. Localização`` (sem lote/datas), com linhas
+  ``Grupo: <cod> - <nome>`` intercaladas entre os itens.
+
+Por isso as colunas são mapeadas pelo **cabeçalho da tabela**, nunca por
+posição fixa.
+
+Além das linhas de item, a tabela traz linhas "vazadas" (que ocupam a largura
+toda) e que **não são itens**:
+
+- ``Grupo: <cod> - <nome>``    — agrupador do Modelo 2.
+- ``Produto: <cod> - <desc>``  — agrupador de um produto com controle de lote.
+- ``Obs. produto: <texto>``    — observação do produto (vem logo após ``Produto:``).
+- ``Obs.: <texto>``            — observação da linha/lote (vem logo após o item).
 
 Extrai apenas dados estruturados, sem nenhuma interpretação de negócio: a
 comparação com o estoque do sistema e a análise de divergências ficam a cargo
@@ -16,6 +32,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, List, Optional
@@ -35,21 +52,38 @@ _EMPRESA_RE = re.compile(
 )
 _TOTAL_PRODUTOS_RE = re.compile(r"Total de produtos contados:\s*(\d+)")
 _TOTAL_REGISTROS_RE = re.compile(r"Total de registros:\s*(\d+)")
-_GRUPO_RE = re.compile(r"^Grupo:\s*(.+)$", re.IGNORECASE)
-_PAGINACAO_RE = re.compile(r"^P[áa]gina\s+\d+\s*/\s*\d+$", re.IGNORECASE)
 
-# Distância vertical máxima (pt) entre o fim de uma linha de item e uma linha em
-# itálico para que ela seja considerada observação desse item — a altura de
-# linha da tabela é ~13pt; qualquer coisa muito além disso (ex.: o rodapé
-# "Página N/M", que também usa fonte itálica) não é observação de item.
-_MAX_GAP_OBSERVACAO = 20
-
-_TABLE_HEADER_PREFIX = ["código", "ean", "descrição"]
+# Linhas "vazadas" da tabela, que não são itens. A alternação é ordenada:
+# "Obs. produto" precisa vir antes de "Obs." para não ser engolida por ela.
+_LINHA_PREFIXO_RE = re.compile(
+    r"^(?P<tipo>Grupo|Produto|Obs\.\s*produto|Obs\.)\s*:\s*(?P<valor>.*)$",
+    re.IGNORECASE,
+)
+# "060460 - PLACA MAE H61 K LGA1155 REVENGER" -> "060460"
+_PRODUTO_COD_RE = re.compile(r"^(?P<codigo>\S+)\s*-\s*")
 
 _FILENAME_RE = re.compile(
     r"^CONTAGEM_(?P<codempresa>[^_]+)_(?P<codvendedor>[^_]+)_(?P<cnpj>\d+)_(?P<timestamp>\d{12})$",
     re.IGNORECASE,
 )
+
+# Cabeçalho normalizado (sem acento, sem ponto final) -> campo do ContagemItem.
+_COLUNAS_CONHECIDAS = {
+    "codigo": "codigo",
+    "ean": "ean",
+    "descricao": "descricao",
+    "lote": "lote",
+    "fabricacao": "fabricacao",
+    "validade": "validade",
+    "qtde": "qtde",
+    "unid": "unidade",
+    "localizacao": "localizacao",
+}
+
+# Só as tabelas que começam com estas três colunas são tabelas de itens; as
+# demais da página (ex.: "Produtos lançados com quantidade zerada
+# automaticamente") são ignoradas.
+_TABLE_HEADER_PREFIX = ["codigo", "ean", "descricao"]
 
 
 @dataclass
@@ -64,8 +98,9 @@ class ContagemItem:
     qtde_contada: float = 0.0
     unidade: str = ""
     localizacao: str = ""
-    grupo: str = ""          # só preenchido no Modelo 2
-    observacao: str = ""
+    grupo: str = ""              # só preenchido no Modelo 2
+    observacao: str = ""         # "Obs.:" — observação desta linha/lote
+    observacao_produto: str = ""  # "Obs. produto:" — observação do produto
 
 
 @dataclass
@@ -89,6 +124,20 @@ class ContagemPDF:
     cnpj_arquivo: str = ""
 
 
+@dataclass
+class _EstadoLeitura:
+    """Contexto de leitura que atravessa linhas e páginas.
+
+    Um produto com lote é introduzido por uma linha ``Produto:``, seguida
+    opcionalmente de ``Obs. produto:``, e só então vêm as linhas de item — e
+    esse bloco pode ser cortado por uma quebra de página.
+    """
+    grupo: str = ""
+    produto_atual: str = ""
+    observacao_produto: str = ""
+    ultimo_item: Optional[ContagemItem] = None
+
+
 def _parse_data_hdr(txt: str) -> datetime:
     return datetime.strptime(txt.strip(), "%d/%m/%Y %H:%M")
 
@@ -105,9 +154,11 @@ def _parse_qtde(txt: Optional[str]) -> float:
     return float(txt) if txt else 0.0
 
 
-def _is_oblique(fontname: Optional[str]) -> bool:
-    f = (fontname or "").lower()
-    return "oblique" in f or "italic" in f
+def _normalizar_cabecalho(txt: Optional[str]) -> str:
+    """Normaliza o nome de uma coluna: minúsculo, sem acento e sem ponto final
+    (``"Unid."`` -> ``"unid"``, ``"Fabricação"`` -> ``"fabricacao"``)."""
+    base = unicodedata.normalize("NFKD", (txt or "").strip().lower())
+    return "".join(c for c in base if not unicodedata.combining(c)).rstrip(".")
 
 
 class PdfContagemParser:
@@ -125,8 +176,8 @@ class PdfContagemParser:
 
         Raises:
             ValueError: Se o cabeçalho não corresponder ao formato LOGSCAN
-                conhecido, ou se a quantidade de itens extraídos não bater com
-                o "Total de registros" declarado no rodapé.
+                conhecido, ou se a quantidade de itens/produtos extraídos não
+                bater com os totais declarados no rodapé.
         """
         with pdfplumber.open(caminho) as pdf:
             if not pdf.pages:
@@ -167,12 +218,10 @@ class PdfContagemParser:
             total_produtos_contados: Optional[int] = None
             total_registros: Optional[int] = None
             itens: List[ContagemItem] = []
-            grupo_atual = ""
+            estado = _EstadoLeitura()
 
             for page in pdf.pages:
-                itens.extend(self._extrair_itens_pagina(page, grupo_atual_inicial=grupo_atual))
-                if itens:
-                    grupo_atual = itens[-1].grupo
+                itens.extend(self._extrair_itens_pagina(page, estado))
 
                 texto_pagina = page.extract_text() or ""
                 if total_produtos_contados is None:
@@ -191,6 +240,16 @@ class PdfContagemParser:
                 raise ValueError(
                     f"Itens extraídos ({len(itens)}) não batem com 'Total de "
                     f"registros' do rodapé ({total_registros}) — {caminho}"
+                )
+
+            # Um produto com N lotes ocupa N linhas (registros), mas continua
+            # sendo um só produto — é o que o rodapé separa em dois totais.
+            produtos_distintos = len({i.codigo for i in itens})
+            if produtos_distintos != total_produtos_contados:
+                raise ValueError(
+                    f"Produtos distintos extraídos ({produtos_distintos}) não "
+                    f"batem com 'Total de produtos contados' do rodapé "
+                    f"({total_produtos_contados}) — {caminho}"
                 )
 
             nome_base = os.path.splitext(os.path.basename(caminho))[0]
@@ -216,84 +275,88 @@ class PdfContagemParser:
                 cnpj_arquivo=cnpj_arquivo,
             )
 
-    def _extrair_itens_pagina(self, page, grupo_atual_inicial: str) -> List[ContagemItem]:
-        """Extrai os itens da tabela de uma página, já com observações associadas.
+    def _extrair_itens_pagina(self, page, estado: _EstadoLeitura) -> List[ContagemItem]:
+        """Extrai os itens da tabela de uma página, já com as observações.
 
-        Usa ``find_tables()`` (em vez de ``extract_tables()``) porque expõe o
-        bounding box de cada linha — necessário para casar cada observação em
-        itálico com o item correto quando há mais de um item na página.
+        ``estado`` é lido e atualizado — grupo, produto corrente e observação
+        de produto pendente precisam sobreviver à quebra de página.
         """
         itens: List[ContagemItem] = []
-        tops: List[float] = []
-        grupo_atual = grupo_atual_inicial
 
         for table in page.find_tables():
             linhas_extraidas = table.extract()
             if not linhas_extraidas:
                 continue
-            header_row = [(c or "").strip().lower() for c in linhas_extraidas[0]]
-            if header_row[:3] != _TABLE_HEADER_PREFIX:
-                continue  # não é a tabela de itens (ex.: nenhuma nesta página)
 
-            for row_obj, cells in zip(table.rows[1:], linhas_extraidas[1:]):
+            cabecalho = [_normalizar_cabecalho(c) for c in linhas_extraidas[0]]
+            if cabecalho[:3] != _TABLE_HEADER_PREFIX:
+                continue  # não é a tabela de itens
+
+            # Mapa coluna -> índice, montado a partir do cabeçalho: é o que
+            # permite ler Modelo 1 (9 colunas) e Modelo 2 (6) com o mesmo código.
+            mapa: Dict[str, int] = {}
+            for idx, nome in enumerate(cabecalho):
+                campo = _COLUNAS_CONHECIDAS.get(nome)
+                if campo and campo not in mapa:
+                    mapa[campo] = idx
+
+            for cells in linhas_extraidas[1:]:
                 primeira_celula = (cells[0] or "").strip()
-                grupo_match = _GRUPO_RE.match(primeira_celula)
-                if grupo_match and all(not (c or "").strip() for c in cells[1:]):
-                    grupo_atual = grupo_match.group(1).strip()
-                    continue
                 if not primeira_celula:
                     continue
 
-                codigo, ean, descricao, lote, fabricacao, validade, qtde, unidade, localizacao = (
-                    (c or "").strip() for c in cells
-                )
-                itens.append(ContagemItem(
-                    codigo=codigo,
-                    ean=ean,
-                    descricao=descricao,
-                    lote=lote,
-                    fabricacao=_parse_ddmmyyyy(fabricacao),
-                    validade=_parse_ddmmyyyy(validade),
-                    qtde_contada=_parse_qtde(qtde),
-                    unidade=unidade,
-                    localizacao=localizacao,
-                    grupo=grupo_atual,
-                ))
-                tops.append(row_obj.bbox[1])
+                prefixo = _LINHA_PREFIXO_RE.match(primeira_celula)
+                if prefixo:
+                    self._tratar_linha_prefixada(prefixo, estado)
+                    continue
 
-        if itens:
-            self._associar_observacoes(page, itens, tops)
+                def _col(campo: str) -> str:
+                    idx = mapa.get(campo)
+                    if idx is None or idx >= len(cells):
+                        return ""
+                    return (cells[idx] or "").strip()
+
+                codigo = _col("codigo")
+                if not codigo:
+                    continue  # sem código não é item
+
+                item = ContagemItem(
+                    codigo=codigo,
+                    ean=_col("ean"),
+                    descricao=_col("descricao"),
+                    lote=_col("lote"),
+                    fabricacao=_parse_ddmmyyyy(_col("fabricacao")),
+                    validade=_parse_ddmmyyyy(_col("validade")),
+                    qtde_contada=_parse_qtde(_col("qtde")),
+                    unidade=_col("unidade"),
+                    localizacao=_col("localizacao"),
+                    grupo=estado.grupo,
+                )
+                if estado.observacao_produto and estado.produto_atual == codigo:
+                    item.observacao_produto = estado.observacao_produto
+
+                itens.append(item)
+                estado.ultimo_item = item
+
         return itens
 
     @staticmethod
-    def _associar_observacoes(page, itens: List[ContagemItem], tops: List[float]) -> None:
-        """Associa linhas em itálico (observações) ao item mais próximo acima delas.
+    def _tratar_linha_prefixada(prefixo: re.Match, estado: _EstadoLeitura) -> None:
+        """Aplica ao estado uma linha ``Grupo:``/``Produto:``/``Obs...:``."""
+        tipo = re.sub(r"\s+", " ", prefixo.group("tipo").strip().lower())
+        valor = prefixo.group("valor").strip()
 
-        A posição vertical (``top``) de cada linha de observação é comparada
-        com o ``top`` de cada linha de item já extraída da mesma página; o
-        item com o maior ``top`` ainda menor que o da observação é o dono dela.
-        """
-        words = page.extract_words(extra_attrs=["fontname"])
-        linhas_italico: List[List[dict]] = []
-        for w in words:
-            if not _is_oblique(w.get("fontname")):
-                continue
-            if linhas_italico and abs(linhas_italico[-1][0]["top"] - w["top"]) < 2:
-                linhas_italico[-1].append(w)
-            else:
-                linhas_italico.append([w])
-
-        for linha in linhas_italico:
-            texto = " ".join(w["text"] for w in sorted(linha, key=lambda w: w["x0"])).strip()
-            if not texto or _PAGINACAO_RE.match(texto):
-                continue
-            obs_top = linha[0]["top"]
-            melhor_idx = None
-            melhor_top = None
-            for idx, item_top in enumerate(tops):
-                if item_top < obs_top and (melhor_top is None or item_top > melhor_top):
-                    melhor_top = item_top
-                    melhor_idx = idx
-            if melhor_idx is not None and (obs_top - melhor_top) <= _MAX_GAP_OBSERVACAO:
-                item = itens[melhor_idx]
-                item.observacao = f"{item.observacao} {texto}".strip() if item.observacao else texto
+        if tipo == "grupo":
+            estado.grupo = valor
+            estado.produto_atual = ""
+            estado.observacao_produto = ""
+        elif tipo == "produto":
+            cod_match = _PRODUTO_COD_RE.match(valor)
+            estado.produto_atual = cod_match.group("codigo") if cod_match else valor
+            estado.observacao_produto = ""
+        elif tipo == "obs. produto":
+            estado.observacao_produto = valor
+        else:  # "obs." — observação da linha/lote imediatamente anterior
+            item = estado.ultimo_item
+            if item is not None and valor:
+                item.observacao = f"{item.observacao} {valor}".strip() if item.observacao else valor
