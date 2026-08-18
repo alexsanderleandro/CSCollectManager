@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QStackedWidget, QWidget
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QThread
-from PySide6.QtGui import QFont, QPixmap, QIcon, QCursor
+from PySide6.QtGui import QFont, QFontMetrics, QPixmap, QIcon, QCursor
 
 from utils.constants import APP_INFO
 from utils.logger import get_logger
@@ -341,9 +341,10 @@ class LicencaOnlineWorker(QThread):
 
     finished = Signal(str, object, object)  # caminho do .key usado, payload (dict|None), erro (str|None)
 
-    def __init__(self, key_files: list):
+    def __init__(self, key_files: list, forcar: bool = False):
         super().__init__()
         self._key_files = key_files
+        self._forcar = forcar
 
     def run(self):
         payload_dict = None
@@ -351,7 +352,7 @@ class LicencaOnlineWorker(QThread):
         cand_path = ""
         for cand in self._key_files:
             try:
-                payload_dict = licenca_online.sincronizar_licenca(str(cand))
+                payload_dict = licenca_online.sincronizar_licenca(str(cand), forcar=self._forcar)
                 cand_path = str(cand)
                 break
             except Exception as exc:
@@ -452,6 +453,7 @@ class LoginDialog(QDialog):
         self._licenca_token_raw: str = ""  # Token bruto do arquivo .key (para api_authorization)
         self._license_worker: Optional[LicencaOnlineWorker] = None
         self._startup_license_worker: Optional[LicencaOnlineWorker] = None
+        self._forcar_license_worker: Optional[LicencaOnlineWorker] = None
         self._license_connection: dict = {}  # Conexão sendo validada (usada no callback assíncrono)
         self._license_on_success = None  # Callback chamado quando a licença é validada com sucesso
         self._license_elapsed_timer: Optional[QTimer] = None  # Contador de segundos exibido durante a verificação
@@ -737,7 +739,54 @@ class LoginDialog(QDialog):
         self._lbl_license_expiry.setStyleSheet(f"color: {_C.TEXT_MUTED}; font-size: 8pt;")
         self._lbl_license_expiry.hide()
         group_layout.addWidget(self._lbl_license_expiry)
-        
+
+        # Botão para forçar a verificação da licença online (Neon), ignorando
+        # o limite de uma verificação por dia — permite atualizar o .key
+        # local sob demanda, sem esperar o próximo carregamento do dia.
+        btn_licenca_layout = QHBoxLayout()
+        # "↻" (U+21BB, glifo de texto comum) em vez de um emoji colorido: as
+        # métricas de largura do emoji não batem com as calculadas pelo
+        # QFontMetrics, o que subestimava a largura reservada para o texto.
+        _texto_btn_licenca = "↻  Verificar licença agora"
+        self._btn_verificar_licenca = QPushButton(_texto_btn_licenca)
+        self._btn_verificar_licenca.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+        # Largura mínima medida com a MESMA fonte que o stylesheet aplica
+        # (8pt) — medir com a fonte padrão do app (10pt) daria um valor
+        # errado, já que `widget.fontMetrics()` não reflete o `font-size` do
+        # stylesheet.
+        _fonte_btn_licenca = QFont(self._btn_verificar_licenca.font())
+        _fonte_btn_licenca.setPointSize(8)
+        _largura_btn_licenca = QFontMetrics(_fonte_btn_licenca).horizontalAdvance(_texto_btn_licenca) + 28
+
+        # O `min-width` vai no stylesheet DO PRÓPRIO BOTÃO, e não via
+        # `setMinimumWidth()`: o tema global (app/styles.py) declara
+        # `QPushButton { min-width: 80px; }`, e um `min-width` vindo de
+        # stylesheet faz o QStyleSheetStyle ignorar o `setMinimumWidth()` do
+        # widget — era por isso que a legenda continuava cortada. Declarado
+        # aqui, ele vence no mesmo cascade por ser mais específico.
+        self._btn_verificar_licenca.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {_C.ACCENT};
+                border: none;
+                font-size: 8pt;
+                text-decoration: underline;
+                padding: 2px 4px;
+                min-width: {_largura_btn_licenca}px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                color: {_C.ACCENT_DEEP};
+            }}
+            QPushButton:disabled {{
+                color: {_C.TEXT_FAINT};
+            }}
+        """)
+        btn_licenca_layout.addWidget(self._btn_verificar_licenca)
+        btn_licenca_layout.addStretch()
+        group_layout.addLayout(btn_licenca_layout)
+
         # Status de conexão
         self._lbl_connection_status = QLabel("")
         self._lbl_connection_status.setStyleSheet("font-size: 8pt;")
@@ -903,6 +952,7 @@ class LoginDialog(QDialog):
         # Step 1 - Conexão
         self._cmb_connection.currentIndexChanged.connect(self._on_connection_changed)
         self._btn_connect.clicked.connect(self._on_connect)
+        self._btn_verificar_licenca.clicked.connect(self._on_verificar_licenca_clicked)
         
         # Step 2 - Empresa
         self._btn_back_empresa.clicked.connect(self._on_back_to_connection)
@@ -1265,6 +1315,52 @@ class LoginDialog(QDialog):
             return
 
         self._armazenar_licenca_payload(cand_path, payload_dict)
+
+    def _on_verificar_licenca_clicked(self):
+        """Botão "Verificar licença agora": força uma consulta online ao Neon
+        (ignorando o limite de uma verificação por dia) para atualizar o .key
+        local sob demanda, sem esperar o próximo carregamento do dia.
+        """
+        key_files = self._discover_key_files()
+        if not key_files:
+            QMessageBox.critical(self, "Arquivo de licença não encontrado", "Arquivo .key não encontrado, o sistema não poderá ser aberto.\nEntre em contato com o suporte para obter uma licença válida.")
+            return
+
+        self._btn_verificar_licenca.setEnabled(False)
+        self._btn_connect.setEnabled(False)
+        self._progress.setRange(0, 0)  # Indeterminado (spinner)
+        self._progress.show()
+        self._iniciar_contador_verificacao_licenca()
+
+        self._forcar_license_worker = LicencaOnlineWorker(key_files, forcar=True)
+        self._forcar_license_worker.finished.connect(self._on_forcar_licenca_finished)
+        self._forcar_license_worker.start()
+
+    def _on_forcar_licenca_finished(self, cand_path: str, payload_dict, erro):
+        """Callback do `LicencaOnlineWorker` disparado por `_on_verificar_licenca_clicked`."""
+        self._parar_contador_verificacao_licenca()
+        self._progress.hide()
+        self._progress.setRange(0, 100)
+        self._btn_verificar_licenca.setEnabled(True)
+        # Restaura o estado de repouso do botão "Conectar" (habilitado só se
+        # há uma conexão selecionada no combo) — a checagem sob demanda não
+        # valida contra a conexão, então não libera "Conectar" diretamente.
+        self._btn_connect.setEnabled(self._cmb_connection.currentIndex() > 0)
+
+        if payload_dict is None:
+            self._lbl_connection_status.setText("❌ Falha ao verificar licença online.")
+            self._lbl_connection_status.setStyleSheet(f"color: {_C.ERROR}; font-size: 9pt;")
+            QMessageBox.critical(self, "Erro de licença", f"Não foi possível verificar a licença online.\n{erro or ''}")
+            return
+
+        self._render_licenca_labels(cand_path, payload_dict)
+
+        if self._licenca_expirada_bloqueia(payload_dict):
+            return
+
+        self._armazenar_licenca_payload(cand_path, payload_dict)
+        self._lbl_connection_status.setText("✅ Licença atualizada com sucesso.")
+        self._lbl_connection_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")
 
     def _on_connection_changed(self, index: int):
         """Quando conexão é alterada."""

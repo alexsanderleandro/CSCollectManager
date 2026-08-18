@@ -114,12 +114,17 @@ def consultar_licenca_online(
         return None
 
 
-def sincronizar_licenca(caminho_key: Optional[str] = None) -> Dict[str, Any]:
+def sincronizar_licenca(caminho_key: Optional[str] = None, forcar: bool = False) -> Dict[str, Any]:
     """Sincroniza o `.key` local com o Neon (via CSCollectAPI) e retorna o
     payload efetivo a ser usado pelo app, no mesmo formato que
     `cscollectmanager_verify.load_and_verify_file()` retornava (`validade`,
     `tipo_licenca`, `sql_servidor`, `sql_banco`, `cnpjs`, `nome_cliente`,
     `api_authorization`, `api_database_url`, `api_url`, ...).
+
+    `forcar=True` ignora o limite de uma verificação online por dia — usado
+    pelo botão "Verificar licença agora" da tela de login, para o usuário
+    poder atualizar o `.key` a partir do Neon sob demanda, sem esperar o
+    próximo dia.
     """
     if not caminho_key:
         caminho_key = AppConfig._find_key_file()
@@ -128,7 +133,7 @@ def sincronizar_licenca(caminho_key: Optional[str] = None) -> Dict[str, Any]:
 
     payload = _ler_key_local(caminho_key)
 
-    if _ja_verificou_online_hoje() and not _licenca_bloqueada(payload):
+    if not forcar and _ja_verificou_online_hoje() and not _licenca_bloqueada(payload):
         # Já verificou online hoje e a licença local está válida — mesma
         # regra do app mobile: no máximo uma verificação online por dia. Usa
         # o .key local direto, sem rede.
