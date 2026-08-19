@@ -1811,12 +1811,27 @@ class MainWindowERP(QMainWindow):
             incluir_sem_gtin=bool(filters.get("incluir_sem_gtin", False)),
         )
     
+    def _carga_superada(self) -> bool:
+        """Diz se o sinal recebido veio de um carregamento já substituído.
+
+        `load_products` cancela o worker anterior, mas um sinal já emitido
+        continua na fila e seria entregue depois que o modelo foi limpo —
+        acrescentando linhas de uma consulta antiga à grade nova.
+        `sender()` é confiável aqui porque os slots são ligados diretamente ao
+        sinal, sem lambda.
+        """
+        return self.sender() is not self._load_worker
+
     def _on_load_progress(self, current: int, total: int, percentage: float, message: str):
         """Callback de progresso do carregamento."""
+        if self._carga_superada():
+            return
         self._status_bar.update_progress(current, total, f"Carregando... {current:,}/{total:,} ({percentage:.0f}%)")
-    
+
     def _on_page_ready(self, page_number: int, data):
         """Callback quando uma página de dados está pronta."""
+        if self._carga_superada():
+            return
         if data:
             # data é a lista de produtos (não tupla)
             products = data
@@ -1829,6 +1844,8 @@ class MainWindowERP(QMainWindow):
     
     def _on_load_finished(self, total_records: int):
         """Callback quando carregamento termina."""
+        if self._carga_superada():
+            return
         self._product_table.model.end_loading()
         self._status_bar.hide_progress()
         self._status_bar.show_message(f"✅ {total_records:,} produtos carregados", 5000)
@@ -1836,6 +1853,8 @@ class MainWindowERP(QMainWindow):
     
     def _on_load_error(self, error: Exception):
         """Callback de erro no carregamento."""
+        if self._carga_superada():
+            return
         self._product_table.model.end_loading()
         self._status_bar.hide_progress()
         self._status_bar.show_error(f"Erro ao carregar: {str(error)}")

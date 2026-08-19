@@ -19,20 +19,37 @@ from app.styles import themed_qss
 
 
 class ProductSearchWorker(QThread):
-    """Worker para buscar produtos em background."""
-    
-    finished = Signal(list)  # Lista de produtos encontrados
-    total_changed = Signal(int)  # Total de registros encontrados
-    error = Signal(str)      # Mensagem de erro
-    
-    def __init__(self, search_text: str, company_code: Optional[str] = None, limit: int = 50, offset: int = 0):
+    """Worker para buscar produtos em background.
+
+    Os sinais carregam o ``seq`` (token da busca que originou este worker) para
+    que o diálogo descarte o resultado de uma busca já superada — sem isso, o
+    resultado de uma consulta antiga chega depois que a nova já limpou a tabela
+    e acaba sendo *acrescentado*, duplicando linhas.
+
+    Os sinais não podem se chamar ``finished``/``error``: ``finished`` sombrearia
+    o sinal nativo de ``QThread``, que é justamente o que o diálogo usa para
+    saber quando a thread realmente terminou e pode ser liberada.
+    """
+
+    resultados = Signal(int, list, int)  # seq, produtos, total de registros
+    erro = Signal(int, str)              # seq, mensagem de erro
+
+    def __init__(
+        self,
+        seq: int,
+        search_text: str,
+        company_code: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ):
         super().__init__()
+        self.seq = seq
         self.search_text = search_text.strip()
         self.company_code = company_code
         self.limit = limit
         self.offset = offset
         self.service = ProductService()
-    
+
     def run(self):
         """Executa a busca."""
         try:
@@ -43,11 +60,10 @@ class ProductSearchWorker(QThread):
                 limit=self.limit,
                 offset=self.offset
             )
-            
-            self.total_changed.emit(total)
-            self.finished.emit(results)
+
+            self.resultados.emit(self.seq, results, total)
         except Exception as e:
-            self.error.emit(str(e))
+            self.erro.emit(self.seq, str(e))
 
 
 class ProductSearchDialog(QDialog):
@@ -71,6 +87,17 @@ class ProductSearchDialog(QDialog):
         self.page_size = 50
         self.total_products = 0
         self.all_loaded_products = []
+
+        # Token da busca corrente: incrementado a cada nova busca, permite
+        # descartar o resultado de buscas superadas (ver ProductSearchWorker).
+        self._search_seq = 0
+        # Impede que dois eventos de scroll seguidos busquem o mesmo offset
+        # duas vezes (current_page só é incrementado no callback).
+        self._carregando = False
+        # Workers já disparados que ainda não terminaram. Mantê-los
+        # referenciados evita que sejam coletados enquanto rodam, o que
+        # derrubaria o app com "QThread: Destroyed while thread is still running".
+        self._workers_vivos = []
 
         # Timer de debounce: aguarda 350ms após o usuário parar de digitar
         # para disparar nova busca no servidor (evita uma query por tecla).
@@ -325,72 +352,127 @@ class ProductSearchDialog(QDialog):
         """))
     
     def _perform_search(self):
-        """Executa a busca de produtos (primeira página)."""
-        if self.worker:
-            self.worker.quit()
-            self.worker.wait()
-        
+        """Executa a busca de produtos (primeira página), descartando a anterior."""
+        # Um debounce pendente dispararia uma segunda busca logo depois desta.
+        self._search_timer.stop()
+
+        # Invalida a busca em andamento: o worker antigo pode já ter emitido o
+        # resultado (sinal enfileirado), e sem o token ele seria aplicado por
+        # cima do estado recém-limpo, duplicando as linhas.
+        self._search_seq += 1
+        self._descartar_worker_atual()
+
         self.current_page = 0
         self.all_loaded_products = []
+        self._carregando = False
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)  # Indeterminate
         self.table.setRowCount(0)
-        
+
         # Busca a primeira página
         self._load_next_page()
-    
+
     def _load_next_page(self):
         """Carrega a próxima página de resultados."""
-        if self.worker:
-            self.worker.quit()
-            self.worker.wait()
-        
+        if self._carregando:
+            return  # já há uma página em voo; evita buscar o mesmo offset 2x
+        self._carregando = True
+
         offset = self.current_page * self.page_size
-        
-        self.worker = ProductSearchWorker(
+
+        worker = ProductSearchWorker(
+            seq=self._search_seq,
             search_text=self.txt_search.text(),
             company_code=self.company_code,
             limit=self.page_size,
             offset=offset
         )
-        self.worker.finished.connect(self._on_search_finished)
-        self.worker.total_changed.connect(self._on_total_changed)
-        self.worker.error.connect(self._on_search_error)
-        self.worker.start()
-    
-    def _on_total_changed(self, total: int):
-        """Callback quando total de resultados é atualizado."""
-        self.total_products = total
-        self._update_info_label()
-    
-    def _on_search_finished(self, results: list):
+        worker.resultados.connect(self._on_search_finished)
+        worker.erro.connect(self._on_search_error)
+        # `finished` aqui é o sinal nativo da QThread (emitido quando run()
+        # retorna), não o resultado da busca.
+        worker.finished.connect(lambda w=worker: self._esquecer_worker(w))
+
+        self.worker = worker
+        self._workers_vivos.append(worker)
+        worker.start()
+
+    def _descartar_worker_atual(self):
+        """Solta os sinais do worker corrente para que seu resultado seja ignorado.
+
+        A thread em si continua até terminar sozinha (a consulta já está no
+        banco e não há como cancelá-la); ela permanece em `_workers_vivos` para
+        não ser coletada enquanto roda. Não se usa `wait()` aqui de propósito:
+        isso congelaria a janela pelo tempo da consulta anterior.
+        """
+        if self.worker is None:
+            return
+        for sinal in (self.worker.resultados, self.worker.erro):
+            try:
+                sinal.disconnect()
+            except (TypeError, RuntimeError):
+                pass  # já desconectado ou objeto C++ destruído
+        self.worker = None
+
+    def _esquecer_worker(self, worker):
+        """Remove da lista um worker que já terminou de rodar."""
+        if worker in self._workers_vivos:
+            self._workers_vivos.remove(worker)
+        if self.worker is worker:
+            self.worker = None
+
+    def _on_search_finished(self, seq: int, results: list, total: int):
         """Callback quando busca termina."""
+        if seq != self._search_seq:
+            return  # resultado de uma busca já superada
+
+        self._carregando = False
         self.progress.setVisible(False)
-        
-        # Adiciona produtos à lista armazenada
+        self.total_products = total
+
+        # Calculado ANTES do extend: a posição de inserção é sempre o fim do
+        # que já foi carregado, independente de página.
+        start_row = len(self.all_loaded_products)
         self.all_loaded_products.extend(results)
-        
-        # Adiciona à tabela
-        start_row = self.table.rowCount() if self.current_page > 0 else 0
         self.table.setRowCount(len(self.all_loaded_products))
-        
+
         for row_idx, product in enumerate(results):
             row = start_row + row_idx
-            
+
             # Código — não usar setForeground; cor controlada pelo CSS
             self.table.setItem(row, 0, QTableWidgetItem(str(product.get("codproduto", ""))))
             self.table.setItem(row, 1, QTableWidgetItem(str(product.get("descricaoproduto", ""))))
             self.table.setItem(row, 2, QTableWidgetItem(str(product.get("nomegrupo", ""))))
             self.table.setItem(row, 3, QTableWidgetItem(str(product.get("codeanunidade", ""))))
             self.table.setItem(row, 4, QTableWidgetItem(str(product.get("unidade", ""))))
-        
+
         self.current_page += 1
         self._update_info_label()
-    
-    def _on_search_error(self, error_msg: str):
+
+    def _on_search_error(self, seq: int, error_msg: str):
         """Callback em caso de erro na busca."""
+        if seq != self._search_seq:
+            return  # erro de uma busca já superada
+
+        self._carregando = False
         self.progress.setVisible(False)
         QMessageBox.critical(self, "Erro na Busca", f"Erro ao buscar produtos:\n{error_msg}")
+
+    def done(self, result: int):
+        """Fecha o diálogo só depois que as threads em voo terminarem.
+
+        Sem isso o diálogo (e com ele os workers) pode ser destruído com uma
+        consulta ainda rodando. A espera é pontual, só no fechamento.
+        """
+        self._search_seq += 1  # invalida qualquer resultado ainda por chegar
+        self._descartar_worker_atual()
+        for worker in list(self._workers_vivos):
+            try:
+                worker.wait()
+            except RuntimeError:
+                pass
+        self._workers_vivos.clear()
+        super().done(result)
     
     def _on_scroll(self, value: int):
         """Detecta se o usuário scrollou até o fim da tabela para lazy load."""
