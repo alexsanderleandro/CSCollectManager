@@ -163,18 +163,35 @@ class ProgressIndicator(QWidget):
         self.hide()
 
 
+class _ClickableLabel(QLabel):
+    """QLabel que emite ``clicked`` ao receber um clique com o botão esquerdo."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class AppStatusBar(QStatusBar):
     """
     Barra de status avançada da aplicação.
-    
+
     Inclui:
     - Mensagem de status
     - Indicador de conexão
     - Indicador de progresso
     - Contador de registros
     - Informação do usuário
+    - Validade da licença (clicável, revalida a licença online)
     """
-    
+
+    # Emitido quando o usuário clica no rótulo de validade da licença.
+    license_clicked = Signal()
+
     def __init__(self, parent=None):
         """
         Inicializa a barra de status avançada.
@@ -253,9 +270,13 @@ class AppStatusBar(QStatusBar):
         
         self._add_separator(permanent=True)
 
-        # Validade da licença
-        self._license_label = QLabel("")
+        # Validade da licença — clicável: revalida a licença online, a mesma
+        # ação do botão "Verificar licença agora" da tela de login.
+        self._license_label = _ClickableLabel("")
         self._license_label.setStyleSheet("color: rgba(255,255,255,0.8); font-size: 9pt;")
+        self._license_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._license_label.setToolTip("Clique para verificar a licença online agora")
+        self._license_label.clicked.connect(self.license_clicked)
         self.addPermanentWidget(self._license_label)
 
         self._add_separator(permanent=True)
@@ -490,6 +511,14 @@ class AppStatusBar(QStatusBar):
         self._records_label.setText("")
 
     # ===== Licença =====
+
+    def set_license_checking(self):
+        """Mostra que a licença está sendo revalidada online.
+
+        O texto é restaurado pela chamada seguinte a ``set_license_validity``.
+        """
+        self._license_label.setText("🔄 Verificando licença...")
+        self._license_label.setStyleSheet("color: rgba(255,255,255,0.9); font-size: 9pt;")
 
     def set_license_validity(self, validade: str = "", tipo_licenca: str = ""):
         """

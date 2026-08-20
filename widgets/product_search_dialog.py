@@ -17,6 +17,10 @@ from PySide6.QtGui import QFont
 from services.product_service import ProductService
 from app.styles import themed_qss
 
+# Prefixo que marca, na coluna Código, a linha já enviada ao filtro. O código
+# real fica em Qt.ItemDataRole.UserRole, então este texto é só apresentação.
+_MARCA_ADICIONADO = "✓ "
+
 
 class ProductSearchWorker(QThread):
     """Worker para buscar produtos em background.
@@ -87,6 +91,11 @@ class ProductSearchDialog(QDialog):
         self.page_size = 50
         self.total_products = 0
         self.all_loaded_products = []
+
+        # Códigos já enviados à lista do filtro por duplo clique. É a fonte da
+        # verdade da marcação: cada nova busca reconstrói a tabela, então a
+        # marca precisa ser reaplicada ao popular as linhas.
+        self._adicionados = set()
 
         # Token da busca corrente: incrementado a cada nova busca, permite
         # descartar o resultado de buscas superadas (ver ProductSearchWorker).
@@ -313,7 +322,7 @@ class ProductSearchDialog(QDialog):
         btn_select.clicked.connect(self._on_select)
         btn_layout.addWidget(btn_select)
         
-        btn_cancel = QPushButton("Cancelar")
+        btn_cancel = self.btn_cancel = QPushButton("Cancelar")
         btn_cancel.setMinimumHeight(35)
         btn_cancel.setMinimumWidth(120)
         btn_cancel.setStyleSheet(themed_qss("""
@@ -339,6 +348,8 @@ class ProductSearchDialog(QDialog):
         self.txt_search.returnPressed.connect(self._perform_search)
         self.table.itemSelectionChanged.connect(self._update_count)
         self.table.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        # Duplo clique envia o produto direto para o filtro, sem fechar o diálogo
+        self.table.itemDoubleClicked.connect(self._on_item_double_clicked)
     
     def _apply_theme(self):
         """Aplica o tema ativo (claro/escuro)."""
@@ -439,12 +450,22 @@ class ProductSearchDialog(QDialog):
         for row_idx, product in enumerate(results):
             row = start_row + row_idx
 
-            # Código — não usar setForeground; cor controlada pelo CSS
-            self.table.setItem(row, 0, QTableWidgetItem(str(product.get("codproduto", ""))))
+            codigo = str(product.get("codproduto", ""))
+
+            # Código — não usar setForeground; cor controlada pelo CSS.
+            # O código real fica em UserRole: o texto exibido pode ganhar o
+            # marcador de "já adicionado", e códigos com zeros à esquerda
+            # (ex.: 060459) não podem depender do texto da célula.
+            item_codigo = QTableWidgetItem(codigo)
+            item_codigo.setData(Qt.ItemDataRole.UserRole, codigo)
+            self.table.setItem(row, 0, item_codigo)
             self.table.setItem(row, 1, QTableWidgetItem(str(product.get("descricaoproduto", ""))))
             self.table.setItem(row, 2, QTableWidgetItem(str(product.get("nomegrupo", ""))))
             self.table.setItem(row, 3, QTableWidgetItem(str(product.get("codeanunidade", ""))))
             self.table.setItem(row, 4, QTableWidgetItem(str(product.get("unidade", ""))))
+
+            if codigo in self._adicionados:
+                self._marcar_linha_adicionada(row)
 
         self.current_page += 1
         self._update_info_label()
@@ -511,14 +532,21 @@ class ProductSearchDialog(QDialog):
             )
     
     def _update_count(self):
-        """Atualiza contagem de selecionados."""
+        """Atualiza contagem de selecionados e de já adicionados."""
         count = len(self.table.selectedIndexes()) // self.table.columnCount()
         if count == 0:
-            self.lbl_count.setText("Nenhum produto selecionado")
+            texto = "Nenhum produto selecionado"
         elif count == 1:
-            self.lbl_count.setText("1 produto selecionado")
+            texto = "1 produto selecionado"
         else:
-            self.lbl_count.setText(f"{count} produtos selecionados")
+            texto = f"{count} produtos selecionados"
+
+        adicionados = len(self._adicionados)
+        if adicionados:
+            plural = "s" if adicionados > 1 else ""
+            texto = f"{texto}\n✓ {adicionados} adicionado{plural} ao filtro"
+
+        self.lbl_count.setText(texto)
     
     def _select_all(self):
         """Seleciona todos os produtos visíveis."""
@@ -543,6 +571,56 @@ class ProductSearchDialog(QDialog):
         self.table.clearSelection()
         self._update_count()
     
+    # ------------------------------------------------------------------
+    # Adição por duplo clique
+    # ------------------------------------------------------------------
+
+    def _codigo_da_linha(self, row: int) -> str:
+        """Código real da linha, independente do que está exibido na célula."""
+        item = self.table.item(row, 0)
+        if item is None:
+            return ""
+        codigo = item.data(Qt.ItemDataRole.UserRole)
+        # Fallback para o texto só se UserRole não estiver preenchido; nesse
+        # caso a linha ainda não foi marcada, então o texto está limpo.
+        return str(codigo if codigo else item.text()).strip()
+
+    def _marcar_linha_adicionada(self, row: int):
+        """Sinaliza na tabela que a linha já foi enviada ao filtro."""
+        for col in range(self.table.columnCount()):
+            item = self.table.item(row, col)
+            if item is not None:
+                item.setToolTip("Produto já adicionado ao filtro")
+        item_codigo = self.table.item(row, 0)
+        if item_codigo is not None and not item_codigo.text().startswith(_MARCA_ADICIONADO):
+            item_codigo.setText(f"{_MARCA_ADICIONADO}{item_codigo.text()}")
+
+    def _on_item_double_clicked(self, item: QTableWidgetItem):
+        """Duplo clique envia o produto direto para a lista do filtro.
+
+        O diálogo continua aberto de propósito, para permitir adicionar vários
+        produtos em sequência sem reabrir a busca.
+        """
+        row = item.row()
+        if self.table.isRowHidden(row):
+            return
+
+        codigo = self._codigo_da_linha(row)
+        if not codigo or codigo in self._adicionados:
+            return  # já adicionado: não reemite
+
+        item_desc = self.table.item(row, 1)
+        descricao = item_desc.text().strip() if item_desc else ""
+
+        self._adicionados.add(codigo)
+        self._marcar_linha_adicionada(row)
+        self._update_count()
+
+        # Fechar deixa de sugerir desfazer: o que foi adicionado já está no filtro.
+        self.btn_cancel.setText("Fechar")
+
+        self.products_selected.emit([(codigo, f"{codigo} - {descricao}")])
+
     def _on_select(self):
         """Retorna produtos selecionados."""
         selected_rows = set(index.row() for index in self.table.selectedIndexes())
@@ -556,8 +634,9 @@ class ProductSearchDialog(QDialog):
         for row in sorted(selected_rows):
             if self.table.isRowHidden(row):
                 continue
-            # Mantém código como string para preservar zeros à esquerda
-            codigo = self.table.item(row, 0).text().strip()
+            # Mantém código como string para preservar zeros à esquerda; lê de
+            # UserRole para não trazer junto o marcador de "já adicionado".
+            codigo = self._codigo_da_linha(row)
             descricao = self.table.item(row, 1).text().strip()
             # Formata como "CÓDIGO - DESCRIÇÃO" para melhor legibilidade
             selected_products.append((codigo, f"{codigo} - {descricao}"))

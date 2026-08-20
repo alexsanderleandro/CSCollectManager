@@ -94,21 +94,22 @@ class ProductSearchCombo(MultiSelectCombo):
         search_text = self.txt_search.text().strip()
         
         dialog = ProductSearchDialog(search_text, self._company_code, self)
-        
-        if dialog.exec() == ProductSearchDialog.Accepted and hasattr(dialog, '_last_selected'):
-            existing_codes = {codigo for codigo, _ in self._items}
-            for codigo, descricao in dialog._last_selected:
-                if codigo not in existing_codes:
-                    self._items.append((codigo, descricao))
-                    existing_codes.add(codigo)
-                # Todo item inserido nesta lista deve vir marcado por padrão.
-                # Usa _checked_values (fonte da verdade persistente, ver
-                # MultiSelectCombo) em vez de get_selected_values(), que só
-                # enxerga o que está renderizado — se txt_search tiver texto
-                # residual de uma busca anterior, list_widget pode estar
-                # mostrando um subconjunto filtrado no momento do Enter.
-                self._checked_values.add(codigo)
 
+        # Recebe tanto os duplos cliques (um produto por vez, com o diálogo
+        # ainda aberto) quanto o clique em "Selecionar", que emite o mesmo sinal.
+        houve_mudanca = {"valor": False}
+
+        def _receber(produtos):
+            if self._adicionar_produtos(produtos):
+                houve_mudanca["valor"] = True
+
+        dialog.products_selected.connect(_receber)
+        dialog.exec()
+
+        # O refresh da interface acontece uma única vez, depois de fechado: o
+        # combo fica atrás de um diálogo modal, então repopular a lista a cada
+        # duplo clique seria trabalho invisível e desperdiçado.
+        if houve_mudanca["valor"]:
             # Limpa o campo de busca sem disparar _filter_items (evita
             # repopular a lista duas vezes) e repopula a lista completa, sem
             # filtro. O estado marcado vem de _checked_values, então é
@@ -121,3 +122,23 @@ class ProductSearchCombo(MultiSelectCombo):
             # Atualiza contagem e emite sinal
             self._update_count()
             self.selection_changed.emit(self.get_selected_values())
+
+    def _adicionar_produtos(self, produtos) -> bool:
+        """Inclui produtos na lista do filtro, sem duplicar. Retorna se mudou algo."""
+        existing_codes = {codigo for codigo, _ in self._items}
+        mudou = False
+        for codigo, descricao in produtos or []:
+            if codigo not in existing_codes:
+                self._items.append((codigo, descricao))
+                existing_codes.add(codigo)
+                mudou = True
+            # Todo item inserido nesta lista deve vir marcado por padrão.
+            # Usa _checked_values (fonte da verdade persistente, ver
+            # MultiSelectCombo) em vez de get_selected_values(), que só
+            # enxerga o que está renderizado — se txt_search tiver texto
+            # residual de uma busca anterior, list_widget pode estar
+            # mostrando um subconjunto filtrado no momento do Enter.
+            if codigo not in self._checked_values:
+                self._checked_values.add(codigo)
+                mudou = True
+        return mudou

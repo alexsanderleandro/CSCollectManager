@@ -64,13 +64,70 @@ def _ler_key_local(caminho_key: str) -> Dict[str, Any]:
     return payload
 
 
-def _gravar_validade_tipo_licenca(caminho_key: str, validade: Optional[str], tipo_licenca: str) -> None:
-    """Regrava só `validade`/`tipo_licenca` no .key, preservando os demais campos."""
+def _regravar_key_completo(caminho_key: str, arq_licenca: str) -> bool:
+    """Substitui o .key local pelo arquivo de licença vindo do servidor.
+
+    É o equivalente, no desktop, ao que o coletor faz ao revalidar a licença:
+    rebaixa o arquivo inteiro e passa a trabalhar com os dados atualizados,
+    em vez de remendar campo a campo. Assim `validade`, `tipo_licenca` e —
+    principalmente — `token` ficam sempre iguais aos do Neon.
+
+    Retorna True se regravou. Só aceita um JSON com as mesmas chaves que o
+    .key já tem: um conteúdo truncado ou de outro formato nunca pode
+    sobrescrever a licença local, sob risco de derrubar o acesso ao app.
+    """
+    conteudo = (arq_licenca or "").strip()
+    if not conteudo:
+        return False
+    try:
+        novo = json.loads(conteudo)
+    except Exception as e:
+        logger.warning(f"[licenca_online] arq_licenca do servidor não é JSON válido: {e}")
+        return False
+    if not isinstance(novo, dict) or not novo.get("token"):
+        logger.warning("[licenca_online] arq_licenca do servidor sem 'token' — ignorado.")
+        return False
+
+    try:
+        with open(caminho_key, 'r', encoding='utf-8-sig') as f:
+            atual = json.load(f)
+    except Exception:
+        atual = {}
+
+    faltando = set(atual) - set(novo)
+    if faltando:
+        logger.warning(
+            f"[licenca_online] arq_licenca do servidor não traz {sorted(faltando)} — "
+            "regravação completa ignorada, aplicando só os campos conhecidos."
+        )
+        return False
+
+    with open(caminho_key, 'w', encoding='utf-8') as f:
+        json.dump(novo, f, ensure_ascii=False, indent=2)
+    return True
+
+
+def _gravar_campos_licenca(
+    caminho_key: str,
+    validade: Optional[str],
+    tipo_licenca: str,
+    token: str = "",
+) -> None:
+    """Regrava `validade`/`tipo_licenca`/`token` no .key, preservando o resto.
+
+    O `token` é a chave HMAC que valida a assinatura (.sig) dos arquivos de
+    contagem gerados pelo coletor. Ele muda a cada renovação de licença, e o
+    coletor recebe o token novo — se o .key do desktop não for atualizado
+    junto, todo arquivo enviado passa a ser rejeitado com "Assinatura HMAC
+    inválida", como se tivesse sido adulterado.
+    """
     with open(caminho_key, 'r', encoding='utf-8-sig') as f:
         data = json.load(f)
     data['validade'] = validade
     if tipo_licenca:
         data['tipo_licenca'] = tipo_licenca
+    if token:
+        data['token'] = token
     with open(caminho_key, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -156,17 +213,42 @@ def sincronizar_licenca(caminho_key: Optional[str] = None, forcar: bool = False)
         ativo = bool(resposta.get('ativo', True))
         validade_online = resposta.get('validade')
         tipo_online = str(resposta.get('tipo_licenca') or payload.get('tipo_licenca') or '').strip()
+        # Token novo a cada renovação de licença; versões antigas da API não
+        # devolvem esse campo, e nesse caso o token local é preservado.
+        token_online = str(resposta.get('token') or '').strip()
 
         validade_efetiva = validade_online if ativo else _data_vencida_ontem()
 
-        if validade_efetiva != payload.get('validade') or tipo_online != payload.get('tipo_licenca'):
+        token_mudou = bool(token_online) and token_online != (payload.get('token') or '').strip()
+        regravado = False
+        try:
+            # Caminho preferido: substituir o .key inteiro pelo do servidor,
+            # como o coletor faz — garante paridade total dos dados.
+            # Só quando a licença está ativa: se estiver inativa, a validade
+            # precisa ser forçada para vencida logo abaixo.
+            if ativo:
+                regravado = _regravar_key_completo(caminho_key, resposta.get('arq_licenca') or '')
+            if not regravado and (validade_efetiva != payload.get('validade')
+                                  or tipo_online != payload.get('tipo_licenca')
+                                  or token_mudou):
+                _gravar_campos_licenca(caminho_key, validade_efetiva, tipo_online, token_online)
+            if token_mudou:
+                logger.info("[licenca_online] Token da licença atualizado a partir do servidor.")
+        except Exception as e:
+            logger.error(f"[licenca_online] Falha ao regravar .key: {e}")
+
+        if regravado:
+            # Relê para devolver exatamente o que ficou gravado (inclusive os
+            # campos que só existem no arquivo do servidor).
             try:
-                _gravar_validade_tipo_licenca(caminho_key, validade_efetiva, tipo_online)
+                payload = _ler_key_local(caminho_key)
             except Exception as e:
-                logger.error(f"[licenca_online] Falha ao regravar .key: {e}")
+                logger.error(f"[licenca_online] Falha ao reler .key regravado: {e}")
 
         payload['validade'] = validade_efetiva
         payload['tipo_licenca'] = tipo_online
+        if token_online:
+            payload['token'] = token_online
         AppConfig.set_ultima_verificacao_licenca_online(datetime.now().isoformat())
         return payload
 
@@ -205,6 +287,33 @@ def _licenca_bloqueada(payload: Dict[str, Any]) -> bool:
         return False
 
 
+def criar_worker_verificacao(parent=None, forcar: bool = False):
+    """Cria (sem iniciar) uma QThread que roda `sincronizar_licenca`.
+
+    Usada tanto pela verificação periódica em background quanto pela
+    revalidação sob demanda (clique no rótulo de licença no rodapé) — a
+    consulta pode levar até `TIMEOUT_SEGUNDOS` e nunca deve travar a UI.
+
+    O import do Qt fica aqui dentro de propósito: este módulo também roda fora
+    da interface e não deve exigir PySide6 apenas para ser importado.
+
+    O worker emite `resultado` com o payload da licença, ou None em caso de erro.
+    """
+    from PySide6.QtCore import QThread, Signal
+
+    class _VerificacaoWorker(QThread):
+        resultado = Signal(object)  # payload (dict) ou None em caso de erro
+
+        def run(self):
+            try:
+                self.resultado.emit(sincronizar_licenca(forcar=forcar))
+            except Exception as e:
+                logger.error(f"[licenca_online] Falha na verificação de licença: {e}")
+                self.resultado.emit(None)
+
+    return _VerificacaoWorker(parent)
+
+
 def iniciar_verificacao_background(main_window, intervalo_min: int = INTERVALO_BACKGROUND_MIN):
     """Inicia um QTimer que reconsulta a licença periodicamente enquanto o
     app está aberto, bloqueando a sessão imediatamente (via
@@ -215,17 +324,7 @@ def iniciar_verificacao_background(main_window, intervalo_min: int = INTERVALO_B
     verificação online por dia, a única chamada do dia que bate rede pode
     levar até ``TIMEOUT_SEGUNDOS``, e isso nunca deve travar a UI.
     """
-    from PySide6.QtCore import QThread, QTimer, Signal
-
-    class _VerificacaoWorker(QThread):
-        resultado = Signal(object)  # payload (dict) ou None em caso de erro
-
-        def run(self):
-            try:
-                self.resultado.emit(sincronizar_licenca())
-            except Exception as e:
-                logger.error(f"[licenca_online] Falha na verificação em background: {e}")
-                self.resultado.emit(None)
+    from PySide6.QtCore import QTimer
 
     timer = QTimer(main_window)
 
@@ -237,7 +336,7 @@ def iniciar_verificacao_background(main_window, intervalo_min: int = INTERVALO_B
             )
 
     def _checar():
-        worker = _VerificacaoWorker(main_window)
+        worker = criar_worker_verificacao(main_window)
         worker.resultado.connect(_tratar_resultado)
         # Mantém a referência viva até o worker terminar sozinho.
         main_window._licenca_online_worker = worker

@@ -14,21 +14,23 @@ Layout completo com:
 
 import os
 from typing import Optional, Dict, Any, List
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 import pytz
 
-def _utc_to_local(dt_str: str) -> str:
-    """Converte string de data/hora UTC para horário local (UTC-3 / Brasília)."""
+def _fmt_data_envio(dt_str: str) -> str:
+    """Formata um ``data_envio`` vindo da API/Neon, sem deslocar o fuso.
+
+    A coluna ``data_envio`` é ``timestamp without time zone`` e a API já grava
+    o horário de São Paulo nela (``datetime.now(pytz.timezone('America/Sao_Paulo'))
+    .replace(tzinfo=None)`` — ver ``api.py``). Portanto o valor lido já está no
+    fuso do usuário e qualquer conversão UTC→local o deixaria 3 horas errado,
+    divergindo do que o Neon e o coletor mostram.
+    """
     if not dt_str:
         return dt_str
     try:
-        dt_str_clean = dt_str[:19]  # remove microssegundos
-        dt = datetime.fromisoformat(dt_str_clean)
-        # Se vier sem tzinfo, assume UTC
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        dt_local = dt + timedelta(hours=-3)
-        return dt_local.strftime("%Y-%m-%d %H:%M:%S")
+        dt = datetime.fromisoformat(dt_str[:19])  # remove microssegundos
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return dt_str[:19]
 
@@ -326,6 +328,7 @@ class MainWindowERP(QMainWindow):
         self._connection_info = {}
         self._last_db_export_path: str = ""  # Caminho do último .db gerado
         self._licenca_payload: Dict = {}  # Payload do arquivo .key (dispositivos liberados)
+        self._licenca_worker_manual = None  # Revalidação disparada pelo clique no rodapé
         
         # Serviços e Workers
         self._product_service = ProductService()
@@ -415,6 +418,7 @@ class MainWindowERP(QMainWindow):
         
         # ===== STATUS BAR =====
         self._status_bar = AppStatusBar()
+        self._status_bar.license_clicked.connect(self._on_licenca_clicada)
         self.setStatusBar(self._status_bar)
     
     def _create_sidebar(self) -> QFrame:
@@ -1460,8 +1464,77 @@ class MainWindowERP(QMainWindow):
             logger.error(f"Falha ao iniciar verificação de licença em background: {e}")
 
         self.setWindowTitle(f"{APP_INFO.NAME} - v{APP_INFO.VERSION}")
-        
+
         logger.info(f"Conexão configurada: {empresa_nome} / {usuario_nome}")
+
+    # ------------------------------------------------------------------
+    # Revalidação da licença sob demanda (clique no rodapé)
+    # ------------------------------------------------------------------
+
+    def _on_licenca_clicada(self):
+        """Revalida a licença online ao clicar no rótulo do rodapé.
+
+        Mesma ação do botão "Verificar licença agora" da tela de login: ignora
+        o limite de uma verificação por dia e atualiza o .key com os dados do
+        servidor. Roda em thread separada — a consulta pode levar até
+        `licenca_online.TIMEOUT_SEGUNDOS`.
+        """
+        if getattr(self, "_licenca_worker_manual", None) is not None:
+            return  # já há uma verificação em andamento
+
+        try:
+            from services.licenca_online import criar_worker_verificacao
+        except Exception as e:
+            logger.error(f"Falha ao carregar verificação de licença: {e}")
+            return
+
+        self._status_bar.set_license_checking()
+        self._status_bar.show_message("Verificando licença online...")
+
+        worker = criar_worker_verificacao(self, forcar=True)
+        worker.resultado.connect(self._on_licenca_revalidada)
+        worker.finished.connect(self._on_licenca_worker_encerrado)
+        self._licenca_worker_manual = worker
+        worker.start()
+
+    def _on_licenca_worker_encerrado(self):
+        """Libera a referência do worker manual quando a thread termina."""
+        self._licenca_worker_manual = None
+
+    def _on_licenca_revalidada(self, payload):
+        """Aplica na sessão o resultado da revalidação manual da licença."""
+        if not payload:
+            # Restaura o rótulo com o que já se sabia da licença.
+            self._status_bar.set_license_validity(
+                self._licenca_payload.get("validade", ""),
+                self._licenca_payload.get("tipo_licenca", ""),
+            )
+            self._status_bar.show_error("Não foi possível verificar a licença online.")
+            QMessageBox.warning(
+                self,
+                "Verificação de Licença",
+                "Não foi possível consultar a licença online.\n\n"
+                "Verifique a conexão com a internet e tente novamente.",
+            )
+            return
+
+        validade = payload.get("validade", "")
+        tipo_licenca = payload.get("tipo_licenca", "")
+
+        self._licenca_payload = payload
+        self._tipo_licenca = tipo_licenca
+        self._status_bar.set_license_validity(validade, tipo_licenca)
+        self._atualizar_bloqueio_licenca()
+
+        from services.licenca_online import _licenca_bloqueada
+        if _licenca_bloqueada(payload):
+            self._bloquear_sessao_por_licenca(
+                "Sua licença foi bloqueada ou expirou.\n\n"
+                "Entre em contato com o setor comercial da CEOsoftware."
+            )
+            return
+
+        self._status_bar.show_message("Licença verificada e atualizada.", 5000)
 
     def _get_licensed_ids(self) -> set:
         """Retorna o conjunto de IDs de dispositivos presentes na licença atual."""
@@ -2595,7 +2668,7 @@ class MainWindowERP(QMainWindow):
             if chk_thread.found and chk_thread.record:
                 rec = chk_thread.record
                 nome_banco  = str(rec.get("nome_arquivo") or rec.get("arquivo") or "(sem nome)")
-                data_envio  = _utc_to_local(str(rec.get("data_envio") or rec.get("criado_em") or ""))
+                data_envio  = _fmt_data_envio(str(rec.get("data_envio") or rec.get("criado_em") or ""))
                 carga_id    = rec.get("id")
 
                 # Diálogo de conflito
@@ -2708,6 +2781,9 @@ class MainWindowERP(QMainWindow):
 
             # ── FASE 2: upload ────────────────────────────────────────────────
             class _ApiUploadThread(QThread):
+                # Progresso da espera pela API; entregue na thread da GUI.
+                progresso = Signal(str)
+
                 def __init__(self, api_svc, path, cnpj_val, codvend_val, idcel_val, parent=None):
                     super().__init__(parent)
                     self._api  = api_svc
@@ -2724,6 +2800,7 @@ class MainWindowERP(QMainWindow):
                         cnpj=self._cnpj,
                         codvendedor=self._codv,
                         idcelular=self._idcel,
+                        progresso=self.progresso.emit,
                     )
 
             up_thread = _ApiUploadThread(api, filepath, cnpj, codvendedor, idcelular, self)
@@ -2747,6 +2824,9 @@ class MainWindowERP(QMainWindow):
             lbl_up_status = QLabel("📡  Conectando à API...")
             lbl_up_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl_up_status.setWordWrap(True)
+            # O texto pode conter a resposta do servidor: como PlainText, um
+            # corpo HTML nunca é interpretado como marcação pelo QLabel.
+            lbl_up_status.setTextFormat(Qt.TextFormat.PlainText)
             lay_up.addWidget(lbl_up_status)
 
             lbl_up_file = QLabel(f"Arquivo: {_os.path.basename(filepath)}")
@@ -2780,7 +2860,10 @@ class MainWindowERP(QMainWindow):
                     btn_ok_up.setVisible(True)
                 else:
                     logger.warning(f"Falha ao enviar para API: {up_thread.message}")
-                    lbl_up_status.setText(f"❌  Falha no envio\n{up_thread.message}")
+                    lbl_up_status.setText(
+                        f"❌  Falha no envio\n{up_thread.message}\n\n"
+                        "Deseja tentar novamente ou cancelar o envio pela API?"
+                    )
                     lbl_up_status.setStyleSheet(themed_qss("color: {{ERROR}}; font-size: 10pt;"))
                     prog_up.setStyleSheet(themed_qss("""
                         QProgressBar { background-color: {{BG_TERTIARY}}; border: none; border-radius: 2px; }
@@ -2795,8 +2878,12 @@ class MainWindowERP(QMainWindow):
                     btn_retry.clicked.connect(lambda: (dlg_up.reject(), self._send_to_api(filepath)))
                     btn_row_up.insertWidget(1, btn_retry)
                     btn_ok_up.setVisible(True)
-                    btn_ok_up.setText("Fechar")
+                    btn_ok_up.setText("Cancelar envio")
 
+            def _on_upload_progresso(texto: str):
+                lbl_up_status.setText(texto)
+
+            up_thread.progresso.connect(_on_upload_progresso)
             up_thread.finished.connect(_on_upload_done)
             up_thread.start()
             self._api_upload_thread = up_thread  # Guarda referência
@@ -3372,7 +3459,7 @@ class MainWindowERP(QMainWindow):
                 self._contagens_table.setItem(row_idx, 2, QTableWidgetItem(str(rec.get("codvendedor") or "")))
                 self._contagens_table.setItem(row_idx, 3, QTableWidgetItem(str(rec.get("idcelular") or "")))
                 self._contagens_table.setItem(row_idx, 4, QTableWidgetItem(str(rec.get("cnpj") or "")))
-                data_envio = _utc_to_local(str(rec.get("data_envio") or ""))  # converte UTC→local (UTC-3)
+                data_envio = _fmt_data_envio(str(rec.get("data_envio") or ""))
                 self._contagens_table.setItem(row_idx, 5, QTableWidgetItem(data_envio))
                 self._contagens_table.setItem(row_idx, 6, QTableWidgetItem(str(rec.get("url_arquivo") or "")))
 

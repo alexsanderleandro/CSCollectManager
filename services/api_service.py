@@ -12,7 +12,58 @@ Referência: https://github.com/alexsanderleandro/CSCollectAPI
 """
 
 import os
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
+
+# Status que valem a pena reesperar: o serviço está fora do ar, reiniciando ou
+# acordando, e tende a voltar sozinho em segundos.
+_STATUS_TRANSITORIOS = (502, 503, 504)
+
+# Mensagens por status para respostas sem corpo útil (ex.: página HTML do
+# Cloudflare, ou corpo vazio do proxy quando a origem está fora).
+_MENSAGENS_STATUS = {
+    429: ("Muitas tentativas seguidas — o servidor bloqueou temporariamente. "
+          "Aguarde alguns minutos antes de tentar de novo."),
+    502: "Servidor temporariamente indisponível (falha no gateway).",
+    503: "Serviço temporariamente indisponível — o servidor pode estar fora do ar ou reiniciando.",
+    504: "O servidor demorou demais para responder (tempo esgotado no gateway).",
+    401: "Não autorizado — verifique o token da API.",
+    403: "Acesso negado — verifique o token da API.",
+    404: "Recurso não encontrado no servidor.",
+}
+
+_LIMITE_TEXTO_ERRO = 300
+
+
+def _descrever_erro_http(resp) -> str:
+    """Resume a resposta de erro numa mensagem curta e legível.
+
+    Existe porque despejar `resp.text` na interface é inútil e destrutivo: o
+    Cloudflare responde com uma página de challenge de vários KB, que não diz
+    nada ao usuário e estica o diálogo a ponto de quebrar o layout.
+
+    Ordem: `detail` do FastAPI → mensagem conhecida do status → texto truncado.
+    """
+    status = getattr(resp, "status_code", 0)
+
+    # 1. Erro estruturado da própria API (FastAPI usa {"detail": ...}).
+    try:
+        detalhe = (resp.json() or {}).get("detail")
+        if detalhe:
+            return str(detalhe)[:_LIMITE_TEXTO_ERRO]
+    except Exception:
+        pass
+
+    corpo = (getattr(resp, "text", "") or "").strip()
+    tipo = str((getattr(resp, "headers", {}) or {}).get("content-type", "")).lower()
+    parece_html = corpo[:15].lower().startswith(("<!doctype", "<html")) or "html" in tipo
+
+    # 2. Corpo vazio ou página HTML (challenge/erro do proxy): o corpo não
+    #    acrescenta nada, então usa a mensagem do status.
+    if not corpo or parece_html:
+        return _MENSAGENS_STATUS.get(status, f"HTTP {status}")
+
+    # 3. Texto simples — trunca para não estourar a interface.
+    return corpo[:_LIMITE_TEXTO_ERRO]
 
 
 class ApiService:
@@ -24,6 +75,13 @@ class ApiService:
 
     UPLOAD_PATH = "/upload"
     TIMEOUT = 60  # segundos
+
+    # Tempo total que o envio espera a API voltar antes de desistir e devolver
+    # a decisão ao usuário (tentar de novo ou cancelar).
+    JANELA_ESPERA_SEG = 60
+    # Espaçamento entre tentativas dentro da janela. Ritmo contido de propósito:
+    # tentativas em rajada é o que faz o Cloudflare responder 429.
+    INTERVALO_ESPERA_SEG = 10
 
     def __init__(self, base_url: str, authorization: str):
         """
@@ -40,17 +98,34 @@ class ApiService:
     # API pública
     # ------------------------------------------------------------------
 
-    def upload_file(self, filepath: str, cnpj: Optional[str] = None, codvendedor: Optional[str] = None, idcelular: Optional[str] = None) -> Tuple[bool, str]:
+    def upload_file(
+        self,
+        filepath: str,
+        cnpj: Optional[str] = None,
+        codvendedor: Optional[str] = None,
+        idcelular: Optional[str] = None,
+        progresso: Optional[Callable[[str], None]] = None,
+    ) -> Tuple[bool, str]:
         """
         Envia um arquivo ZIP para o endpoint ``/upload`` da API.
 
+        Em erro transitório (serviço fora do ar, reiniciando ou sem conexão), a
+        chamada continua esperando a API voltar por até ``JANELA_ESPERA_SEG``
+        segundos antes de desistir — em vez de falhar de imediato e levar o
+        usuário a clicar "Tentar novamente" em rajada, o que faz o servidor
+        responder 429.
+
+        Erros permanentes (401/403/400/404) e o próprio 429 encerram na hora:
+        repetir não ajuda e, no caso do 429, piora.
+
         Args:
-            filepath: Caminho completo do arquivo a enviar.
+            filepath:   Caminho completo do arquivo a enviar.
+            progresso:  Callback opcional para acompanhar a espera; recebe uma
+                        mensagem pronta para exibição. Chamado da thread que
+                        executa o upload.
 
         Returns:
             Tupla ``(sucesso, mensagem)``.
-            - sucesso:  ``True`` se a resposta HTTP for 2xx.
-            - mensagem: Mensagem de retorno da API ou descrição do erro.
         """
         try:
             import requests
@@ -60,88 +135,104 @@ class ApiService:
         if not os.path.isfile(filepath):
             return False, f"Arquivo não encontrado: {filepath}"
 
+        import logging
+        import time
+
+        log = logging.getLogger("CSCollect.services.api_service")
         url = f"{self._base_url}{self.UPLOAD_PATH}"
         headers = {"Authorization": self._authorization}
         filename = os.path.basename(filepath)
 
-        # Log de diagnóstico: mostra prefixo/sufixo do token para comparar com API_TOKEN do servidor
-        try:
-            import logging
-            _log = logging.getLogger("CSCollect.services.api_service")
-            _tok = self._authorization or ""
-            _tok_repr = (
-                f"{_tok[:20]}...{_tok[-10:]}" if len(_tok) > 32
-                else (_tok[:8] + "..." if len(_tok) > 8 else f"(vazio ou muito curto: {len(_tok)} chars)")
-            )
-            _log.warning(
-                "Token sendo enviado para API → comprimento=%d | valor='%s' | url='%s'",
-                len(_tok), _tok_repr, url,
-            )
-        except Exception:
-            pass
+        _tok = self._authorization or ""
+        log.debug(
+            "Upload para %s | token: %d chars, prefixo '%s'",
+            url, len(_tok), _tok[:8] if _tok else "(vazio)",
+        )
 
-        try:
-            with open(filepath, "rb") as fh:
-                # Monta payload multipart/form-data com campos adicionais
-                data = {}
-                if cnpj:
-                    data["cnpj"] = cnpj
-                if codvendedor:
-                    data["codvendedor"] = codvendedor
-                if idcelular:
-                    data["idcelular"] = idcelular
+        data = {}
+        if cnpj:
+            data["cnpj"] = cnpj
+        if codvendedor:
+            data["codvendedor"] = codvendedor
+        if idcelular:
+            data["idcelular"] = idcelular
 
-                # Log de depuração: mostrar payload que será enviado
+        def _avisar(msg: str):
+            if progresso:
                 try:
-                    import logging
-                    logger = logging.getLogger("ApiService")
-                    logger.debug("Enviando POST %s", url)
-                    logger.debug("Headers: %s", {k: (v[:8] + '...' if k.lower()=='authorization' and v else v) for k,v in headers.items()})
-                    logger.debug("Form fields: %s", data)
+                    progresso(msg)
                 except Exception:
                     pass
 
-                resp = requests.post(
-                    url,
-                    files={"file": (filename, fh)},
-                    data=data if data else None,
-                    headers=headers,
-                    timeout=self.TIMEOUT,
+        inicio = time.monotonic()
+        tentativa = 0
+        ultima_msg = ""
+
+        while True:
+            tentativa += 1
+            espera = self.INTERVALO_ESPERA_SEG
+            try:
+                # O arquivo é reaberto a cada tentativa: um handle já consumido
+                # pela tentativa anterior enviaria corpo vazio.
+                with open(filepath, "rb") as fh:
+                    resp = requests.post(
+                        url,
+                        files={"file": (filename, fh)},
+                        data=data if data else None,
+                        headers=headers,
+                        timeout=self.TIMEOUT,
+                    )
+
+                log.debug("Upload tentativa %d → HTTP %s", tentativa, resp.status_code)
+
+                if resp.ok:
+                    try:
+                        corpo = resp.json()
+                        return True, f"Arquivo '{corpo.get('arquivo', filename)}' enviado com sucesso."
+                    except Exception:
+                        return True, f"Arquivo enviado com sucesso. (HTTP {resp.status_code})"
+
+                ultima_msg = f"Erro da API ({resp.status_code}): {_descrever_erro_http(resp)}"
+
+                if resp.status_code not in _STATUS_TRANSITORIOS:
+                    # Inclui o 429: insistir é exatamente o que agrava o bloqueio.
+                    log.warning("Upload falhou sem nova tentativa: %s", ultima_msg)
+                    return False, ultima_msg
+
+                # `Retry-After` do servidor tem prioridade sobre o intervalo padrão.
+                try:
+                    cabecalho = (resp.headers or {}).get("Retry-After")
+                    if cabecalho:
+                        espera = max(1, min(int(float(cabecalho)), self.JANELA_ESPERA_SEG))
+                except Exception:
+                    pass
+
+            except requests.exceptions.ConnectionError:
+                ultima_msg = "Não foi possível conectar à API. Verifique a URL e a conexão com a internet."
+            except requests.exceptions.Timeout:
+                ultima_msg = f"Tempo esgotado após {self.TIMEOUT}s. A API pode estar indisponível."
+            except Exception as exc:
+                log.warning("Upload falhou com erro inesperado: %s", exc)
+                return False, f"Erro inesperado ao enviar: {exc}"
+
+            decorrido = time.monotonic() - inicio
+            restante = self.JANELA_ESPERA_SEG - decorrido
+            if restante <= 0:
+                log.warning(
+                    "Upload desistiu após %.0fs e %d tentativa(s): %s",
+                    decorrido, tentativa, ultima_msg,
+                )
+                return False, (
+                    f"A API não respondeu em {self.JANELA_ESPERA_SEG}s "
+                    f"({tentativa} tentativa(s)).\n{ultima_msg}"
                 )
 
-                # Log resposta bruta para diagnóstico
-                try:
-                    import logging
-                    _rlog = logging.getLogger("CSCollect.services.api_service")
-                    _rlog.warning("API response status: %s", resp.status_code)
-                    try:
-                        _rlog.warning("API response body: %s", resp.json())
-                    except Exception:
-                        _rlog.warning("API response text: %s", resp.text[:2000])
-                except Exception:
-                    pass
-
-            if resp.ok:
-                try:
-                    data = resp.json()
-                    msg = f"Arquivo '{data.get('arquivo', filename)}' enviado com sucesso."
-                except Exception:
-                    msg = f"Arquivo enviado com sucesso. (HTTP {resp.status_code})"
-                return True, msg
-
-            # Erro HTTP
-            try:
-                detail = resp.json().get("detail", resp.text)
-            except Exception:
-                detail = resp.text or f"HTTP {resp.status_code}"
-            return False, f"Erro da API ({resp.status_code}): {detail}"
-
-        except requests.exceptions.ConnectionError:
-            return False, "Não foi possível conectar à API. Verifique a URL e a conexão com a internet."
-        except requests.exceptions.Timeout:
-            return False, f"Tempo esgotado após {self.TIMEOUT}s. A API pode estar indisponível."
-        except Exception as exc:
-            return False, f"Erro inesperado ao enviar: {exc}"
+            espera = min(espera, restante)
+            _avisar(
+                f"⏳  Aguardando a API responder... {int(decorrido)}s de "
+                f"{self.JANELA_ESPERA_SEG}s (tentativa {tentativa})"
+            )
+            time.sleep(espera)
 
     def check_existing(
         self,
@@ -237,7 +328,7 @@ class ApiService:
                 if items:
                     return True, items[0], None
                 return False, None, None
-            return False, None, f"HTTP {resp.status_code}: {resp.text[:300]}"
+            return False, None, f"HTTP {resp.status_code}: {_descrever_erro_http(resp)}"
         except Exception as exc:
             return False, None, str(exc)
 
@@ -288,7 +379,7 @@ class ApiService:
             resp = requests.delete(url, headers=headers, timeout=self.TIMEOUT)
             if resp.ok:
                 return True, "Registro anterior removido com sucesso."
-            return False, f"Erro ao remover registro ({resp.status_code}): {resp.text[:300]}"
+            return False, f"Erro ao remover registro ({resp.status_code}): {_descrever_erro_http(resp)}"
         except Exception as exc:
             return False, str(exc)
 
@@ -339,7 +430,7 @@ class ApiService:
             resp = requests.delete(url, headers=headers, timeout=self.TIMEOUT)
             if resp.ok:
                 return True, "Registro removido com sucesso."
-            return False, f"Erro ao remover registro ({resp.status_code}): {resp.text[:300]}"
+            return False, f"Erro ao remover registro ({resp.status_code}): {_descrever_erro_http(resp)}"
         except Exception as exc:
             return False, str(exc)
 
@@ -436,7 +527,7 @@ class ApiService:
             # 404 significa que não há contagens para o CNPJ informado — trata como lista vazia
             if resp.status_code == 404:
                 return True, [], None
-            return False, [], f"HTTP {resp.status_code}: {resp.text[:300]}"
+            return False, [], f"HTTP {resp.status_code}: {_descrever_erro_http(resp)}"
         except Exception as exc:
             return False, [], str(exc)
 
@@ -466,10 +557,7 @@ class ApiService:
         try:
             resp = requests.get(url_arquivo, headers=headers, timeout=self.TIMEOUT, stream=True)
             if not resp.ok:
-                try:
-                    detail = resp.json().get("detail", resp.text)
-                except Exception:
-                    detail = resp.text or f"HTTP {resp.status_code}"
+                detail = _descrever_erro_http(resp)
                 if resp.status_code == 404:
                     detail = (
                         f"{detail}\n\n"
@@ -590,7 +678,20 @@ class ApiService:
                         _hl.sha256,
                     ).hexdigest()
                     if not _hmac.compare_digest(expected_sig, assinatura):
-                        erros.append("Assinatura HMAC inválida — token não confere ou payload adulterado")
+                        # O token local pode simplesmente ter sido substituído
+                        # depois que o arquivo foi assinado (troca de plano /
+                        # renovação regeram o token). Só o servidor consegue
+                        # dizer se o serial do arquivo é um token legítimo,
+                        # pois só ele tem a MASTER_KEY.
+                        autentico, motivo_online = ApiService._confirmar_sig_no_servidor(doc)
+                        if not autentico:
+                            erros.append(ApiService._diagnosticar_hmac_invalido(
+                                token_local=token_cliente,
+                                payload=payload,
+                                payload_bytes=payload_bytes,
+                                assinatura=assinatura,
+                                motivo_servidor=motivo_online,
+                            ))
                 else:
                     erros.append("Token de licença ausente — não foi possível validar a assinatura HMAC")
 
@@ -645,6 +746,149 @@ class ApiService:
             erros.append(f"Erro ao processar .sig: {exc}")
 
         return {"ok": len(erros) == 0, "erros": erros, "payload": payload}
+
+    @staticmethod
+    def _confirmar_sig_no_servidor(doc: dict) -> Tuple[bool, str]:
+        """Pergunta à API se o `.sig` foi assinado por um token legítimo.
+
+        Usado quando o HMAC não confere com o token local — o caso normal é o
+        token ter sido regerado depois que o arquivo foi assinado. A API
+        verifica a assinatura do próprio serial com a MASTER_KEY, que nunca
+        sai do servidor.
+
+        Retorna ``(autentico, motivo)``. Qualquer falha (API antiga, sem rede,
+        MASTER_KEY ausente) devolve ``False``: na dúvida, o arquivo continua
+        rejeitado.
+        """
+        api = ApiService.from_config()
+        if api is None:
+            return False, "API não configurada"
+
+        try:
+            import requests
+        except ImportError:
+            return False, "biblioteca 'requests' não instalada"
+
+        url = f"{api._base_url}/validar-sig"
+        try:
+            resp = requests.post(
+                url,
+                json={"assinatura": doc.get("assinatura", ""), "payload": doc.get("payload", {})},
+                headers={"Authorization": api._authorization},
+                timeout=ApiService.TIMEOUT,
+            )
+        except Exception as e:
+            return False, f"não foi possível consultar o servidor ({e})"
+
+        if resp.status_code == 404:
+            return False, "servidor ainda não publicou o endpoint /validar-sig"
+        if resp.status_code != 200:
+            return False, f"servidor respondeu {resp.status_code}"
+
+        try:
+            data = resp.json()
+        except Exception:
+            return False, "resposta inválida do servidor"
+
+        if data.get("ok"):
+            return True, ""
+        return False, str(data.get("mensagem") or data.get("motivo") or "assinatura recusada pelo servidor")
+
+    @staticmethod
+    def _decodificar_token_licenca(token: str) -> dict:
+        """Extrai o JSON de dentro de um token de licença.
+
+        O token é base64 (padrão ou urlsafe) de ``<json><assinatura binária>``.
+        Retorna ``{}`` se não for possível decodificar — este helper serve só
+        para melhorar mensagens de erro e nunca deve alterar o resultado da
+        validação.
+        """
+        import base64 as _b64
+        import json as _json
+
+        bruto = None
+        for decoder in (_b64.b64decode, _b64.urlsafe_b64decode):
+            for pad in range(4):
+                try:
+                    bruto = decoder((token or "") + "=" * pad)
+                    break
+                except Exception:
+                    continue
+            if bruto is not None:
+                break
+        if not bruto:
+            return {}
+
+        # O JSON vem primeiro; o resto são os bytes da assinatura.
+        profundidade = 0
+        for i, b in enumerate(bruto):
+            if b == 0x7B:
+                profundidade += 1
+            elif b == 0x7D:
+                profundidade -= 1
+                if profundidade == 0:
+                    try:
+                        return _json.loads(bruto[:i + 1].decode("utf-8"))
+                    except Exception:
+                        return {}
+        return {}
+
+    @staticmethod
+    def _diagnosticar_hmac_invalido(
+        token_local: str,
+        payload: dict,
+        payload_bytes: bytes,
+        assinatura: str,
+        motivo_servidor: str = "",
+    ) -> str:
+        """Explica *por que* o HMAC não conferiu.
+
+        A causa mais comum não é adulteração, e sim licença renovada: o coletor
+        recebe o token novo e assina com ele, enquanto o .key do desktop ainda
+        tem o token anterior. Distinguir os dois casos evita diagnosticar
+        corrupção de arquivo onde o problema é licença desatualizada.
+        """
+        import hashlib as _hl
+        import hmac as _hmac
+
+        generico = "Assinatura HMAC inválida — token não confere ou payload adulterado"
+
+        serial = (payload or {}).get("serial", "")
+        if not serial or not token_local:
+            return generico
+
+        # O .sig é internamente consistente? Se o HMAC fecha com o serial do
+        # próprio payload, o arquivo não foi adulterado — o que não confere é
+        # a chave local.
+        confere_com_serial = _hmac.compare_digest(
+            _hmac.new(serial.encode("utf-8"), payload_bytes, _hl.sha256).hexdigest(),
+            assinatura,
+        )
+        if not confere_com_serial:
+            return generico
+
+        local = ApiService._decodificar_token_licenca(token_local)
+        remoto = ApiService._decodificar_token_licenca(serial)
+        val_local = str(local.get("validade") or "")
+        val_remoto = str(remoto.get("validade") or "")
+
+        sufixo = f" (servidor: {motivo_servidor})" if motivo_servidor else ""
+
+        if val_local and val_remoto and val_local < val_remoto:
+            return (
+                "Licença do desktop desatualizada — o arquivo foi assinado com um "
+                f"token mais recente (licença até {val_remoto}) do que o instalado "
+                f"nesta máquina (até {val_local}). O arquivo NÃO está adulterado. "
+                "Atualize a licença em 'Verificar licença agora' na tela de login e "
+                f"baixe o arquivo novamente.{sufixo}"
+            )
+
+        return (
+            "Assinatura HMAC inválida — o arquivo é internamente consistente, mas "
+            "foi assinado com um token de licença diferente do instalado nesta "
+            "máquina, e o servidor não confirmou a autenticidade dele."
+            f"{sufixo}"
+        )
 
     @staticmethod
     # ------------------------------------------------------------------
