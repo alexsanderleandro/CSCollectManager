@@ -55,6 +55,9 @@ class StockAnalysisPage(QWidget):
         self._parser = PdfContagemParser()
         self._service = StockAnalysisService()
         self._contagens: List[ContagemPDF] = []
+        # PDF único usado como referência da grade (duplo clique na lista).
+        # None = agregado de todos os PDFs anexados (comportamento padrão).
+        self._contagem_referencia: Optional[ContagemPDF] = None
         self._resultado: Optional[ResultadoAnalise] = None
         self._analise_ia_texto: str = ""
         self._codempresa = ""
@@ -200,9 +203,11 @@ class StockAnalysisPage(QWidget):
 
         self._pdf_list = QListWidget()
         self._pdf_list.setMaximumHeight(110)
+        self._pdf_list.setToolTip("Duplo clique para usar este arquivo como referência da grade")
         self._pdf_list.setStyleSheet(themed_qss("""
             QListWidget { background-color: {{BG_SECONDARY}}; border: 1px solid {{BORDER}}; border-radius: 6px; }
         """))
+        self._pdf_list.itemDoubleClicked.connect(self._on_pdf_double_clicked)
         content_layout.addWidget(self._pdf_list)
 
         # ----- Tabela de divergências -----
@@ -338,14 +343,15 @@ class StockAnalysisPage(QWidget):
             return
 
         self._contagens = candidatas
+        # Anexar mais arquivos volta ao agregado por padrão — a referência
+        # anterior pode nem fazer mais sentido junto do que acabou de entrar.
+        self._contagem_referencia = None
         for c in novas_contagens:
-            item = QListWidgetItem(
-                f"✓ {os.path.basename(c.arquivo)} · "
-                f"{c.total_produtos_contados} produtos · {c.total_registros} registros"
-            )
+            item = QListWidgetItem(self._texto_item_pdf(c, ativo=False))
+            item.setData(Qt.ItemDataRole.UserRole, c)
             self._pdf_list.addItem(item)
 
-        self._lbl_pdf_info.setText(f"{len(self._contagens)} PDF(s) anexado(s).")
+        self._atualizar_lbl_pdf_info()
 
         if novas_contagens:
             maior_data = max(c.data_exportacao for c in novas_contagens).date()
@@ -361,8 +367,42 @@ class StockAnalysisPage(QWidget):
         self._lbl_status.setText(f"❌ Erro ao ler PDF: {exc}")
         self._lbl_status.setStyleSheet(themed_qss("color: {{ERROR}}; font-size: 9pt;"))
 
+    def _texto_item_pdf(self, c: ContagemPDF, ativo: bool) -> str:
+        marcador = "📌" if ativo else "✓"
+        return (
+            f"{marcador} {os.path.basename(c.arquivo)} · "
+            f"{c.total_produtos_contados} produtos · {c.total_registros} registros"
+        )
+
+    def _atualizar_lbl_pdf_info(self):
+        if self._contagem_referencia is not None:
+            self._lbl_pdf_info.setText(
+                f"{len(self._contagens)} PDF(s) anexado(s) · "
+                f"Mostrando apenas: {os.path.basename(self._contagem_referencia.arquivo)}"
+            )
+        else:
+            self._lbl_pdf_info.setText(f"{len(self._contagens)} PDF(s) anexado(s).")
+
+    def _atualizar_marcadores_lista(self):
+        """Redesenha o marcador (📌/✓) de cada item conforme a referência ativa."""
+        for i in range(self._pdf_list.count()):
+            item = self._pdf_list.item(i)
+            c = item.data(Qt.ItemDataRole.UserRole)
+            item.setText(self._texto_item_pdf(c, ativo=(c is self._contagem_referencia)))
+
+    def _on_pdf_double_clicked(self, item: QListWidgetItem):
+        """Define (ou desmarca, se já ativo) o PDF clicado como referência da grade."""
+        c = item.data(Qt.ItemDataRole.UserRole)
+        if c is None:
+            return
+        self._contagem_referencia = None if self._contagem_referencia is c else c
+        self._atualizar_marcadores_lista()
+        self._atualizar_lbl_pdf_info()
+        self._rodar_comparacao()
+
     def _on_limpar_clicked(self):
         self._contagens = []
+        self._contagem_referencia = None
         self._resultado = None
         self._analise_ia_texto = ""
         self._pdf_list.clear()
@@ -388,12 +428,19 @@ class StockAnalysisPage(QWidget):
         data_referencia = self._date_referencia.date().toPython()
         local_estoque = self._get_local_estoque_value()
 
+        # Com referência ativa, roda a mesma análise só para aquele PDF —
+        # não dá para filtrar o resultado agregado depois de pronto, porque
+        # _agrupar_itens soma quantidades quando dois PDFs têm o mesmo
+        # (codigo, lote); uma linha do agregado pode não ter contrapartida
+        # em nenhum arquivo isolado.
+        contagens = [self._contagem_referencia] if self._contagem_referencia else self._contagens
+
         signals = WorkerSignals()
         signals.finished.connect(self._on_comparacao_pronta)
         signals.error.connect(self._on_comparacao_erro)
         runnable = TaskRunnable(
             self._service.analisar,
-            args=(self._contagens, data_referencia, local_estoque, self._codempresa),
+            args=(contagens, data_referencia, local_estoque, self._codempresa),
             signals=signals,
         )
         QThreadPool.globalInstance().start(runnable)
@@ -564,6 +611,11 @@ class StockAnalysisPage(QWidget):
             total_div = self._resultado.total_falta + self._resultado.total_sobra
             total_produtos = self._resultado.total_produtos
             total_registros = self._resultado.total_itens
+        referencia_html = ""
+        if self._contagem_referencia is not None:
+            nome_arquivo = html_lib.escape(os.path.basename(self._contagem_referencia.arquivo))
+            referencia_html = f"<p><b>Referência:</b> apenas o arquivo {nome_arquivo}</p>"
+
         return (
             f"<h2>Análise de Estoque</h2>"
             f"<p><b>Empresa:</b> {empresa} &nbsp;·&nbsp; "
@@ -571,6 +623,7 @@ class StockAnalysisPage(QWidget):
             f"<b>Produtos:</b> {total_produtos} &nbsp;·&nbsp; "
             f"<b>Registros:</b> {total_registros} &nbsp;·&nbsp; "
             f"<b>Divergências:</b> {total_div}</p>"
+            f"{referencia_html}"
         )
 
     def _tabela_comparativo_html(self) -> str:
