@@ -2215,6 +2215,7 @@ class MainWindowERP(QMainWindow):
 
                     svc = ProductService()
                     pf = ProductFilter.from_dict({
+                        "company_code": self._empresa_info.get("codigo"),
                         "produtos": selecionados,
                         "incluir_sem_gtin": filtros.get("incluir_sem_gtin", False),
                     })
