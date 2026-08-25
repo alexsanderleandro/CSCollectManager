@@ -1436,7 +1436,9 @@ class MainWindowERP(QMainWindow):
             self._populate_dispositivos_combo()
 
         # Atualiza UI
-        empresa_nome = empresa.get("nome", "Empresa")
+        codigo_empresa = empresa.get("codigo", "")
+        nome_empresa = empresa.get("nome", "Empresa")
+        empresa_nome = f"Emp.: {codigo_empresa} - {nome_empresa}" if codigo_empresa else nome_empresa
         usuario_nome = usuario.get("nome", "Usuário")
         servidor = connection.get("server", "")
         database = connection.get("database", "")

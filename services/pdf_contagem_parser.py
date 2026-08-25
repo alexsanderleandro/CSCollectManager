@@ -149,9 +149,29 @@ def _parse_ddmmyyyy(txt: Optional[str]) -> Optional[date]:
     return datetime.strptime(txt, "%d%m%Y").date()
 
 
+# Extrai o número do final do texto da célula "Qtde". Cobre um glitch do
+# PDF de origem: quando a descrição é muito longa, o LOGSCAN às vezes cola o
+# início da localização junto da quantidade sem espaço (ex.: "TIGU...1.000"),
+# e pdfplumber devolve os dois grudados numa célula só.
+_QTDE_RE = re.compile(r"(?P<num>\d+(?:[.,]\d+)?)\s*$")
+
+
 def _parse_qtde(txt: Optional[str]) -> float:
+    qtde, _ = _parse_qtde_bruto(txt)
+    return qtde
+
+
+def _parse_qtde_bruto(txt: Optional[str]) -> "tuple[float, str]":
+    """Retorna (qtde, texto_vazado). ``texto_vazado`` é o que sobra antes do
+    número — normalmente vazio; só tem conteúdo no glitch descrito acima."""
     txt = (txt or "").strip()
-    return float(txt) if txt else 0.0
+    if not txt:
+        return 0.0, ""
+    m = _QTDE_RE.search(txt)
+    if not m:
+        return 0.0, txt
+    qtde = float(m.group("num").replace(",", "."))
+    return qtde, txt[:m.start()].strip()
 
 
 def _normalizar_cabecalho(txt: Optional[str]) -> str:
@@ -320,6 +340,7 @@ class PdfContagemParser:
                 if not codigo:
                     continue  # sem código não é item
 
+                qtde_contada, texto_vazado = _parse_qtde_bruto(_col("qtde"))
                 item = ContagemItem(
                     codigo=codigo,
                     ean=_col("ean"),
@@ -327,9 +348,9 @@ class PdfContagemParser:
                     lote=_col("lote"),
                     fabricacao=_parse_ddmmyyyy(_col("fabricacao")),
                     validade=_parse_ddmmyyyy(_col("validade")),
-                    qtde_contada=_parse_qtde(_col("qtde")),
+                    qtde_contada=qtde_contada,
                     unidade=_col("unidade"),
-                    localizacao=_col("localizacao"),
+                    localizacao=_col("localizacao") or texto_vazado,
                     grupo=estado.grupo,
                 )
                 if estado.observacao_produto and estado.produto_atual == codigo:
