@@ -3407,7 +3407,6 @@ class MainWindowERP(QMainWindow):
             QLabel as _QLabel, QDialogButtonBox, QWidget as _QWidget,
             QFrame as _QFrame, QGridLayout as _QGridLayout, QSizePolicy as _QSizePolicy,
         )
-        from PySide6.QtGui import QGuiApplication
         from PySide6.QtCore import Qt as _Qt
 
         theme = get_active_theme()
@@ -3425,10 +3424,9 @@ class MainWindowERP(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Métricas — {item['arquivo_zip']}")
-        tela = QGuiApplication.primaryScreen().availableGeometry()
-        largura, altura = int(tela.width() * 0.85), int(tela.height() * 0.85)
-        dlg.resize(largura, altura)
-        dlg.move(tela.center().x() - largura // 2, tela.center().y() - altura // 2)
+        # Sempre em tela cheia — a faixa de KPIs + 4 abas com tabelas não cabem
+        # bem numa janela pequena, e o usuário nunca quer redimensionar isso.
+        dlg.setWindowState(_Qt.WindowState.WindowMaximized)
         layout = _QVBoxLayout(dlg)
 
         # ---------------------------------------------------------------- helpers
