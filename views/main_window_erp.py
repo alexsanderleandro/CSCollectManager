@@ -78,7 +78,7 @@ from PySide6.QtWidgets import (
     QSplitter, QFrame, QLabel, QPushButton, QToolBar, QDockWidget,
     QStackedWidget, QListWidget, QListWidgetItem, QSizePolicy,
     QMessageBox, QFileDialog, QApplication, QSpacerItem, QGroupBox,
-    QScrollArea
+    QScrollArea, QTableWidgetItem
 )
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve, QThreadPool
 from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QShortcut, QCursor, QPixmap
@@ -130,6 +130,30 @@ from services.db_export_service import DbExportService
 LOGO_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "logo.png")
 
 logger = get_logger(__name__)
+
+
+class _SortableTableItem(QTableWidgetItem):
+    """Item de tabela que ordena pelo valor real guardado em ``UserRole``,
+    não pelo texto exibido — necessário para datas (formatadas dd/mm/aaaa,
+    que como texto ordenariam fora da ordem cronológica) e números (como
+    texto, "10" viria antes de "2"). Sem valor em ``UserRole``, cai na
+    ordenação padrão por texto.
+    """
+
+    def __lt__(self, other):
+        v1 = self.data(Qt.ItemDataRole.UserRole)
+        v2 = other.data(Qt.ItemDataRole.UserRole) if isinstance(other, QTableWidgetItem) else None
+        if v1 is not None and v2 is not None:
+            try:
+                return v1 < v2
+            except TypeError:
+                pass
+        # Não usa super().__lt__(): no PySide, chamar a implementação da base
+        # a partir de um __lt__ sobrescrito reentra no override em vez de ir
+        # direto pra implementação C++, estourando a pilha. Compara o texto
+        # exibido diretamente — é o que o QTableWidgetItem padrão faz.
+        outro_texto = other.text() if isinstance(other, QTableWidgetItem) else str(other)
+        return self.text() < outro_texto
 
 
 class SidebarButton(QPushButton):
@@ -3165,7 +3189,7 @@ class MainWindowERP(QMainWindow):
     def _create_metrics_page(self):
         """Cria a página de métricas de produtividade do conferente, lidas dos
         arquivos `_metricas.enc` já presentes nos zips de contagem baixados."""
-        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+        from PySide6.QtWidgets import QTableWidget, QHeaderView, QAbstractItemView
 
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -3194,20 +3218,25 @@ class MainWindowERP(QMainWindow):
         lbl_info.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 10pt; padding: 4px 0;"))
         content_layout.addWidget(lbl_info)
 
+        # Ordem das colunas (índice fixo, usado também em _on_metrics_refresh):
+        # 0=Conferente 1=Arquivo 2=Início 3=Fim 4=Contagens
+        # 5=Não Encontrados 6=Duplicados 7=Ajustes Manuais
         self._metrics_table = QTableWidget()
         self._metrics_table.setColumnCount(8)
         self._metrics_table.setHorizontalHeaderLabels([
-            "Arquivo", "Vendedor", "Início", "Fim", "Leituras",
+            "Conferente", "Arquivo", "Início", "Fim", "Contagens",
             "Não Encontrados", "Duplicados", "Ajustes Manuais",
         ])
         _metrics_header = self._metrics_table.horizontalHeader()
-        _metrics_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for _col in range(1, self._metrics_table.columnCount()):
-            _metrics_header.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
+        _metrics_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for _col in range(self._metrics_table.columnCount()):
+            if _col != 1:
+                _metrics_header.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
         self._metrics_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._metrics_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._metrics_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._metrics_table.setAlternatingRowColors(True)
+        self._metrics_table.setSortingEnabled(True)
         self._metrics_table.verticalHeader().setVisible(False)
         self._metrics_table.setStyleSheet(themed_qss("""
             QTableWidget {
@@ -3266,8 +3295,6 @@ class MainWindowERP(QMainWindow):
 
     def _on_metrics_refresh(self):
         """Recarrega a tabela de métricas a partir dos zips na pasta de contagens."""
-        from PySide6.QtWidgets import QTableWidgetItem
-
         try:
             from utils.config import AppConfig
             pasta = AppConfig.get_last_contagens_dir()
@@ -3283,7 +3310,22 @@ class MainWindowERP(QMainWindow):
             self._lbl_metrics_status.setText(f"Erro ao ler métricas: {e}")
             self._metrics_results = []
 
+        def _num_ou_none(v):
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _cel(texto, chave_ordenacao=None):
+            it = _SortableTableItem(texto)
+            if chave_ordenacao is not None:
+                it.setData(Qt.ItemDataRole.UserRole, chave_ordenacao)
+            return it
+
         table = self._metrics_table
+        # Ordenação precisa ficar desligada durante a inserção: com ela ligada,
+        # cada setItem() pode reordenar as linhas no meio do loop.
+        table.setSortingEnabled(False)
         table.setRowCount(0)
         for row_idx, item in enumerate(self._metrics_results):
             table.insertRow(row_idx)
@@ -3291,20 +3333,38 @@ class MainWindowERP(QMainWindow):
                 m = item.get('metricas') or {}
                 resumo = m.get('resumo') or {}
                 periodo = m.get('periodo') or {}
-                valores = [
-                    item['arquivo_zip'],
-                    f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -'),
-                    _fmt_data_hora_br(str(periodo.get('inicio', ''))),
-                    _fmt_data_hora_br(str(periodo.get('fim', ''))),
-                    str(resumo.get('total_leituras', '')),
-                    str(resumo.get('total_nao_encontrado', '')),
-                    str(resumo.get('total_duplicado', '')),
-                    str(resumo.get('total_ajustes_manuais', '')),
+                inicio_raw = str(periodo.get('inicio', ''))
+                fim_raw = str(periodo.get('fim', ''))
+                # "Contagens" = bipado + lançado à mão; zips antigos só têm
+                # `total_leituras`, que naquele formato era o total exibido.
+                leituras = _num_ou_none(resumo.get('total_contagens',
+                                                   resumo.get('total_leituras')))
+                nao_encontrado = _num_ou_none(resumo.get('total_nao_encontrado'))
+                duplicado = _num_ou_none(resumo.get('total_duplicado'))
+                ajustes = _num_ou_none(resumo.get('total_ajustes_manuais'))
+                celulas = [
+                    _cel(f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -')),
+                    _cel(item['arquivo_zip']),
+                    _cel(_fmt_data_hora_br(inicio_raw), inicio_raw),
+                    _cel(_fmt_data_hora_br(fim_raw), fim_raw),
+                    _cel(str(leituras) if leituras is not None else '', leituras),
+                    _cel(str(nao_encontrado) if nao_encontrado is not None else '', nao_encontrado),
+                    _cel(str(duplicado) if duplicado is not None else '', duplicado),
+                    _cel(str(ajustes) if ajustes is not None else '', ajustes),
                 ]
             else:
-                valores = [item['arquivo_zip'], '', '', '', '', '', '', f"⚠️ {item.get('erro', 'erro desconhecido')}"]
-            for col_idx, valor in enumerate(valores):
-                table.setItem(row_idx, col_idx, QTableWidgetItem(valor))
+                celulas = [
+                    _cel(''), _cel(item['arquivo_zip']), _cel(''), _cel(''),
+                    _cel(''), _cel(''), _cel(''),
+                    _cel(f"⚠️ {item.get('erro', 'erro desconhecido')}"),
+                ]
+            # Guarda o registro de origem na 1ª célula (Conferente) — é o que
+            # permite _on_metrics_ver_detalhes achar a linha certa mesmo
+            # depois de o usuário clicar num cabeçalho e reordenar a grade.
+            celulas[0].setData(Qt.ItemDataRole.UserRole, item)
+            for col_idx, cel in enumerate(celulas):
+                table.setItem(row_idx, col_idx, cel)
+        table.setSortingEnabled(True)
 
         self._lbl_metrics_status.setText(
             f"{len(self._metrics_results)} export(s) com métricas encontrados em: {pasta or '(pasta não configurada)'}"
@@ -3313,9 +3373,15 @@ class MainWindowERP(QMainWindow):
     def _on_metrics_ver_detalhes(self, *args):
         """Abre um diálogo com o detalhe completo das métricas da linha selecionada."""
         row = self._metrics_table.currentRow()
-        if row < 0 or row >= len(getattr(self, '_metrics_results', [])):
+        if row < 0:
             return
-        item = self._metrics_results[row]
+        # Lê o registro pela célula (guardado em UserRole na coluna
+        # Conferente), não pelo índice — a grade é ordenável, então a
+        # posição da linha não corresponde mais à ordem de _metrics_results.
+        cel = self._metrics_table.item(row, 0)
+        item = cel.data(Qt.ItemDataRole.UserRole) if cel else None
+        if item is None:
+            return
         if not item.get('ok'):
             self._show_metrics_error_dialog(item)
             return
@@ -3329,20 +3395,33 @@ class MainWindowERP(QMainWindow):
         )
 
     def _show_metrics_detail_dialog(self, item):
-        """Diálogo simples (tabelas de texto) com o resumo completo de um export."""
-        from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout as _QVBoxLayout, QTabWidget, QTableWidget,
-            QTableWidgetItem, QHeaderView, QLabel as _QLabel, QDialogButtonBox,
-        )
+        """Janela de métricas de um export: faixa de indicadores + 4 abas.
 
+        Lê tanto o formato 2.0 quanto os zips 1.0 que já estão na pasta de
+        Contagens — no 1.0 faltam jornadas, lançamentos manuais e tempo por
+        localização, e cada painel diz isso em vez de aparecer vazio.
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout as _QVBoxLayout, QHBoxLayout as _QHBoxLayout,
+            QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
+            QLabel as _QLabel, QDialogButtonBox, QWidget as _QWidget,
+            QFrame as _QFrame, QGridLayout as _QGridLayout, QSizePolicy as _QSizePolicy,
+        )
+        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtCore import Qt as _Qt
+
+        theme = get_active_theme()
         m = item.get('metricas') or {}
         resumo = m.get('resumo') or {}
         ritmo = m.get('ritmo') or {}
         sessoes = m.get('sessoes') or []
         por_localizacao = m.get('por_localizacao') or []
-        por_grupo = m.get('por_grupo') or []
-
-        from PySide6.QtGui import QGuiApplication
+        lancamentos = m.get('lancamentos_manuais') or {}
+        ajustes = m.get('produtos_ajustados_manualmente') or []
+        nao_encontrados = m.get('nao_encontrados') or []
+        origem_entrada = m.get('origem_entrada') or {}
+        versao = str(m.get('versao') or '1.0')
+        formato_novo = versao >= '2.0'
 
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Métricas — {item['arquivo_zip']}")
@@ -3352,82 +3431,471 @@ class MainWindowERP(QMainWindow):
         dlg.move(tela.center().x() - largura // 2, tela.center().y() - altura // 2)
         layout = _QVBoxLayout(dlg)
 
-        cabecalho = _QLabel(
-            f"<b>{m.get('nomeusuario', '')}</b> (cód. {m.get('codusuario', '')}) — "
-            f"{_fmt_data_hora_br((m.get('periodo') or {}).get('inicio', ''))} a "
-            f"{_fmt_data_hora_br((m.get('periodo') or {}).get('fim', ''))}"
-        )
-        layout.addWidget(cabecalho)
-
-        resumo_texto = _QLabel(
-            f"Total de leituras: {resumo.get('total_leituras', 0)}   |   "
-            f"EANs únicos: {resumo.get('total_codean_unicos', 0)}   |   "
-            f"Não encontrados: {resumo.get('total_nao_encontrado', 0)} "
-            f"({resumo.get('taxa_nao_encontrado_pct', 0)}%)   |   "
-            f"Duplicados: {resumo.get('total_duplicado', 0)}   |   "
-            f"Ajustes manuais: {resumo.get('total_ajustes_manuais', 0)} "
-            f"({resumo.get('taxa_ajuste_manual_pct', 0)}%)\n"
-            f"Tempo médio entre leituras: {_fmt_duracao(ritmo.get('tempo_medio_entre_leituras_seg', 0))}   |   "
-            f"Tempo mediano: {_fmt_duracao(ritmo.get('tempo_mediano_entre_leituras_seg', 0))}"
-        )
-        resumo_texto.setWordWrap(True)
-        layout.addWidget(resumo_texto)
-
-        abas = QTabWidget()
-
-        def _tabela(colunas, linhas):
+        # ---------------------------------------------------------------- helpers
+        def _tabela(colunas, linhas, alinhar_direita=(), dicas_coluna=None):
             t = QTableWidget()
             t.setColumnCount(len(colunas))
             t.setHorizontalHeaderLabels(colunas)
+            if dicas_coluna:
+                for c, dica in dicas_coluna.items():
+                    item_cab = t.horizontalHeaderItem(c)
+                    if item_cab:
+                        item_cab.setToolTip(dica)
             t.setRowCount(len(linhas))
             header = t.horizontalHeader()
             header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
             header.setStretchLastSection(True)
             t.verticalHeader().setVisible(False)
             t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            t.setAlternatingRowColors(True)
             for r, linha in enumerate(linhas):
                 for c, valor in enumerate(linha):
-                    t.setItem(r, c, QTableWidgetItem(str(valor)))
+                    cel = QTableWidgetItem('' if valor is None else str(valor))
+                    if c in alinhar_direita:
+                        cel.setTextAlignment(_Qt.AlignmentFlag.AlignRight
+                                             | _Qt.AlignmentFlag.AlignVCenter)
+                    t.setItem(r, c, cel)
             return t
 
-        leituras_por_hora = ritmo.get('leituras_por_hora') or {}
-        abas.addTab(
-            _tabela(["Hora", "Leituras"], [[f"{h}h", q] for h, q in sorted(leituras_por_hora.items())]),
-            "Leituras por hora",
-        )
-        # `duracao_seg`/`tempo_ocioso_seg` só existem no formato 2.0; nos zips
-        # 1.0 o resumo traz os mesmos valores em minutos.
-        def _dur(s, chave_seg, chave_min):
-            if s.get(chave_seg) is not None:
-                return _fmt_duracao(s.get(chave_seg))
-            return _fmt_duracao_min(s.get(chave_min))
+        def _aviso(texto):
+            """Painel de estado vazio — nunca deixar a aba em branco: quem abre
+            precisa saber se não há dado ou se o export é antigo demais."""
+            lbl = _QLabel(texto)
+            lbl.setWordWrap(True)
+            lbl.setAlignment(_Qt.AlignmentFlag.AlignTop)
+            lbl.setStyleSheet(themed_qss(
+                "color: {{FG_SECONDARY}}; padding: 22px; font-size: 10pt;"))
+            return lbl
 
-        abas.addTab(
-            _tabela(
-                ["Início", "Fim", "Duração", "Leituras", "Ociosidade"],
+        def _card(titulo, valor, rodape='', cor=None, clicavel=False):
+            box = _QFrame()
+            box.setFrameShape(_QFrame.Shape.StyledPanel)
+            borda = cor or theme.BORDER
+            box.setStyleSheet(
+                f"QFrame {{ background-color: {theme.BG_TERTIARY};"
+                f" border: 1px solid {borda}; border-radius: 6px; }}")
+            v = _QVBoxLayout(box)
+            v.setContentsMargins(10, 8, 10, 8)
+            v.setSpacing(2)
+            lt = _QLabel(titulo.upper())
+            lt.setStyleSheet(
+                f"color: {theme.FG_DISABLED}; font-size: 7.5pt;"
+                " letter-spacing: 1px; border: none;")
+            lv = _QLabel(str(valor))
+            lv.setStyleSheet(
+                f"color: {cor or theme.FG_PRIMARY}; font-size: 16pt;"
+                " font-weight: bold; border: none;")
+            v.addWidget(lt)
+            v.addWidget(lv)
+            if rodape:
+                lr = _QLabel(rodape)
+                lr.setStyleSheet(
+                    f"color: {cor if clicavel else theme.FG_SECONDARY};"
+                    f" font-size: 8pt; border: none;"
+                    + (" font-weight: bold;" if clicavel else ""))
+                v.addWidget(lr)
+            if clicavel:
+                box.setCursor(QCursor(_Qt.CursorShape.PointingHandCursor))
+            return box
+
+        def _botao_ajuda(titulo_popup, texto_html):
+            """Botão "❓" discreto que abre um popup explicativo — usado nos
+            indicadores cuja leitura não é óbvia (blocos de trabalho, ritmo)."""
+            btn = QPushButton("❓")
+            btn.setFixedSize(22, 22)
+            btn.setCursor(QCursor(_Qt.CursorShape.PointingHandCursor))
+            btn.setToolTip("Como ler este indicador")
+            btn.setStyleSheet(themed_qss(
+                "QPushButton { background-color: {{BG_TERTIARY}}; color: {{FG_SECONDARY}};"
+                " border: 1px solid {{BORDER}}; border-radius: 11px; font-size: 9pt; }"
+                " QPushButton:hover { background-color: {{ACCENT}}; color: white; }"))
+            btn.clicked.connect(lambda: QMessageBox.information(dlg, titulo_popup, texto_html))
+            return btn
+
+        # ------------------------------------------------------- faixa de KPIs
+        cabecalho = _QLabel(
+            f"<b>{m.get('nomeusuario', '')}</b> (cód. {m.get('codusuario', '')}) — "
+            f"{_fmt_data_hora_br((m.get('periodo') or {}).get('inicio', ''))} a "
+            f"{_fmt_data_hora_br((m.get('periodo') or {}).get('fim', ''))}"
+        )
+        cabecalho.setWordWrap(True)
+        layout.addWidget(cabecalho)
+
+        # Podem ser VÁRIAS sessões (o conferente entra e sai do app durante o
+        # dia); os totais são a soma de todas, e cada uma aparece na tabela de
+        # Sessões do Resumo.
+        produtivo = sum(s.get('tempo_produtivo_seg') or 0 for s in sessoes) if formato_novo else None
+        ocioso = sum(s.get('tempo_ocioso_seg') or 0 for s in sessoes) if formato_novo else None
+
+        def _contagens_de(d, padrao=0):
+            """`contagens` no formato novo, `leituras` nos zips já baixados."""
+            valor = d.get('contagens')
+            return d.get('leituras', padrao) if valor is None else valor
+
+        faixa = _QHBoxLayout()
+        faixa.setSpacing(8)
+        produtos = resumo.get('total_produtos_distintos',
+                              resumo.get('total_codean_unicos', 0))
+        # "Contagens" = bipado + lançado à mão. Zips antigos só têm total_leituras.
+        faixa.addWidget(_card("Contagens",
+                              resumo.get('total_contagens',
+                                         resumo.get('total_leituras', 0)),
+                              f"{produtos} produtos"))
+        if formato_novo:
+            faixa.addWidget(_card("Produtivo", _fmt_duracao(produtivo),
+                                  f"{sum(len(s.get('blocos') or []) for s in sessoes)} blocos",
+                                  cor=theme.SUCCESS))
+            pct_ocioso = (100.0 * ocioso / (produtivo + ocioso)) if (produtivo + ocioso) else 0.0
+            faixa.addWidget(_card("Ocioso", _fmt_duracao(ocioso),
+                                  f"{pct_ocioso:.1f}% da jornada", cor=theme.WARNING))
+        # Sem o rodapé da mediana — a mediana continua no arquivo, só não
+        # disputa espaço no card.
+        faixa.addWidget(_card("Entre contagens",
+                              _fmt_duracao(ritmo.get(
+                                  'tempo_medio_entre_contagens_seg',
+                                  ritmo.get('tempo_medio_entre_leituras_seg', 0)))))
+
+        n_nao_enc = resumo.get('total_nao_encontrado', 0)
+        tem_lista_ne = bool(nao_encontrados)
+        card_ne = _card(
+            "Não encontrados", n_nao_enc,
+            (f"{resumo.get('taxa_nao_encontrado_pct', 0)}% · ver códigos ▸"
+             if tem_lista_ne else f"{resumo.get('taxa_nao_encontrado_pct', 0)}%"),
+            cor=theme.ERROR if n_nao_enc else None, clicavel=tem_lista_ne)
+        if tem_lista_ne:
+            card_ne.mousePressEvent = (
+                lambda _e, it=item, ne=nao_encontrados: self._show_nao_encontrados_dialog(it, ne))
+        faixa.addWidget(card_ne)
+        faixa.addWidget(_card("Ajustes manuais", resumo.get('total_ajustes_manuais', 0),
+                              f"{resumo.get('taxa_ajuste_manual_pct', 0)}%"))
+        layout.addLayout(faixa)
+
+        abas = QTabWidget()
+
+        # ------------------------------------------------------------- RESUMO
+        aba_resumo = _QWidget()
+        vr = _QVBoxLayout(aba_resumo)
+        vr.setSpacing(10)
+
+        if formato_novo and sessoes:
+            total_contagens_sessoes = sum(_contagens_de(s) for s in sessoes)
+            ritmo_efetivo = (round(total_contagens_sessoes / ((produtivo or 0) / 3600.0), 1)
+                             if produtivo else 0.0)
+            linha = _QLabel(
+                f"<b>{len(sessoes)} sessão(ões)</b> &nbsp; "
+                f"{_fmt_data_hora_br(sessoes[0].get('inicio'))} → "
+                f"{_fmt_data_hora_br(sessoes[-1].get('fim'))} &nbsp;·&nbsp; "
+                f"{ritmo_efetivo} contagens/h efetivas &nbsp; "
+                f"<span style='color:{theme.FG_SECONDARY}; font-size:8pt;'>"
+                f"(com base em {_fmt_duracao(produtivo)} produtivos)</span>")
+            linha.setWordWrap(True)
+            linha_ritmo = _QHBoxLayout()
+            linha_ritmo.addWidget(linha, 1)
+            linha_ritmo.addWidget(_botao_ajuda(
+                "Contagens/h efetivas",
+                "<b>Como é calculado:</b> total de contagens de todas as sessões do dia, "
+                "dividido pelo tempo produtivo (em horas) — não pelo tempo total corrido."
+                "<br><br><b>Tempo produtivo</b> exclui as pausas ociosas entre blocos (mesmo "
+                "valor da barra Produtivo/Ocioso logo abaixo)."
+                "<br><br><b>Por que pode parecer alto:</b> é uma projeção — \"nesse ritmo de "
+                "trabalho ativo, sem pausas, dariam X contagens em 1h\". Com pouco tempo "
+                "produtivo acumulado, poucas contagens já projetam uma taxa \"por hora\" "
+                "grande — não significa que a pessoa contou esse tanto na última hora."))
+            vr.addLayout(linha_ritmo)
+
+            total = (produtivo or 0) + (ocioso or 0)
+            pct = int(round(1000.0 * (produtivo or 0) / total)) if total else 0
+            barra = _QFrame()
+            barra.setFixedHeight(20)
+            barra.setStyleSheet(
+                f"QFrame {{ border-radius: 4px; background: qlineargradient("
+                f"x1:0, y1:0, x2:1, y2:0,"
+                f" stop:0 {theme.SUCCESS}, stop:{max(pct,1)/1000.0:.4f} {theme.SUCCESS},"
+                f" stop:{max(pct,1)/1000.0:.4f} {theme.WARNING}, stop:1 {theme.WARNING}); }}")
+            barra.setToolTip(f"Produtivo {_fmt_duracao(produtivo)} · "
+                             f"Ocioso {_fmt_duracao(ocioso)}")
+            vr.addWidget(barra)
+            leg = _QLabel(
+                f"<span style='color:{theme.SUCCESS}'>■</span> Produtivo "
+                f"{_fmt_duracao(produtivo)} &nbsp;&nbsp; "
+                f"<span style='color:{theme.WARNING}'>■</span> Ocioso {_fmt_duracao(ocioso)}")
+            leg.setStyleSheet("font-size: 8.5pt;")
+            vr.addWidget(leg)
+
+        meio = _QHBoxLayout()
+        horas = ritmo.get('contagens_por_hora') or ritmo.get('leituras_por_hora') or {}
+        meio.addWidget(_tabela(["Hora", "Contagens"],
+                               [[f"{h}h", q] for h, q in sorted(horas.items())], (1,)), 1)
+        if origem_entrada:
+            rotulos = {'scan': 'Bipado', 'manual': 'Digitado', 'voz': 'Voz'}
+            meio.addWidget(_tabela(
+                ["Origem da entrada", "Contagens"],
+                [[rotulos.get(k, k), v] for k, v in sorted(origem_entrada.items())], (1,)), 1)
+        vr.addLayout(meio, 1)
+
+        # Sessões: cada entrada e saída do app. Distinto dos blocos de trabalho
+        # logo abaixo, que são as corridas de atividade DENTRO de uma sessão.
+        if formato_novo and sessoes:
+            motivos = {'exportacao': 'exportação', 'nova_sessao': 'saiu do app'}
+            vr.addWidget(_QLabel("<b>Sessões</b> — cada entrada e saída do app"))
+            vr.addWidget(_tabela(
+                ["Entrada", "Saída", "Duração", "Contagens", "Ocioso", "Encerrada por"],
                 [[_fmt_data_hora_br(s.get('inicio')), _fmt_data_hora_br(s.get('fim')),
-                  _dur(s, 'duracao_seg', 'duracao_min'), s.get('leituras'),
-                  _dur(s, 'tempo_ocioso_seg', 'tempo_ocioso_min')]
-                 for s in sessoes],
-            ),
-            "Sessões",
-        )
-        abas.addTab(
-            _tabela(["Localização", "Leituras"], [[p.get('localizacao'), p.get('leituras')] for p in por_localizacao]),
-            "Por localização",
-        )
-        abas.addTab(
-            _tabela(
-                ["Grupo", "Nome", "Leituras"],
-                [[g.get('codgrupo'), g.get('nomegrupo'), g.get('leituras')] for g in por_grupo],
-            ),
-            "Por grupo",
-        )
+                  _fmt_duracao(s.get('duracao_seg')), _contagens_de(s),
+                  _fmt_duracao(s.get('tempo_ocioso_seg')),
+                  motivos.get(s.get('motivo_fechamento'), s.get('motivo_fechamento') or '—')
+                  + (' · sintética' if s.get('sintetica') else '')]
+                 for s in sessoes], (2, 3, 4)), 1)
+
+        if formato_novo:
+            blocos = [(b, s) for s in sessoes for b in (s.get('blocos') or [])]
+            if blocos:
+                def _num_ou_traco(v):
+                    return '—' if not v else v
+
+                gap_min = m.get('gap_ocioso_min', '—')
+                titulo_blocos = _QHBoxLayout()
+                lbl_blocos = _QLabel(f"<b>Blocos de trabalho</b> — pausa que separa: {gap_min} min")
+                titulo_blocos.addWidget(lbl_blocos, 1)
+                titulo_blocos.addWidget(_botao_ajuda(
+                    "Blocos de trabalho",
+                    f"<b>Bloco</b> = uma sequência de contagens sem pausa maior que "
+                    f"{gap_min} min. Uma pausa maior fecha o bloco atual; ao retomar, abre um "
+                    f"bloco novo."
+                    "<br><br><b>Contagens</b> — total de produtos registrados no bloco: "
+                    "câmera (bipado) + teclado (digitado) + voz (ditado)."
+                    "<br><br><b>Não encontrados</b> — dentro desse total, quantos não bateram "
+                    "com nenhum produto cadastrado."
+                    "<br><br><b>Digitado</b> — dentro desse total, quantos foram digitados no "
+                    "teclado. O bloco não distingue câmera de voz: o restante do total pode "
+                    "ser qualquer uma das duas — a quebra completa por sessão está na tabela "
+                    "\"Origem da entrada\", ao lado."
+                    "<br><br>Uma linha com 1 contagem, 0 digitadas e 0 não encontrados é o caso "
+                    "mais comum: uma leitura normal pela câmera, que encontrou o produto — não "
+                    "é uma linha vazia."))
+                vr.addLayout(titulo_blocos)
+                vr.addWidget(_tabela(
+                    ["Início", "Fim", "Duração", "Contagens", "Não encontrados", "Digitado"],
+                    [[_fmt_data_hora_br(b.get('inicio')), _fmt_data_hora_br(b.get('fim')),
+                      _fmt_duracao(b.get('duracao_seg')), _contagens_de(b),
+                      _num_ou_traco(b.get('nao_encontrado')),
+                      _num_ou_traco(b.get('lancamentos_manuais'))]
+                     for b, _s in blocos], (2, 3, 4, 5),
+                    dicas_coluna={
+                        3: "Total de produtos registrados no bloco: câmera + teclado + voz",
+                        4: "Quantas dessas contagens não bateram com nenhum produto cadastrado",
+                        5: "Quantas dessas contagens foram digitadas no teclado (o resto foi "
+                           "câmera ou voz)",
+                    }), 1)
+        else:
+            vr.addWidget(_tabela(
+                ["Início", "Fim", "Duração", "Contagens", "Ociosidade"],
+                [[_fmt_data_hora_br(s.get('inicio')), _fmt_data_hora_br(s.get('fim')),
+                  _fmt_duracao_min(s.get('duracao_min')), _contagens_de(s),
+                  _fmt_duracao_min(s.get('tempo_ocioso_min'))] for s in sessoes], (2, 3, 4)), 1)
+        abas.addTab(aba_resumo, "Resumo")
+
+        # --------------------------------------------------- AJUSTES MANUAIS
+        if ajustes:
+            aba_aj = _tabela(
+                ["Código", "Produto", "Descrição", "Vezes", "Primeiro ajuste", "Último ajuste"],
+                [[a.get('codean'), a.get('codproduto') or '', a.get('descricao') or '',
+                  a.get('total_ajustes'), _fmt_data_hora_br(a.get('primeiro_ajuste_em')),
+                  _fmt_data_hora_br(a.get('ultimo_ajuste_em'))] for a in ajustes], (3,))
+        else:
+            aba_aj = _aviso("Nenhum produto teve a quantidade digitada em vez de bipada.\n\n"
+                            "Este contador é acumulado: não zera na exportação, só em "
+                            "“Limpar dados” no coletor.")
+        abas.addTab(aba_aj, "Ajustes manuais")
+
+        # ----------------------------------------------- LANÇAMENTOS MANUAIS
+        itens_lanc = lancamentos.get('itens') or []
+        if itens_lanc:
+            def _tipo_lanc(i):
+                """1º lançamento e correção são coisas diferentes: o primeiro é
+                a única forma de um produto sem código de barras ser contado; a
+                segunda é uma quantidade que já existia sendo mudada."""
+                sem_gtin = i.get('origem') == 'sem_gtin'
+                if i.get('alteracao'):
+                    return "Correção (sem código de barras)" if sem_gtin else "Correção"
+                return "Sem código de barras" if sem_gtin else "Lançamento"
+            aba_lm = _tabela(
+                ["Hora", "Tipo", "Produto", "Descrição", "Quantidade", "Localização"],
+                [[_fmt_data_hora_br(i.get('ts')), _tipo_lanc(i),
+                  i.get('codproduto') or i.get('codean') or '',
+                  i.get('descricao') or '',
+                  f"{i.get('quantidade'):g} {i.get('unidade') or ''}".strip()
+                  if i.get('quantidade') is not None else '',
+                  i.get('localizacao') or ''] for i in itens_lanc], (4,))
+        elif lancamentos.get('total'):
+            # 2.0 intermediário: tem os contadores, não tem a lista item a item.
+            aba_lm = _aviso(
+                f"Este export registrou {lancamentos.get('total')} lançamento(s) "
+                f"manual(is) — {lancamentos.get('sem_gtin', 0)} de produto sem código "
+                f"de barras e {lancamentos.get('edicao', 0)} correção(ões) — mas foi "
+                "gerado por uma versão do coletor anterior à lista detalhada.\n\n"
+                "Exports novos mostram aqui produto, quantidade e horário de cada um.")
+        elif formato_novo:
+            aba_lm = _aviso("Nenhuma quantidade foi lançada pela tela de Consultar "
+                            "Produtos neste período.\n\nEntram aqui os produtos sem "
+                            "código de barras (que não podem ser bipados) e as correções "
+                            "de quantidade de produtos já contados. Nada disso conta "
+                            "como leitura.")
+        else:
+            aba_lm = _aviso(f"Este export está no formato {versao}, anterior ao registro "
+                            "de lançamentos manuais.\n\nExports novos passam a listar aqui "
+                            "as quantidades digitadas pela tela de Consultar Produtos.")
+        abas.addTab(aba_lm, "Lançamentos manuais")
+
+        # -------------------------------------- PRODUTIVIDADE POR LOCALIZAÇÃO
+        tem_tempo = any(p.get('tempo_produtivo_seg') is not None for p in por_localizacao)
+        colunas_loc = ["Localização", "Contagens", "Tempo produtivo",
+                       "% do tempo", "Contagens/hora"]
+        if por_localizacao and tem_tempo:
+            def _ritmo(p):
+                valor = p.get('contagens_por_hora', p.get('leituras_por_hora'))
+                return '—' if valor is None else valor
+            aba_loc = _tabela(
+                colunas_loc,
+                [[p.get('localizacao'), _contagens_de(p),
+                  _fmt_duracao(p.get('tempo_produtivo_seg')),
+                  f"{p.get('pct_tempo', 0)}%", _ritmo(p)]
+                 for p in por_localizacao], (1, 2, 3, 4))
+        elif por_localizacao:
+            aba_loc = _tabela(
+                colunas_loc,
+                [[p.get('localizacao'), _contagens_de(p), '—', '—', '—']
+                 for p in por_localizacao], (1, 2, 3, 4))
+        else:
+            aba_loc = _aviso("Sem contagens com localização neste export.\n\n"
+                             "A localização vem preenchida na carga; se todos os produtos "
+                             "vierem sem ela, esta aba mostra uma linha só.")
+        abas.addTab(aba_loc, "Produtividade por localização")
+
         layout.addWidget(abas, 1)
 
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         botoes.rejected.connect(dlg.reject)
         botoes.accepted.connect(dlg.accept)
+        layout.addWidget(botoes)
+
+        dlg.exec()
+
+    def _show_nao_encontrados_dialog(self, item, nao_encontrados):
+        """Lista os códigos lidos que não existem na carga, para conferir no ERP."""
+        import html as html_lib
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout as _QVBoxLayout, QTableWidget, QTableWidgetItem,
+            QHeaderView, QLabel as _QLabel, QDialogButtonBox, QPushButton as _QPushButton,
+            QFileDialog as _QFileDialog, QApplication as _QApplication,
+        )
+        from PySide6.QtCore import Qt as _Qt
+        # Mesmo caminho de PDF da Análise de Estoque (views/stock_analysis_page.py):
+        # QTextDocument + QPdfWriter, sem dependência nova no projeto.
+        from PySide6.QtGui import QPdfWriter, QPageSize, QTextDocument
+
+        m = item.get('metricas') or {}
+        rotulo_origem = {'scan': 'bipado', 'manual': 'digitado', 'voz': 'voz'}
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Códigos não encontrados")
+        dlg.resize(760, 460)
+        layout = _QVBoxLayout(dlg)
+
+        tentativas = sum(r.get('tentativas', 0) for r in nao_encontrados)
+        topo = _QLabel(
+            f"<b>{len(nao_encontrados)}</b> código(s) lido(s) que não existem na carga, "
+            f"em <b>{tentativas}</b> tentativa(s) — "
+            f"{m.get('nomeusuario', '')} (cód. {m.get('codusuario', '')})")
+        topo.setWordWrap(True)
+        layout.addWidget(topo)
+
+        tabela = QTableWidget()
+        colunas = ["Código lido", "Tentativas", "Origem", "Primeira", "Última"]
+        tabela.setColumnCount(len(colunas))
+        tabela.setHorizontalHeaderLabels(colunas)
+        tabela.setRowCount(len(nao_encontrados))
+        tabela.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents)
+        tabela.horizontalHeader().setStretchLastSection(True)
+        tabela.verticalHeader().setVisible(False)
+        tabela.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tabela.setAlternatingRowColors(True)
+        for r, reg in enumerate(nao_encontrados):
+            origens = ', '.join(rotulo_origem.get(o, o) for o in (reg.get('origens') or []))
+            valores = [reg.get('codean'), reg.get('tentativas'), origens,
+                       _fmt_data_hora_br(reg.get('primeira_em')),
+                       _fmt_data_hora_br(reg.get('ultima_em'))]
+            for c, valor in enumerate(valores):
+                cel = QTableWidgetItem('' if valor is None else str(valor))
+                if c == 1:
+                    cel.setTextAlignment(_Qt.AlignmentFlag.AlignRight
+                                         | _Qt.AlignmentFlag.AlignVCenter)
+                tabela.setItem(r, c, cel)
+        layout.addWidget(tabela, 1)
+
+        dica = _QLabel(
+            "<b>Bipado</b> que não existe costuma ser cadastro faltando na carga. "
+            "<b>Digitado</b> que não existe costuma ser erro de digitação.")
+        dica.setWordWrap(True)
+        dica.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 8.5pt;"))
+        layout.addWidget(dica)
+
+        def _copiar():
+            _QApplication.clipboard().setText(
+                "\n".join(str(r.get('codean') or '') for r in nao_encontrados))
+
+        def _exportar_pdf():
+            sugerido = os.path.splitext(item.get('arquivo_zip', 'metricas'))[0]
+            caminho, _ = _QFileDialog.getSaveFileName(
+                dlg, "Exportar códigos não encontrados",
+                f"{sugerido}_nao_encontrados.pdf", "PDF (*.pdf)")
+            if not caminho:
+                return
+            linhas = "".join(
+                "<tr>"
+                f"<td>{html_lib.escape(str(r.get('codean') or ''))}</td>"
+                f"<td align='right'>{r.get('tentativas', 0)}</td>"
+                f"<td>{html_lib.escape(', '.join(rotulo_origem.get(o, o) for o in (r.get('origens') or [])))}</td>"
+                f"<td>{html_lib.escape(_fmt_data_hora_br(r.get('primeira_em')) or '')}</td>"
+                f"<td>{html_lib.escape(_fmt_data_hora_br(r.get('ultima_em')) or '')}</td>"
+                "</tr>" for r in nao_encontrados)
+            html = (
+                "<h2>Códigos não encontrados</h2>"
+                f"<p><b>Conferente:</b> {html_lib.escape(str(m.get('nomeusuario', '')))} "
+                f"(cód. {html_lib.escape(str(m.get('codusuario', '')))})<br>"
+                f"<b>Arquivo:</b> {html_lib.escape(item.get('arquivo_zip', ''))}<br>"
+                f"<b>Período:</b> {html_lib.escape(_fmt_data_hora_br((m.get('periodo') or {}).get('inicio', '')) or '')}"
+                f" a {html_lib.escape(_fmt_data_hora_br((m.get('periodo') or {}).get('fim', '')) or '')}<br>"
+                f"<b>Total:</b> {len(nao_encontrados)} código(s) em {tentativas} tentativa(s)</p>"
+                '<table border="1" cellspacing="0" cellpadding="5" width="100%">'
+                "<tr><th>Código lido</th><th>Tentativas</th><th>Origem</th>"
+                "<th>Primeira</th><th>Última</th></tr>"
+                f"{linhas}</table>"
+                "<p><i>Bipado que não existe costuma ser cadastro faltando na carga. "
+                "Digitado que não existe costuma ser erro de digitação.</i></p>")
+            try:
+                writer = QPdfWriter(caminho)
+                writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+                writer.setResolution(150)
+                doc = QTextDocument()
+                doc.setHtml(html)
+                doc.print_(writer)
+                QMessageBox.information(dlg, "Exportado",
+                                        f"PDF gerado em:\n{caminho}")
+            except Exception as exc:
+                logger.error(f"Erro ao exportar PDF de não encontrados: {exc}")
+                QMessageBox.critical(dlg, "Erro ao Exportar",
+                                     f"Não foi possível gerar o PDF:\n{exc}")
+
+        botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn_copiar = _QPushButton("Copiar códigos")
+        btn_copiar.clicked.connect(_copiar)
+        btn_pdf = _QPushButton("Exportar PDF")
+        btn_pdf.clicked.connect(_exportar_pdf)
+        botoes.addButton(btn_copiar, QDialogButtonBox.ButtonRole.ActionRole)
+        botoes.addButton(btn_pdf, QDialogButtonBox.ButtonRole.ActionRole)
+        botoes.rejected.connect(dlg.reject)
         layout.addWidget(botoes)
 
         dlg.exec()
