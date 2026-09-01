@@ -44,6 +44,35 @@ def _fmt_data_hora_br(dt_str: str) -> str:
     except Exception:
         return dt_str[:19]
 
+
+def _fmt_duracao(segundos) -> str:
+    """Formata uma duração em segundos como MM:SS, ou H:MM:SS a partir de 1 hora.
+
+    O resumo de métricas transporta durações em segundos com uma casa decimal
+    (ex.: 1711.9), que sozinhas não se lê — "1711.9s" é meia hora. MM:SS abaixo
+    de uma hora porque o intervalo típico entre duas leituras é de segundos:
+    em hh:mm um conferente rápido apareceria sempre como 00:00.
+    """
+    try:
+        total = int(round(float(segundos)))
+    except (TypeError, ValueError):
+        return "—"
+    if total < 0:
+        return "—"
+    horas, resto = divmod(total, 3600)
+    minutos, segs = divmod(resto, 60)
+    if horas:
+        return f"{horas}:{minutos:02d}:{segs:02d}"
+    return f"{minutos:02d}:{segs:02d}"
+
+
+def _fmt_duracao_min(minutos) -> str:
+    """Mesma formatação, para os campos que o resumo traz em minutos."""
+    try:
+        return _fmt_duracao(float(minutos) * 60.0)
+    except (TypeError, ValueError):
+        return "—"
+
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QSplitter, QFrame, QLabel, QPushButton, QToolBar, QDockWidget,
@@ -3338,8 +3367,8 @@ class MainWindowERP(QMainWindow):
             f"Duplicados: {resumo.get('total_duplicado', 0)}   |   "
             f"Ajustes manuais: {resumo.get('total_ajustes_manuais', 0)} "
             f"({resumo.get('taxa_ajuste_manual_pct', 0)}%)\n"
-            f"Tempo médio entre leituras: {ritmo.get('tempo_medio_entre_leituras_seg', 0)}s   |   "
-            f"Tempo mediano: {ritmo.get('tempo_mediano_entre_leituras_seg', 0)}s"
+            f"Tempo médio entre leituras: {_fmt_duracao(ritmo.get('tempo_medio_entre_leituras_seg', 0))}   |   "
+            f"Tempo mediano: {_fmt_duracao(ritmo.get('tempo_mediano_entre_leituras_seg', 0))}"
         )
         resumo_texto.setWordWrap(True)
         layout.addWidget(resumo_texto)
@@ -3366,11 +3395,19 @@ class MainWindowERP(QMainWindow):
             _tabela(["Hora", "Leituras"], [[f"{h}h", q] for h, q in sorted(leituras_por_hora.items())]),
             "Leituras por hora",
         )
+        # `duracao_seg`/`tempo_ocioso_seg` só existem no formato 2.0; nos zips
+        # 1.0 o resumo traz os mesmos valores em minutos.
+        def _dur(s, chave_seg, chave_min):
+            if s.get(chave_seg) is not None:
+                return _fmt_duracao(s.get(chave_seg))
+            return _fmt_duracao_min(s.get(chave_min))
+
         abas.addTab(
             _tabela(
-                ["Início", "Fim", "Duração (min)", "Leituras", "Ociosidade (min)"],
+                ["Início", "Fim", "Duração", "Leituras", "Ociosidade"],
                 [[_fmt_data_hora_br(s.get('inicio')), _fmt_data_hora_br(s.get('fim')),
-                  s.get('duracao_min'), s.get('leituras'), s.get('tempo_ocioso_min')]
+                  _dur(s, 'duracao_seg', 'duracao_min'), s.get('leituras'),
+                  _dur(s, 'tempo_ocioso_seg', 'tempo_ocioso_min')]
                  for s in sessoes],
             ),
             "Sessões",

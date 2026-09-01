@@ -307,11 +307,16 @@ class AppStatusBar(QStatusBar):
         self.addPermanentWidget(self._theme_btn)
 
     def _update_theme_button_text(self):
-        """Atualiza o rótulo do botão de tema conforme a preferência salva."""
+        """Atualiza o rótulo do botão de tema conforme a preferência salva.
+
+        Mostra o ícone/rótulo do tema PARA ONDE o clique leva (não o atual) —
+        no claro exibe "Escuro" e vice-versa, para o usuário saber o efeito
+        do clique antes de clicar.
+        """
         if AppConfig.get_theme() == "light":
-            self._theme_btn.setText("☀️ Claro")
-        else:
             self._theme_btn.setText("🌙 Escuro")
+        else:
+            self._theme_btn.setText("☀️ Claro")
 
     def _on_theme_toggle(self):
         """Alterna a preferência de tema e avisa que precisa reiniciar o app."""
