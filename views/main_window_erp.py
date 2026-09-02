@@ -3730,7 +3730,13 @@ class MainWindowERP(QMainWindow):
                 "<br><br><b>Por que pode parecer alto:</b> é uma projeção — \"nesse ritmo de "
                 "trabalho ativo, sem pausas, dariam X contagens em 1h\". Com pouco tempo "
                 "produtivo acumulado, poucas contagens já projetam uma taxa \"por hora\" "
-                "grande — não significa que a pessoa contou esse tanto na última hora."))
+                "grande — não significa que a pessoa contou esse tanto na última hora."
+                "<br><br><b>Exemplo:</b> 8 contagens feitas em 4 minutos de tempo produtivo "
+                "(0,067h, com as pausas entre blocos já descontadas)."
+                "<br>8 ÷ 0,067h = <b>120 contagens/h efetivas</b>."
+                "<br>Não quer dizer que a pessoa fez 120 contagens na última hora — só que, "
+                "se mantivesse esses 4 minutos de ritmo por uma hora inteira, sem pausas, "
+                "chegaria a 120."))
             vr.addLayout(linha_ritmo)
 
             total = (produtivo or 0) + (ocioso or 0)
