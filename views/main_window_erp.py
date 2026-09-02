@@ -3715,7 +3715,7 @@ class MainWindowERP(QMainWindow):
                 f"<b>{len(sessoes)} sessão(ões)</b> &nbsp; "
                 f"{_fmt_data_hora_br(sessoes[0].get('inicio'))} → "
                 f"{_fmt_data_hora_br(sessoes[-1].get('fim'))} &nbsp;·&nbsp; "
-                f"{ritmo_efetivo} contagens/h efetivas &nbsp; "
+                f"Projeção: {ritmo_efetivo} contagens/h efetivas &nbsp; "
                 f"<span style='color:{theme.FG_SECONDARY}; font-size:8pt;'>"
                 f"(com base em {_fmt_duracao(produtivo)} produtivos)</span>")
             linha.setWordWrap(True)

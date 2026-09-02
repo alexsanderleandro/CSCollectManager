@@ -1366,7 +1366,7 @@ class LoginDialog(QDialog):
         """Quando conexão é alterada."""
         self._btn_connect.setEnabled(index > 0)
         self._lbl_connection_status.setText("")
-        
+
         if index > 0:
             conn = self._cmb_connection.currentData()
             if conn:
@@ -1377,6 +1377,10 @@ class LoginDialog(QDialog):
                 )
                 self._lbl_connection_details.setText(details)
                 self._lbl_connection_details.show()
+            # Conexão válida selecionada — foca "Conectar" pra Enter já submeter
+            # (cobre tanto a seleção automática da última conexão usada, ao
+            # abrir a tela, quanto uma troca manual no combo).
+            self._btn_connect.setFocus()
         else:
             self._lbl_connection_details.hide()
     
@@ -1484,7 +1488,13 @@ class LoginDialog(QDialog):
 
     def _on_empresa_selected(self):
         """Quando empresa é selecionada."""
-        self._btn_next_empresa.setEnabled(self._cmb_empresa.currentData() is not None)
+        habilitado = self._cmb_empresa.currentData() is not None
+        self._btn_next_empresa.setEnabled(habilitado)
+        if habilitado:
+            # Foca "Avançar" pra Enter já submeter — este método já é chamado
+            # tanto ao chegar nesta etapa (empresa pré-selecionada) quanto ao
+            # trocar manualmente no combo, então cobre os dois casos.
+            self._btn_next_empresa.setFocus()
     
     def _on_back_to_connection(self):
         """Volta para seleção de conexão."""
