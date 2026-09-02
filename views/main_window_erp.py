@@ -3505,8 +3505,10 @@ class MainWindowERP(QMainWindow):
             QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
             QLabel as _QLabel, QDialogButtonBox, QWidget as _QWidget,
             QFrame as _QFrame, QGridLayout as _QGridLayout, QSizePolicy as _QSizePolicy,
+            QLineEdit as _QLineEdit,
         )
         from PySide6.QtCore import Qt as _Qt
+        from utils.formatters import Formatters
 
         theme = get_active_theme()
         m = item.get('metricas') or {}
@@ -3757,6 +3759,67 @@ class MainWindowERP(QMainWindow):
                 f"<span style='color:{theme.WARNING}'>■</span> Ocioso {_fmt_duracao(ocioso)}")
             leg.setStyleSheet("font-size: 8.5pt;")
             vr.addWidget(leg)
+
+            # ------------------------------------- custo do tempo parado
+            # Traduz o ocioso pra reais — número que sensibiliza gestor,
+            # ninguém liga pra minutos. Campo digitável, sem persistência:
+            # some ao fechar o diálogo ou trocar de contagem, não é salvo
+            # em lugar nenhum.
+            painel_custo = _QFrame()
+            painel_custo.setStyleSheet(
+                f"QFrame {{ background-color: {theme.BG_TERTIARY};"
+                f" border: 1px solid {theme.BORDER}; border-radius: 6px; }}")
+            vc = _QVBoxLayout(painel_custo)
+            vc.setContentsMargins(12, 10, 12, 10)
+            vc.setSpacing(6)
+
+            linha_campo = _QHBoxLayout()
+            linha_campo.addWidget(_QLabel("💸 Valor/hora do conferente:"))
+            linha_campo.addWidget(_QLabel("R$"))
+            txt_valor_hora = _QLineEdit()
+            txt_valor_hora.setPlaceholderText("0,00")
+            txt_valor_hora.setFixedWidth(90)
+            txt_valor_hora.setStyleSheet(themed_qss(
+                "QLineEdit { background-color: {{BG_SECONDARY}}; color: {{FG_PRIMARY}};"
+                " border: 1px solid {{BORDER}}; border-radius: 4px; padding: 3px 6px; }"
+                " QLineEdit:focus { border-color: {{ACCENT}}; }"))
+            linha_campo.addWidget(txt_valor_hora)
+            linha_campo.addStretch(1)
+            vc.addLayout(linha_campo)
+
+            lbl_custo_ocioso = _QLabel(
+                "Digite o valor/hora acima pra ver o custo do tempo ocioso desta contagem.")
+            lbl_custo_ocioso.setWordWrap(True)
+            lbl_custo_ocioso.setStyleSheet(
+                f"color: {theme.FG_SECONDARY}; font-size: 9pt;")
+            vc.addWidget(lbl_custo_ocioso)
+            vr.addWidget(painel_custo)
+
+            def _atualizar_custo_ocioso(_texto=None, _ocioso_seg=ocioso,
+                                        _campo=txt_valor_hora, _lbl=lbl_custo_ocioso):
+                bruto = _campo.text().strip().replace(',', '.')
+                try:
+                    valor_hora = float(bruto)
+                except ValueError:
+                    valor_hora = None
+                if not bruto or valor_hora is None or valor_hora <= 0:
+                    _lbl.setStyleSheet(f"color: {theme.FG_SECONDARY}; font-size: 9pt;")
+                    _lbl.setText(
+                        "Digite o valor/hora acima pra ver o custo do tempo "
+                        "ocioso desta contagem.")
+                    return
+                horas_ociosas = (_ocioso_seg or 0) / 3600.0
+                custo = horas_ociosas * valor_hora
+                horas_fmt = f"{horas_ociosas:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+                _lbl.setStyleSheet(f"color: {theme.FG_PRIMARY}; font-size: 9.5pt;")
+                _lbl.setText(
+                    f"Essa contagem custou <b style='color:{theme.WARNING}; font-size:11pt;'>"
+                    f"{Formatters.format_currency(custo)}</b> em tempo parado."
+                    f"<br><span style='color:{theme.FG_SECONDARY}; font-size:8pt;'>"
+                    f"Cálculo: {horas_fmt}h ociosas × "
+                    f"{Formatters.format_currency(valor_hora)}/h</span>")
+
+            txt_valor_hora.textChanged.connect(_atualizar_custo_ocioso)
 
         # Blocos com timestamp completo — usados aqui para o histograma por
         # data+hora, e mais abaixo na tabela "Blocos de trabalho".
