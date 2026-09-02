@@ -78,7 +78,7 @@ from PySide6.QtWidgets import (
     QSplitter, QFrame, QLabel, QPushButton, QToolBar, QDockWidget,
     QStackedWidget, QListWidget, QListWidgetItem, QSizePolicy,
     QMessageBox, QFileDialog, QApplication, QSpacerItem, QGroupBox,
-    QScrollArea, QTableWidgetItem
+    QScrollArea, QTableWidgetItem, QTreeWidget, QTreeWidgetItem
 )
 from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve, QThreadPool
 from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QShortcut, QCursor, QPixmap
@@ -3213,7 +3213,8 @@ class MainWindowERP(QMainWindow):
 
         lbl_info = QLabel(
             "Lidas a partir dos zips já baixados na pasta de contagens configurada. "
-            "Selecione uma linha e clique em 🔍 Ver Detalhes (ou dê duplo-clique)."
+            "Agrupadas por conferente — clique no grupo para recolher/expandir. "
+            "Selecione um registro e clique em 🔍 Ver Detalhes (ou dê duplo-clique)."
         )
         lbl_info.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 10pt; padding: 4px 0;"))
         content_layout.addWidget(lbl_info)
@@ -3221,32 +3222,52 @@ class MainWindowERP(QMainWindow):
         # Ordem das colunas (índice fixo, usado também em _on_metrics_refresh):
         # 0=Conferente 1=Arquivo 2=Início 3=Fim 4=Contagens
         # 5=Não Encontrados 6=Duplicados 7=Ajustes Manuais
-        self._metrics_table = QTableWidget()
+        # A coluna 0 só tem texto na linha de grupo (nome do conferente) — nas
+        # linhas de registro fica em branco, já que o grupo já identifica o
+        # conferente.
+        self._metrics_table = QTreeWidget()
         self._metrics_table.setColumnCount(8)
-        self._metrics_table.setHorizontalHeaderLabels([
+        self._metrics_table.setHeaderLabels([
             "Conferente", "Arquivo", "Início", "Fim", "Contagens",
             "Não Encontrados", "Duplicados", "Ajustes Manuais",
         ])
-        _metrics_header = self._metrics_table.horizontalHeader()
+        _metrics_header = self._metrics_table.header()
         _metrics_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         for _col in range(self._metrics_table.columnCount()):
             if _col != 1:
                 _metrics_header.setSectionResizeMode(_col, QHeaderView.ResizeMode.ResizeToContents)
+        _metrics_header.setSortIndicatorShown(True)
         self._metrics_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._metrics_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._metrics_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._metrics_table.setAlternatingRowColors(True)
-        self._metrics_table.setSortingEnabled(True)
-        self._metrics_table.verticalHeader().setVisible(False)
+        self._metrics_table.setRootIsDecorated(True)
+        self._metrics_table.setIndentation(14)
+        self._metrics_table.setUniformRowHeights(True)
+        # Recolher/expandir é só pelo clique (ver _on_metrics_item_clicked) ou
+        # pela setinha nativa — duplo clique fica livre para "Ver Detalhes"
+        # sem competir com o toggle padrão do Qt.
+        self._metrics_table.setExpandsOnDoubleClick(False)
+        # Ordenação é toda manual (ver _on_metrics_header_clicked): os grupos
+        # (conferente) ficam sempre em ordem crescente e só os registros
+        # dentro de cada grupo reordenam pela coluna clicada — o
+        # setSortingEnabled nativo do Qt reordenaria tudo (grupos inclusive)
+        # pela mesma coluna, o que misturaria os conferentes.
+        self._metrics_table.setSortingEnabled(False)
+        self._metrics_sort_col = 0
+        self._metrics_sort_order = Qt.SortOrder.AscendingOrder
         self._metrics_table.setStyleSheet(themed_qss("""
-            QTableWidget {
+            QTreeWidget {
                 background-color: {{BG_SECONDARY}};
                 color: {{FG_PRIMARY}};
                 border: 1px solid {{BORDER}};
-                gridline-color: {{BORDER}};
                 font-size: 10pt;
             }
-            QTableWidget::item:selected {
+            QTreeWidget::item {
+                border-bottom: 1px solid {{BORDER}};
+                padding: 3px 0;
+            }
+            QTreeWidget::item:selected {
                 background-color: {{ACCENT}};
                 color: #ffffff;
             }
@@ -3258,11 +3279,13 @@ class MainWindowERP(QMainWindow):
                 padding: 6px 8px;
                 font-weight: bold;
             }
-            QTableWidget::item:alternate {
+            QTreeWidget::item:alternate {
                 background-color: {{BG_TERTIARY}};
             }
         """))
-        self._metrics_table.doubleClicked.connect(self._on_metrics_ver_detalhes)
+        self._metrics_table.itemDoubleClicked.connect(self._on_metrics_ver_detalhes)
+        self._metrics_table.itemClicked.connect(self._on_metrics_item_clicked)
+        _metrics_header.sectionClicked.connect(self._on_metrics_header_clicked)
         content_layout.addWidget(self._metrics_table)
 
         self._lbl_metrics_status = QLabel("")
@@ -3312,17 +3335,17 @@ class MainWindowERP(QMainWindow):
 
         def _conferente_de(item):
             m = item.get('metricas') or {}
-            return f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -')
+            rotulo = f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -')
+            return rotulo or '(sem conferente identificado)'
 
         def _inicio_de(item):
             m = item.get('metricas') or {}
             return str((m.get('periodo') or {}).get('inicio', ''))
 
-        # Ordem padrão da grade: agrupado por conferente (crescente) e, dentro
-        # do grupo, por data inicial (decrescente). Duas passadas porque
-        # sorted() é estável — a ordem por início decrescente da 1ª passada
-        # sobrevive dentro de cada grupo formado na 2ª. Clicar num cabeçalho
-        # continua reordenando normalmente por aquela coluna só.
+        # Ordem-base dos registros antes de agrupar: por data inicial
+        # decrescente. Junto com o groupby logo abaixo (que preserva a ordem
+        # de chegada dentro de cada grupo), isso entrega "agrupado por
+        # conferente crescente, e dentro do grupo por início decrescente".
         self._metrics_results.sort(key=_inicio_de, reverse=True)
         self._metrics_results.sort(key=lambda it: _conferente_de(it).lower())
 
@@ -3332,19 +3355,9 @@ class MainWindowERP(QMainWindow):
             except (TypeError, ValueError):
                 return None
 
-        def _cel(texto, chave_ordenacao=None):
-            it = _SortableTableItem(texto)
-            if chave_ordenacao is not None:
-                it.setData(Qt.ItemDataRole.UserRole, chave_ordenacao)
-            return it
-
-        table = self._metrics_table
-        # Ordenação precisa ficar desligada durante a inserção: com ela ligada,
-        # cada setItem() pode reordenar as linhas no meio do loop.
-        table.setSortingEnabled(False)
-        table.setRowCount(0)
-        for row_idx, item in enumerate(self._metrics_results):
-            table.insertRow(row_idx)
+        def _celulas_registro(item):
+            """(texto, chave_ordenacao) por coluna 1-7 — coluna 0 fica em
+            branco nas linhas de registro, o grupo já identifica o conferente."""
             if item.get('ok'):
                 m = item.get('metricas') or {}
                 resumo = m.get('resumo') or {}
@@ -3358,44 +3371,114 @@ class MainWindowERP(QMainWindow):
                 nao_encontrado = _num_ou_none(resumo.get('total_nao_encontrado'))
                 duplicado = _num_ou_none(resumo.get('total_duplicado'))
                 ajustes = _num_ou_none(resumo.get('total_ajustes_manuais'))
-                celulas = [
-                    _cel(f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -')),
-                    _cel(item['arquivo_zip']),
-                    _cel(_fmt_data_hora_br(inicio_raw), inicio_raw),
-                    _cel(_fmt_data_hora_br(fim_raw), fim_raw),
-                    _cel(str(leituras) if leituras is not None else '', leituras),
-                    _cel(str(nao_encontrado) if nao_encontrado is not None else '', nao_encontrado),
-                    _cel(str(duplicado) if duplicado is not None else '', duplicado),
-                    _cel(str(ajustes) if ajustes is not None else '', ajustes),
+                return [
+                    ('', None),
+                    (item['arquivo_zip'], None),
+                    (_fmt_data_hora_br(inicio_raw), inicio_raw),
+                    (_fmt_data_hora_br(fim_raw), fim_raw),
+                    (str(leituras) if leituras is not None else '', leituras),
+                    (str(nao_encontrado) if nao_encontrado is not None else '', nao_encontrado),
+                    (str(duplicado) if duplicado is not None else '', duplicado),
+                    (str(ajustes) if ajustes is not None else '', ajustes),
                 ]
-            else:
-                celulas = [
-                    _cel(''), _cel(item['arquivo_zip']), _cel(''), _cel(''),
-                    _cel(''), _cel(''), _cel(''),
-                    _cel(f"⚠️ {item.get('erro', 'erro desconhecido')}"),
-                ]
-            # Guarda o registro de origem na 1ª célula (Conferente) — é o que
-            # permite _on_metrics_ver_detalhes achar a linha certa mesmo
-            # depois de o usuário clicar num cabeçalho e reordenar a grade.
-            celulas[0].setData(Qt.ItemDataRole.UserRole, item)
-            for col_idx, cel in enumerate(celulas):
-                table.setItem(row_idx, col_idx, cel)
-        table.setSortingEnabled(True)
+            return [
+                ('', None), (item['arquivo_zip'], None), ('', None), ('', None),
+                ('', None), ('', None), ('', None),
+                (f"⚠️ {item.get('erro', 'erro desconhecido')}", None),
+            ]
+
+        import itertools
+
+        tree = self._metrics_table
+        tree.clear()
+        for nome_grupo, registros_grupo in itertools.groupby(self._metrics_results, key=_conferente_de):
+            registros_grupo = list(registros_grupo)
+            grupo_item = QTreeWidgetItem(tree)
+            grupo_item.setFirstColumnSpanned(True)
+            plural = 'registro' if len(registros_grupo) == 1 else 'registros'
+            grupo_item.setText(0, f"{nome_grupo}   ·   {len(registros_grupo)} {plural}")
+            grupo_item.setExpanded(True)
+            for item in registros_grupo:
+                registro = QTreeWidgetItem(grupo_item)
+                for col_idx, (texto, chave) in enumerate(_celulas_registro(item)):
+                    registro.setText(col_idx, texto)
+                    if chave is not None:
+                        registro.setData(col_idx, Qt.ItemDataRole.UserRole, chave)
+                # Guarda o registro de origem na própria linha — é o que
+                # permite _on_metrics_ver_detalhes achar o item certo mesmo
+                # depois de reordenar por outra coluna.
+                registro.setData(0, Qt.ItemDataRole.UserRole, item)
+
+        self._aplicar_ordenacao_metrics()
 
         self._lbl_metrics_status.setText(
             f"{len(self._metrics_results)} export(s) com métricas encontrados em: {pasta or '(pasta não configurada)'}"
         )
 
-    def _on_metrics_ver_detalhes(self, *args):
-        """Abre um diálogo com o detalhe completo das métricas da linha selecionada."""
-        row = self._metrics_table.currentRow()
-        if row < 0:
+    def _aplicar_ordenacao_metrics(self):
+        """Aplica `self._metrics_sort_col`/`_metrics_sort_order` à grade.
+
+        Coluna 0 (Conferente) reordena os grupos entre si. Qualquer outra
+        coluna reordena só os registros dentro de cada grupo — os grupos em
+        si nunca se misturam, então o agrupamento por conferente nunca quebra.
+        """
+        tree = self._metrics_table
+        col = getattr(self, '_metrics_sort_col', 0)
+        order = getattr(self, '_metrics_sort_order', Qt.SortOrder.AscendingOrder)
+        reverso = order == Qt.SortOrder.DescendingOrder
+
+        if col == 0:
+            grupos = [tree.takeTopLevelItem(0) for _ in range(tree.topLevelItemCount())]
+            grupos.sort(key=lambda g: g.text(0).lower(), reverse=reverso)
+            for g in grupos:
+                tree.addTopLevelItem(g)
+                # take/addTopLevelItem reseta o span — precisa reaplicar.
+                g.setFirstColumnSpanned(True)
+                g.setExpanded(True)
             return
-        # Lê o registro pela célula (guardado em UserRole na coluna
-        # Conferente), não pelo índice — a grade é ordenável, então a
-        # posição da linha não corresponde mais à ordem de _metrics_results.
-        cel = self._metrics_table.item(row, 0)
-        item = cel.data(Qt.ItemDataRole.UserRole) if cel else None
+
+        def _chave(registro):
+            v = registro.data(col, Qt.ItemDataRole.UserRole)
+            return v if v is not None else registro.text(col)
+
+        for i in range(tree.topLevelItemCount()):
+            grupo = tree.topLevelItem(i)
+            filhos = grupo.takeChildren()
+            try:
+                filhos.sort(key=_chave, reverse=reverso)
+            except TypeError:
+                # Coluna com mistura de tipos (ex.: alguns valores numéricos
+                # ausentes viram texto) — cai pro texto exibido, igual ao
+                # comportamento de fallback já usado nas outras grades.
+                filhos.sort(key=lambda r: r.text(col), reverse=reverso)
+            grupo.addChildren(filhos)
+
+    def _on_metrics_header_clicked(self, col):
+        """Clique num cabeçalho da grade de métricas — alterna crescente/
+        decrescente na mesma coluna, ou troca de coluna começando crescente."""
+        if getattr(self, '_metrics_sort_col', None) == col:
+            self._metrics_sort_order = (
+                Qt.SortOrder.DescendingOrder
+                if self._metrics_sort_order == Qt.SortOrder.AscendingOrder
+                else Qt.SortOrder.AscendingOrder)
+        else:
+            self._metrics_sort_col = col
+            self._metrics_sort_order = Qt.SortOrder.AscendingOrder
+        self._metrics_table.header().setSortIndicator(self._metrics_sort_col, self._metrics_sort_order)
+        self._aplicar_ordenacao_metrics()
+
+    def _on_metrics_item_clicked(self, item, _column):
+        """Clique em qualquer ponto da linha de grupo recolhe/expande —
+        não só na setinha nativa da árvore."""
+        if item.parent() is None:
+            item.setExpanded(not item.isExpanded())
+
+    def _on_metrics_ver_detalhes(self, *args):
+        """Abre um diálogo com o detalhe completo das métricas do registro selecionado."""
+        tree_item = self._metrics_table.currentItem()
+        if tree_item is None or tree_item.parent() is None:
+            return
+        item = tree_item.data(0, Qt.ItemDataRole.UserRole)
         if item is None:
             return
         if not item.get('ok'):
@@ -3481,9 +3564,13 @@ class MainWindowERP(QMainWindow):
                 "color: {{FG_SECONDARY}}; padding: 22px; font-size: 10pt;"))
             return lbl
 
-        def _card(titulo, valor, rodape='', cor=None, clicavel=False):
+        def _card(titulo, valor, rodape='', cor=None, clicavel=False, botao_ajuda=None):
             box = _QFrame()
             box.setFrameShape(_QFrame.Shape.StyledPanel)
+            # Expanding + mesmo stretch em todos (ver faixa.addWidget abaixo):
+            # cria uma faixa de cards adaptativa, todos com a mesma largura,
+            # em vez de cada um só se ajustar ao próprio conteúdo.
+            box.setSizePolicy(_QSizePolicy.Policy.Expanding, _QSizePolicy.Policy.Preferred)
             borda = cor or theme.BORDER
             box.setStyleSheet(
                 f"QFrame {{ background-color: {theme.BG_TERTIARY};"
@@ -3495,11 +3582,20 @@ class MainWindowERP(QMainWindow):
             lt.setStyleSheet(
                 f"color: {theme.FG_DISABLED}; font-size: 7.5pt;"
                 " letter-spacing: 1px; border: none;")
+            # Título e botão de ajuda (quando houver) na mesma linha, para
+            # todo card manter a mesma altura — não um wrapper externo com o
+            # card inteiro numa caixa e o botão solto do lado de fora.
+            linha_titulo = _QHBoxLayout()
+            linha_titulo.setContentsMargins(0, 0, 0, 0)
+            linha_titulo.setSpacing(4)
+            linha_titulo.addWidget(lt, 1)
+            if botao_ajuda is not None:
+                linha_titulo.addWidget(botao_ajuda, 0)
+            v.addLayout(linha_titulo)
             lv = _QLabel(str(valor))
             lv.setStyleSheet(
                 f"color: {cor or theme.FG_PRIMARY}; font-size: 16pt;"
                 " font-weight: bold; border: none;")
-            v.addWidget(lt)
             v.addWidget(lv)
             if rodape:
                 lr = _QLabel(rodape)
@@ -3550,18 +3646,21 @@ class MainWindowERP(QMainWindow):
         faixa.setSpacing(8)
         produtos = resumo.get('total_produtos_distintos',
                               resumo.get('total_codean_unicos', 0))
+        # Stretch igual (1) em todo card: faixa adaptativa, todos com a
+        # mesma largura — em vez de cada um só se ajustar ao próprio
+        # conteúdo (o que deixava "Entre contagens" maior que os outros).
         # "Contagens" = bipado + lançado à mão. Zips antigos só têm total_leituras.
         faixa.addWidget(_card("Contagens",
                               resumo.get('total_contagens',
                                          resumo.get('total_leituras', 0)),
-                              f"{produtos} produtos"))
+                              f"{produtos} produtos"), 1)
         if formato_novo:
             faixa.addWidget(_card("Produtivo", _fmt_duracao(produtivo),
                                   f"{sum(len(s.get('blocos') or []) for s in sessoes)} blocos",
-                                  cor=theme.SUCCESS))
+                                  cor=theme.SUCCESS), 1)
             pct_ocioso = (100.0 * ocioso / (produtivo + ocioso)) if (produtivo + ocioso) else 0.0
             faixa.addWidget(_card("Ocioso", _fmt_duracao(ocioso),
-                                  f"{pct_ocioso:.1f}% da jornada", cor=theme.WARNING))
+                                  f"{pct_ocioso:.1f}% da jornada", cor=theme.WARNING), 1)
         # Mediana, não média: com poucas contagens, uma única pausa longa
         # (entre sessões, ou virada de dia) já distorce a média sozinha,
         # enquanto o ritmo típico entre leituras continua de segundos a
@@ -3573,24 +3672,18 @@ class MainWindowERP(QMainWindow):
             entre_contagens_seg = ritmo.get(
                 'tempo_medio_entre_contagens_seg',
                 ritmo.get('tempo_medio_entre_leituras_seg', 0))
-        card_entre = _card("Entre contagens", _fmt_duracao(entre_contagens_seg),
-                           "mediana")
-        wrap_entre = _QWidget()
-        wrap_entre_l = _QHBoxLayout(wrap_entre)
-        wrap_entre_l.setContentsMargins(0, 0, 0, 0)
-        wrap_entre_l.setSpacing(4)
-        wrap_entre_l.addWidget(card_entre, 1)
-        wrap_entre_l.addWidget(_botao_ajuda(
-            "Entre contagens",
-            "<b>Mediana, não média:</b> metade dos intervalos entre uma "
-            "contagem e a próxima foi menor que esse valor, metade foi "
-            "maior — é o intervalo \"típico\"."
-            "<br><br><b>Por que não a média:</b> uma única pausa longa "
-            "(saiu do app, retomou no dia seguinte) conta como um intervalo "
-            "gigante. Com poucas contagens no total, esse outlier sozinho "
-            "já empurra a média para cima, mesmo que as leituras de "
-            "verdade tenham sido rápidas."), 0)
-        faixa.addWidget(wrap_entre)
+        faixa.addWidget(_card(
+            "Entre contagens", _fmt_duracao(entre_contagens_seg), "mediana",
+            botao_ajuda=_botao_ajuda(
+                "Entre contagens",
+                "<b>Mediana, não média:</b> metade dos intervalos entre uma "
+                "contagem e a próxima foi menor que esse valor, metade foi "
+                "maior — é o intervalo \"típico\"."
+                "<br><br><b>Por que não a média:</b> uma única pausa longa "
+                "(saiu do app, retomou no dia seguinte) conta como um intervalo "
+                "gigante. Com poucas contagens no total, esse outlier sozinho "
+                "já empurra a média para cima, mesmo que as leituras de "
+                "verdade tenham sido rápidas.")), 1)
 
         n_nao_enc = resumo.get('total_nao_encontrado', 0)
         tem_lista_ne = bool(nao_encontrados)
@@ -3602,9 +3695,9 @@ class MainWindowERP(QMainWindow):
         if tem_lista_ne:
             card_ne.mousePressEvent = (
                 lambda _e, it=item, ne=nao_encontrados: self._show_nao_encontrados_dialog(it, ne))
-        faixa.addWidget(card_ne)
+        faixa.addWidget(card_ne, 1)
         faixa.addWidget(_card("Ajustes manuais", resumo.get('total_ajustes_manuais', 0),
-                              f"{resumo.get('taxa_ajuste_manual_pct', 0)}%"))
+                              f"{resumo.get('taxa_ajuste_manual_pct', 0)}%"), 1)
         layout.addLayout(faixa)
 
         abas = QTabWidget()
