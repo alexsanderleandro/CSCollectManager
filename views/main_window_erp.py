@@ -3310,6 +3310,22 @@ class MainWindowERP(QMainWindow):
             self._lbl_metrics_status.setText(f"Erro ao ler métricas: {e}")
             self._metrics_results = []
 
+        def _conferente_de(item):
+            m = item.get('metricas') or {}
+            return f"{m.get('codusuario', '')} - {m.get('nomeusuario', '')}".strip(' -')
+
+        def _inicio_de(item):
+            m = item.get('metricas') or {}
+            return str((m.get('periodo') or {}).get('inicio', ''))
+
+        # Ordem padrão da grade: agrupado por conferente (crescente) e, dentro
+        # do grupo, por data inicial (decrescente). Duas passadas porque
+        # sorted() é estável — a ordem por início decrescente da 1ª passada
+        # sobrevive dentro de cada grupo formado na 2ª. Clicar num cabeçalho
+        # continua reordenando normalmente por aquela coluna só.
+        self._metrics_results.sort(key=_inicio_de, reverse=True)
+        self._metrics_results.sort(key=lambda it: _conferente_de(it).lower())
+
         def _num_ou_none(v):
             try:
                 return int(v)
@@ -3671,16 +3687,24 @@ class MainWindowERP(QMainWindow):
             meio.addWidget(_tabela(["Hora", "Contagens"],
                                    [[f"{h}h", q] for h, q in sorted(horas.items())], (1,)), 1)
         if origem_entrada:
-            rotulos = {'scan': 'Bipado', 'manual': 'Digitado', 'voz': 'Voz'}
+            rotulos = {'scan': 'Bipado', 'manual': 'Digitado', 'voz': 'Falado'}
+            # Ordem fixa dos três modos de leitura (leitor → teclado →
+            # microfone), e não alfabética: é a ordem em que se lê a tabela.
+            # Uma origem desconhecida (export de versão futura) vai para o fim
+            # em vez de sumir.
+            ordem = ['scan', 'manual', 'voz']
+            chaves = ordem + [k for k in sorted(origem_entrada) if k not in ordem]
             meio.addWidget(_tabela(
                 ["Origem da entrada", "Contagens"],
-                [[rotulos.get(k, k), v] for k, v in sorted(origem_entrada.items())], (1,),
+                [[rotulos.get(k, k), origem_entrada.get(k, 0)] for k in chaves
+                 if k in origem_entrada], (1,),
                 dicas_coluna={
-                    0: "Só leituras que bateram com produto já cadastrado — não inclui "
-                       "lançamentos \"sem GTIN\" (esses estão no card \"Ajustes manuais\" e "
-                       "na coluna \"Digitado\" dos Blocos de trabalho)."
-                       "<br><br>Ditado por voz hoje aparece somado em \"Digitado\": o app "
-                       "coletor ainda não registra a origem \"voz\" separada nesse dado.",
+                    0: "Como o código chegou ao coletor: <b>Bipado</b> pela câmera, "
+                       "<b>Digitado</b> no teclado ou <b>Falado</b> no microfone."
+                       "<br><br>Só leituras que bateram com produto já cadastrado — não inclui "
+                       "lançamentos \"sem GTIN\" nem correções de quantidade (esses vêm da tela "
+                       "Consultar Produtos, sem leitura de código, e estão no card \"Ajustes "
+                       "manuais\" e na coluna \"Lançados\" dos Blocos de trabalho).",
                 }), 1)
         vr.addLayout(meio, 1)
 
@@ -3716,16 +3740,17 @@ class MainWindowERP(QMainWindow):
                     "câmera (bipado) + teclado (digitado) + voz (ditado)."
                     "<br><br><b>Não encontrados</b> — dentro desse total, quantos não bateram "
                     "com nenhum produto cadastrado."
-                    "<br><br><b>Digitado</b> — dentro desse total, quantos foram digitados no "
-                    "teclado. O bloco não distingue câmera de voz: o restante do total pode "
-                    "ser qualquer uma das duas — a quebra completa por sessão está na tabela "
+                    "<br><br><b>Lançados</b> — dentro desse total, quantos vieram da tela "
+                    "Consultar Produtos (produto sem GTIN ou correção de quantidade), onde não "
+                    "há leitura de código nenhuma. Não confundir com \"digitado\": a quebra "
+                    "dos três modos de leitura (bipado, digitado, falado) está na tabela "
                     "\"Origem da entrada\", ao lado."
-                    "<br><br>Uma linha com 1 contagem, 0 digitadas e 0 não encontrados é o caso "
+                    "<br><br>Uma linha com 1 contagem, 0 lançadas e 0 não encontrados é o caso "
                     "mais comum: uma leitura normal pela câmera, que encontrou o produto — não "
                     "é uma linha vazia."))
                 vr.addLayout(titulo_blocos)
                 vr.addWidget(_tabela(
-                    ["Início", "Fim", "Duração", "Contagens", "Não encontrados", "Digitado"],
+                    ["Início", "Fim", "Duração", "Contagens", "Não encontrados", "Lançados"],
                     [[_fmt_data_hora_br(b.get('inicio')), _fmt_data_hora_br(b.get('fim')),
                       _fmt_duracao(b.get('duracao_seg')), _contagens_de(b),
                       _num_ou_traco(b.get('nao_encontrado')),
@@ -3734,8 +3759,8 @@ class MainWindowERP(QMainWindow):
                     dicas_coluna={
                         3: "Total de produtos registrados no bloco: câmera + teclado + voz",
                         4: "Quantas dessas contagens não bateram com nenhum produto cadastrado",
-                        5: "Quantas dessas contagens foram digitadas no teclado (o resto foi "
-                           "câmera ou voz)",
+                        5: "Quantas dessas contagens vieram da tela Consultar Produtos (sem "
+                           "GTIN ou correção), sem leitura de código",
                     }), 1)
         else:
             vr.addWidget(_tabela(
@@ -3845,7 +3870,7 @@ class MainWindowERP(QMainWindow):
         from PySide6.QtGui import QPdfWriter, QPageSize, QTextDocument
 
         m = item.get('metricas') or {}
-        rotulo_origem = {'scan': 'bipado', 'manual': 'digitado', 'voz': 'voz'}
+        rotulo_origem = {'scan': 'bipado', 'manual': 'digitado', 'voz': 'falado'}
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Códigos não encontrados")
