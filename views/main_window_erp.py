@@ -3546,12 +3546,35 @@ class MainWindowERP(QMainWindow):
             pct_ocioso = (100.0 * ocioso / (produtivo + ocioso)) if (produtivo + ocioso) else 0.0
             faixa.addWidget(_card("Ocioso", _fmt_duracao(ocioso),
                                   f"{pct_ocioso:.1f}% da jornada", cor=theme.WARNING))
-        # Sem o rodapé da mediana — a mediana continua no arquivo, só não
-        # disputa espaço no card.
-        faixa.addWidget(_card("Entre contagens",
-                              _fmt_duracao(ritmo.get(
-                                  'tempo_medio_entre_contagens_seg',
-                                  ritmo.get('tempo_medio_entre_leituras_seg', 0)))))
+        # Mediana, não média: com poucas contagens, uma única pausa longa
+        # (entre sessões, ou virada de dia) já distorce a média sozinha,
+        # enquanto o ritmo típico entre leituras continua de segundos a
+        # poucos minutos. A mediana não se deixa levar por esse outlier.
+        entre_contagens_seg = ritmo.get('tempo_mediano_entre_contagens_seg')
+        if entre_contagens_seg is None:
+            entre_contagens_seg = ritmo.get('tempo_mediano_entre_leituras_seg')
+        if entre_contagens_seg is None:
+            entre_contagens_seg = ritmo.get(
+                'tempo_medio_entre_contagens_seg',
+                ritmo.get('tempo_medio_entre_leituras_seg', 0))
+        card_entre = _card("Entre contagens", _fmt_duracao(entre_contagens_seg),
+                           "mediana")
+        wrap_entre = _QWidget()
+        wrap_entre_l = _QHBoxLayout(wrap_entre)
+        wrap_entre_l.setContentsMargins(0, 0, 0, 0)
+        wrap_entre_l.setSpacing(4)
+        wrap_entre_l.addWidget(card_entre, 1)
+        wrap_entre_l.addWidget(_botao_ajuda(
+            "Entre contagens",
+            "<b>Mediana, não média:</b> metade dos intervalos entre uma "
+            "contagem e a próxima foi menor que esse valor, metade foi "
+            "maior — é o intervalo \"típico\"."
+            "<br><br><b>Por que não a média:</b> uma única pausa longa "
+            "(saiu do app, retomou no dia seguinte) conta como um intervalo "
+            "gigante. Com poucas contagens no total, esse outlier sozinho "
+            "já empurra a média para cima, mesmo que as leituras de "
+            "verdade tenham sido rápidas."), 0)
+        faixa.addWidget(wrap_entre)
 
         n_nao_enc = resumo.get('total_nao_encontrado', 0)
         tem_lista_ne = bool(nao_encontrados)
@@ -3620,15 +3643,45 @@ class MainWindowERP(QMainWindow):
             leg.setStyleSheet("font-size: 8.5pt;")
             vr.addWidget(leg)
 
+        # Blocos com timestamp completo — usados aqui para o histograma por
+        # data+hora, e mais abaixo na tabela "Blocos de trabalho".
+        blocos = ([(b, s) for s in sessoes for b in (s.get('blocos') or [])]
+                  if formato_novo else [])
+
         meio = _QHBoxLayout()
-        horas = ritmo.get('contagens_por_hora') or ritmo.get('leituras_por_hora') or {}
-        meio.addWidget(_tabela(["Hora", "Contagens"],
-                               [[f"{h}h", q] for h, q in sorted(horas.items())], (1,)), 1)
+        if blocos:
+            # Agrupa por (data, hora) do início do bloco. O resumo por hora
+            # do arquivo (ritmo.contagens_por_hora) não carrega data, então
+            # dias diferentes com a mesma hora se misturariam numa linha só
+            # — os blocos têm timestamp completo e resolvem isso.
+            horas_agrupadas = {}
+            for b, _s in blocos:
+                inicio = b.get('inicio')
+                try:
+                    dt = datetime.fromisoformat((inicio or '')[:19])
+                except ValueError:
+                    continue
+                chave = (dt.date(), dt.hour)
+                horas_agrupadas[chave] = horas_agrupadas.get(chave, 0) + _contagens_de(b)
+            linhas_hora = [[data.strftime('%d/%m/%Y'), f"{hora:02d}h", qtd]
+                           for (data, hora), qtd in sorted(horas_agrupadas.items())]
+            meio.addWidget(_tabela(["Data", "Hora", "Contagens"], linhas_hora, (2,)), 1)
+        else:
+            horas = ritmo.get('contagens_por_hora') or ritmo.get('leituras_por_hora') or {}
+            meio.addWidget(_tabela(["Hora", "Contagens"],
+                                   [[f"{h}h", q] for h, q in sorted(horas.items())], (1,)), 1)
         if origem_entrada:
             rotulos = {'scan': 'Bipado', 'manual': 'Digitado', 'voz': 'Voz'}
             meio.addWidget(_tabela(
                 ["Origem da entrada", "Contagens"],
-                [[rotulos.get(k, k), v] for k, v in sorted(origem_entrada.items())], (1,)), 1)
+                [[rotulos.get(k, k), v] for k, v in sorted(origem_entrada.items())], (1,),
+                dicas_coluna={
+                    0: "Só leituras que bateram com produto já cadastrado — não inclui "
+                       "lançamentos \"sem GTIN\" (esses estão no card \"Ajustes manuais\" e "
+                       "na coluna \"Digitado\" dos Blocos de trabalho)."
+                       "<br><br>Ditado por voz hoje aparece somado em \"Digitado\": o app "
+                       "coletor ainda não registra a origem \"voz\" separada nesse dado.",
+                }), 1)
         vr.addLayout(meio, 1)
 
         # Sessões: cada entrada e saída do app. Distinto dos blocos de trabalho
@@ -3646,7 +3699,6 @@ class MainWindowERP(QMainWindow):
                  for s in sessoes], (2, 3, 4)), 1)
 
         if formato_novo:
-            blocos = [(b, s) for s in sessoes for b in (s.get('blocos') or [])]
             if blocos:
                 def _num_ou_traco(v):
                     return '—' if not v else v
