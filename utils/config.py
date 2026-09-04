@@ -217,25 +217,26 @@ class AppConfig:
         cls._save_settings(settings)
 
     @classmethod
-    def get_default_gap_ocioso_min(cls) -> int:
-        """Retorna o gap ocioso padrão (minutos) usado ao gerar novas cargas —
-        parametriza, do lado do celular, quando um intervalo sem contagem vira
-        uma pausa/sessão nas métricas de produtividade. 10 é o padrão inicial."""
+    def get_default_aproximacao_max_min(cls) -> int:
+        """Teto de deslocamento padrão (minutos) usado ao gerar novas cargas —
+        até quanto tempo, antes de uma contagem, ainda conta como trabalho
+        (ir até o produto, procurar) em vez de ociosidade. 3 é o padrão."""
         settings = cls._load_settings()
         try:
-            return int(settings.get("default_gap_ocioso_min", 10))
+            return int(settings.get("default_aproximacao_max_min", 3))
         except Exception:
-            return 10
+            return 3
 
     @classmethod
-    def set_default_gap_ocioso_min(cls, minutos: int) -> None:
-        """Salva o gap ocioso padrão — chamado a cada exportação de carga com
-        o valor efetivamente usado, para que a próxima carga já venha com ele."""
+    def set_default_aproximacao_max_min(cls, minutos: int) -> None:
+        """Salva o teto de deslocamento padrão — chamado a cada exportação de
+        carga com o valor efetivamente usado, para que a próxima já venha com
+        ele."""
         settings = cls._load_settings()
         try:
-            settings["default_gap_ocioso_min"] = int(minutos)
+            settings["default_aproximacao_max_min"] = int(minutos)
         except Exception:
-            settings["default_gap_ocioso_min"] = 10
+            settings["default_aproximacao_max_min"] = 3
         cls._save_settings(settings)
 
     @classmethod

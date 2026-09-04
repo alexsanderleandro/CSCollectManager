@@ -25,9 +25,12 @@ class EmpresaInfo:
     nomeempresa: str
     local: str = ""
     cnpj: str = ""
-    # Gap ocioso (minutos) parametrizado por cliente — usado pelo CSCollect
-    # para separar sessões de contagem nas métricas de produtividade.
-    gap_ocioso_min: int = 10
+    # Teto de deslocamento (minutos) das métricas de produtividade: quanto do
+    # intervalo antes de uma contagem ainda conta como trabalho (ir até o
+    # produto, procurar) antes de virar ociosidade. Parametrizado por cliente
+    # porque varia com o estoque contado — bancada de loja e depósito com
+    # empilhadeira não têm o mesmo "andar até o produto".
+    aproximacao_max_min: int = 3
 
 
 @dataclass

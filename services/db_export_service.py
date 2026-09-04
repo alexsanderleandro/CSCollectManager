@@ -188,10 +188,12 @@ class DbExportService:
 
                 # --- empresa (registro E) ---
                 cur.execute(
-                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local, cnpj, gap_ocioso_min) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local, cnpj, aproximacao_max_min) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         "E", str(empresa.codempresa), empresa.nomeempresa, empresa.local,
-                        getattr(empresa, 'cnpj', '') or '', int(getattr(empresa, 'gap_ocioso_min', 10) or 10),
+                        getattr(empresa, 'cnpj', '') or '',
+                        int(getattr(empresa, 'aproximacao_max_min', 3) or 3),
                     ),
                 )
 
@@ -383,7 +385,10 @@ class DbExportService:
                 nomeempresa     TEXT    NOT NULL,
                 local           TEXT    NOT NULL,
                 cnpj            TEXT    NOT NULL DEFAULT '',
-                gap_ocioso_min  INTEGER NOT NULL DEFAULT 10
+                -- Substituiu `gap_ocioso_min`, que era um limiar de pausa puro.
+                -- Builds antigas do coletor não conhecem esta coluna e caem no
+                -- próprio padrão delas ao ler a carga — continuam funcionando.
+                aproximacao_max_min INTEGER NOT NULL DEFAULT 3
             );
 
             CREATE TABLE IF NOT EXISTS vendedor (

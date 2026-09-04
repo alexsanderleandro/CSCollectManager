@@ -790,6 +790,13 @@ class MainWindowERP(QMainWindow):
         fields_layout.addWidget(dir_group)
 
         # ===== GRUPO: MÉTRICAS DE PRODUTIVIDADE =====
+        # Este campo substituiu o antigo "gap ocioso". Lá o número dizia só
+        # quando cortar um bloco, e o tempo produtivo era o vão entre a primeira
+        # e a última contagem dele: um gap curto demais isolava cada contagem
+        # num bloco de duração zero e a jornada inteira aparecia como ociosa.
+        # Aqui cada contagem carrega o próprio tempo de deslocamento, então
+        # errar o valor apenas aperta ou afrouxa a fronteira entre trabalho e
+        # parada — nunca zera a medição.
         metrics_group = QGroupBox("📊 Métricas de produtividade")
         metrics_group.setStyleSheet(themed_qss("""
             QGroupBox {
@@ -809,24 +816,30 @@ class MainWindowERP(QMainWindow):
         metrics_layout = QHBoxLayout(metrics_group)
         metrics_layout.setSpacing(10)
 
-        gap_label = QLabel("Gap ocioso (minutos):")
-        gap_label.setStyleSheet(themed_qss("QLabel { color: {{FG_PRIMARY}}; font-weight: normal; }"))
-        metrics_layout.addWidget(gap_label)
+        aprox_label = QLabel("Deslocamento máximo entre contagens (minutos):")
+        aprox_label.setStyleSheet(themed_qss("QLabel { color: {{FG_PRIMARY}}; font-weight: normal; }"))
+        metrics_layout.addWidget(aprox_label)
 
-        self._spn_gap_ocioso = QSpinBox()
-        self._spn_gap_ocioso.setRange(1, 240)
+        self._spn_aproximacao_max = QSpinBox()
+        self._spn_aproximacao_max.setRange(1, 60)
         try:
             from utils.config import AppConfig
-            self._spn_gap_ocioso.setValue(AppConfig.get_default_gap_ocioso_min())
+            self._spn_aproximacao_max.setValue(AppConfig.get_default_aproximacao_max_min())
         except Exception:
-            self._spn_gap_ocioso.setValue(10)
-        self._spn_gap_ocioso.setMinimumHeight(36)
-        self._spn_gap_ocioso.setToolTip(
-            "Intervalo sem nenhuma contagem que o celular considera uma pausa "
-            "ao calcular sessões de trabalho nas métricas de produtividade do "
-            "conferente. Fica salvo como padrão para as próximas cargas."
+            self._spn_aproximacao_max.setValue(3)
+        self._spn_aproximacao_max.setMinimumHeight(36)
+        self._spn_aproximacao_max.setToolTip(
+            "Quanto tempo, antes de uma contagem, ainda conta como trabalho — "
+            "ir até o produto, procurar na prateleira, posicionar a câmera.\n\n"
+            "O que passar disso entra como tempo ocioso: com 3 minutos, uma "
+            "contagem feita 2 min depois da anterior é deslocamento normal e "
+            "conta inteira; feita 6 min depois, 3 min contam como trabalho e "
+            "3 min como parada.\n\n"
+            "Suba o valor para estoques onde se anda muito (depósito, "
+            "empilhadeira) e baixe para contagem de bancada.\n\n"
+            "Fica salvo como padrão para as próximas cargas."
         )
-        metrics_layout.addWidget(self._spn_gap_ocioso)
+        metrics_layout.addWidget(self._spn_aproximacao_max)
         metrics_layout.addStretch(1)
 
         fields_layout.addWidget(metrics_group)
@@ -2329,14 +2342,14 @@ class MainWindowERP(QMainWindow):
             except Exception:
                 empresa_cnpj = ""
 
-        gap_ocioso_min = 10
+        aproximacao_max_min = 3
         try:
-            gap_ocioso_min = int(self._spn_gap_ocioso.value())
+            aproximacao_max_min = int(self._spn_aproximacao_max.value())
         except Exception:
             pass
         try:
             from utils.config import AppConfig
-            AppConfig.set_default_gap_ocioso_min(gap_ocioso_min)
+            AppConfig.set_default_aproximacao_max_min(aproximacao_max_min)
         except Exception:
             pass
 
@@ -2349,7 +2362,7 @@ class MainWindowERP(QMainWindow):
                 else self._local_estoque  # valor ENDLOCALESTOQUE (modo "T")
             ),
             cnpj=empresa_cnpj,
-            gap_ocioso_min=gap_ocioso_min,
+            aproximacao_max_min=aproximacao_max_min,
         )
         # Busca nome do vendedor diretamente no banco para garantir consistência
         cod_vendedor = int(self._export_vendedor.get("codigo", 0) or 0)
@@ -3889,15 +3902,55 @@ class MainWindowERP(QMainWindow):
                 def _num_ou_traco(v):
                     return '—' if not v else v
 
-                gap_min = m.get('gap_ocioso_min', '—')
+                # Zips antigos traziam um limiar fixo, configurado na carga
+                # (`gap_ocioso_min`, em minutos). Os novos trazem o teto de
+                # aproximação usado no cálculo (`aproximacao_max_seg`), que é o
+                # mesmo valor que separa dois blocos.
+                tetos = sorted({s['aproximacao_max_seg'] for s in sessoes
+                                if s.get('aproximacao_max_seg') is not None})
+                if tetos:
+                    teto_txt = (_fmt_duracao(tetos[0]) if len(tetos) == 1 else
+                                f"{_fmt_duracao(tetos[0])} a {_fmt_duracao(tetos[-1])}")
+                    criterio = f"pausa acima de {teto_txt}"
+                    detalhe_ajuda = (
+                        f"<b>Bloco</b> = uma sequência de contagens sem pausa maior que "
+                        f"{teto_txt}. Uma pausa maior fecha o bloco atual; ao retomar, abre um "
+                        f"bloco novo."
+                        f"<br><br><b>A duração do bloco começa antes da primeira contagem.</b> "
+                        f"A leitura marca só o instante em que o produto foi confirmado, mas "
+                        f"contar consome o tempo de antes: andar até a prateleira, achar o item, "
+                        f"posicionar a câmera. Por isso cada contagem leva para o bloco o "
+                        f"intervalo que a antecede — até o limite de {teto_txt}."
+                        f"<br><br>Passando de {teto_txt}, o excedente vira <b>ocioso</b>: uma "
+                        f"contagem 2 min depois da anterior é deslocamento normal; 6 min depois "
+                        f"levanta a pergunta \"o que foi feito nesse tempo?\", e a contagem não "
+                        f"responde. Nesse caso {teto_txt} contam como trabalho e o resto como "
+                        f"parada."
+                        f"<br><br>O limite vem da carga (\"Deslocamento máximo entre contagens\", "
+                        f"na tela de exportação), porque o deslocamento normal muda conforme o "
+                        f"estoque contado: bancada de loja e depósito com empilhadeira não têm o "
+                        f"mesmo \"andar até o produto\".")
+                else:
+                    gap_min = m.get('gap_ocioso_min', '—')
+                    criterio = f"pausa que separa: {gap_min} min"
+                    detalhe_ajuda = (
+                        f"<b>Bloco</b> = uma sequência de contagens sem pausa maior que "
+                        f"{gap_min} min. Uma pausa maior fecha o bloco atual; ao retomar, abre um "
+                        f"bloco novo."
+                        f"<br><br>Nesta exportação a duração do bloco é o vão entre a primeira e "
+                        f"a última contagem dele — o trabalho feito ANTES da primeira (ir até o "
+                        f"produto, procurar) não entra, e um bloco de uma contagem só aparece "
+                        f"com duração zero. O limiar também vinha configurado na carga: curto "
+                        f"demais para a operação, cada contagem virava um bloco desses e a "
+                        f"jornada inteira aparecia como ociosa."
+                        f"<br><br>Exportações geradas por versões novas do coletor não têm mais "
+                        f"nenhum dos dois problemas.")
                 titulo_blocos = _QHBoxLayout()
-                lbl_blocos = _QLabel(f"<b>Blocos de trabalho</b> — pausa que separa: {gap_min} min")
+                lbl_blocos = _QLabel(f"<b>Blocos de trabalho</b> — {criterio}")
                 titulo_blocos.addWidget(lbl_blocos, 1)
                 titulo_blocos.addWidget(_botao_ajuda(
                     "Blocos de trabalho",
-                    f"<b>Bloco</b> = uma sequência de contagens sem pausa maior que "
-                    f"{gap_min} min. Uma pausa maior fecha o bloco atual; ao retomar, abre um "
-                    f"bloco novo."
+                    detalhe_ajuda +
                     "<br><br><b>Contagens</b> — total de produtos registrados no bloco: "
                     "câmera (bipado) + teclado (digitado) + voz (ditado)."
                     "<br><br><b>Não encontrados</b> — dentro desse total, quantos não bateram "
