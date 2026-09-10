@@ -3862,24 +3862,55 @@ class MainWindowERP(QMainWindow):
             meio.addWidget(_tabela(["Hora", "Contagens"],
                                    [[f"{h}h", q] for h, q in sorted(horas.items())], (1,)), 1)
         if origem_entrada:
-            rotulos = {'scan': 'Bipado', 'manual': 'Digitado', 'voz': 'Falado'}
-            # Ordem fixa dos três modos de leitura (leitor → teclado →
-            # microfone), e não alfabética: é a ordem em que se lê a tabela.
-            # Uma origem desconhecida (export de versão futura) vai para o fim
-            # em vez de sumir.
-            ordem = ['scan', 'manual', 'voz']
+            # 'foto' é a leitura de uma foto com vários produtos de uma vez —
+            # na tela isso é "Agrupado", que é o que a operação enxerga; "foto"
+            # é o nome do mecanismo, não do modo de contar.
+            rotulos = {'scan': 'Bipado', 'manual': 'Digitado', 'voz': 'Falado',
+                       'foto': 'Agrupado'}
+            # Ordem fixa dos modos de leitura (leitor → teclado → microfone →
+            # foto agrupada), e não alfabética: é a ordem em que se lê a
+            # tabela. Uma origem desconhecida (export de versão futura) vai
+            # para o fim em vez de sumir.
+            ordem = ['scan', 'manual', 'voz', 'foto']
             chaves = ordem + [k for k in sorted(origem_entrada) if k not in ordem]
+            linhas_origem = [[rotulos.get(k, k), origem_entrada.get(k, 0)]
+                             for k in chaves if k in origem_entrada]
+            # `origem_entrada` cobre só a rotina de contagem, onde existe um
+            # código para ler. Quem lança pela tela Consultar Produtos (produto
+            # sem GTIN, ou correção de quantidade) não lê código nenhum e ficava
+            # fora da tabela — que então somava menos que o card "Contagens",
+            # sem nada na tela explicando o buraco. Essas contagens entram aqui
+            # com linha própria, para a tabela fechar com o total.
+            # O corte aqui é lançamento novo × edição do que já estava lançado,
+            # e não ter ou não código de barras: corrigir a quantidade de um
+            # produto SEM GTIN entra em "Correção", não em "Sem GTIN".
+            rotulos_lancamento = {'sem_gtin': 'Sem GTIN (digitado)',
+                                  'lancamento': 'Lançado (com GTIN)',
+                                  'edicao': 'Correção de quantidade'}
+            for chave, rotulo in rotulos_lancamento.items():
+                # 'lancamento' só aparece se houver: é um caminho que a tela do
+                # coletor ainda não abre, e uma linha fixa em zero só ocuparia
+                # espaço. As outras duas saem sempre, inclusive zeradas —
+                # "nenhum lançamento manual" é informação.
+                if chave == 'lancamento' and not lancamentos.get(chave):
+                    continue
+                if chave in lancamentos:
+                    linhas_origem.append([rotulo, lancamentos.get(chave, 0)])
             meio.addWidget(_tabela(
-                ["Origem da entrada", "Contagens"],
-                [[rotulos.get(k, k), origem_entrada.get(k, 0)] for k in chaves
-                 if k in origem_entrada], (1,),
+                ["Origem da entrada", "Contagens"], linhas_origem, (1,),
                 dicas_coluna={
-                    0: "Como o código chegou ao coletor: <b>Bipado</b> pela câmera, "
-                       "<b>Digitado</b> no teclado ou <b>Falado</b> no microfone."
-                       "<br><br>Só leituras que bateram com produto já cadastrado — não inclui "
-                       "lançamentos \"sem GTIN\" nem correções de quantidade (esses vêm da tela "
-                       "Consultar Produtos, sem leitura de código, e estão no card \"Ajustes "
-                       "manuais\" e na coluna \"Lançados\" dos Blocos de trabalho).",
+                    0: "Como cada contagem foi feita. Soma igual ao card <b>Contagens</b>."
+                       "<br><br>Na rotina de contagem, pelo código do produto: "
+                       "<b>Bipado</b> pela câmera, <b>Digitado</b> no teclado, "
+                       "<b>Falado</b> no microfone ou <b>Agrupado</b> — uma foto de vários "
+                       "produtos, lidos de uma vez."
+                       "<br><br>Pela tela Consultar Produtos, sem ler código nenhum: "
+                       "<b>Sem GTIN (digitado)</b> — primeira quantidade de um produto sem "
+                       "código de barras, que a rotina de contagem não aceita — e "
+                       "<b>Correção de quantidade</b> — mudança de uma quantidade que já "
+                       "estava lançada, tenha o produto código de barras ou não."
+                       "<br><br>Esses também aparecem no card \"Ajustes manuais\" e na coluna "
+                       "\"Lançados\" dos Blocos de trabalho.",
                 }), 1)
         vr.addLayout(meio, 1)
 
