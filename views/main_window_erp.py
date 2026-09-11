@@ -685,7 +685,9 @@ class MainWindowERP(QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
 
-        from PySide6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QSpinBox
+        from PySide6.QtWidgets import (
+            QCheckBox, QLineEdit, QComboBox, QSpinBox, QRadioButton, QButtonGroup
+        )
 
         # Área rolável: em telas menores (notebook, sessão remota com
         # resolução reduzida) os grupos de campos podem não caber na altura
@@ -843,6 +845,48 @@ class MainWindowERP(QMainWindow):
         metrics_layout.addStretch(1)
 
         fields_layout.addWidget(metrics_group)
+
+        # ===== GRUPO: CÓDIGO EXIBIDO NO COLETOR =====
+        codigo_group = QGroupBox("Mostrar na consulta de produtos no LogScan")
+        codigo_group.setStyleSheet(themed_qss("""
+            QGroupBox {
+                color: {{FG_PRIMARY}};
+                font-weight: bold;
+                border: 2px solid {{ACCENT}};
+                border-radius: 8px;
+                margin-top: 16px;
+                padding: 20px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 16px;
+                padding: 0 8px;
+            }
+        """))
+        codigo_layout = QHBoxLayout(codigo_group)
+        codigo_layout.setSpacing(20)
+
+        self._rdo_codigo_reduzido = QRadioButton("Código reduzido")
+        self._rdo_codigo_original = QRadioButton("Código original")
+        for rdo in (self._rdo_codigo_reduzido, self._rdo_codigo_original):
+            rdo.setStyleSheet(themed_qss(
+                "QRadioButton { color: {{FG_PRIMARY}}; font-weight: normal; font-size: 11pt; }"))
+        self._grp_mostrar_codigo = QButtonGroup(self)
+        self._grp_mostrar_codigo.addButton(self._rdo_codigo_reduzido, 1)
+        self._grp_mostrar_codigo.addButton(self._rdo_codigo_original, 2)
+        try:
+            from utils.config import AppConfig
+            valor_salvo = AppConfig.get_default_mostrar_codigo()
+        except Exception:
+            valor_salvo = 1
+        (self._rdo_codigo_original if valor_salvo == 2
+         else self._rdo_codigo_reduzido).setChecked(True)
+
+        codigo_layout.addWidget(self._rdo_codigo_reduzido)
+        codigo_layout.addWidget(self._rdo_codigo_original)
+        codigo_layout.addStretch(1)
+
+        fields_layout.addWidget(codigo_group)
 
         # ===== GRUPO: VENDEDOR (obrigatório) =====
         vendedor_group = QGroupBox("👤 Conferente  (obrigatório)")
@@ -2353,6 +2397,15 @@ class MainWindowERP(QMainWindow):
         except Exception:
             pass
 
+        mostrarcodigo = self._grp_mostrar_codigo.checkedId()
+        if mostrarcodigo not in (1, 2):
+            mostrarcodigo = 1
+        try:
+            from utils.config import AppConfig
+            AppConfig.set_default_mostrar_codigo(mostrarcodigo)
+        except Exception:
+            pass
+
         empresa = EmpresaInfo(
             codempresa=int(self._empresa_info.get("codigo", 1) or 1),
             nomeempresa=self._empresa_info.get("nome", ""),
@@ -2363,6 +2416,7 @@ class MainWindowERP(QMainWindow):
             ),
             cnpj=empresa_cnpj,
             aproximacao_max_min=aproximacao_max_min,
+            mostrarcodigo=mostrarcodigo,
         )
         # Busca nome do vendedor diretamente no banco para garantir consistência
         cod_vendedor = int(self._export_vendedor.get("codigo", 0) or 0)

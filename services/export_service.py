@@ -31,6 +31,9 @@ class EmpresaInfo:
     # porque varia com o estoque contado — bancada de loja e depósito com
     # empilhadeira não têm o mesmo "andar até o produto".
     aproximacao_max_min: int = 3
+    # Qual código o coletor exibe na tela "Consultar Produtos": 1 = reduzido
+    # (interno do sistema), 2 = original (ProdutoExport.codoriginal).
+    mostrarcodigo: int = 1
 
 
 @dataclass
@@ -60,6 +63,10 @@ class ProdutoExport:
     localizacao: str
     cod_dun: str = ""
     vol_emb: Optional[int] = None
+    # Código original cadastrado no produto (ERP: p.CodOriginal). Em branco
+    # quando o produto não tiver — usado quando `EmpresaInfo.mostrarcodigo`
+    # está em "original".
+    codoriginal: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProdutoExport":
@@ -80,6 +87,7 @@ class ProdutoExport:
             localizacao=(data.get("localizacao") or data.get("nomeLocalEstoque") or "").strip(),
             cod_dun=str(data.get("cod_dun", data.get("coddun14", "")) or ""),
             vol_emb=int(vol_emb_raw) if vol_emb_raw not in (None, "") else None,
+            codoriginal=str(data.get("codoriginal", "") or ""),
         )
     
     @staticmethod

@@ -4,5 +4,6 @@
   "default_gap_ocioso_min": 1,
   "ultima_verificacao_licenca_online": "2026-09-10T13:25:36.413583",
   "last_pdf_dir": "C:/Users/alex/Documents/Python/VSCode/CSCollectManager/Contagens/PDF",
-  "default_aproximacao_max_min": 2
+  "default_aproximacao_max_min": 2,
+  "default_mostrar_codigo": 1
 }

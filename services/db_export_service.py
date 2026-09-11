@@ -188,12 +188,13 @@ class DbExportService:
 
                 # --- empresa (registro E) ---
                 cur.execute(
-                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local, cnpj, aproximacao_max_min) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO empresa (tipo, codempresa, nomeempresa, local, cnpj, "
+                    "aproximacao_max_min, mostrarcodigo) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         "E", str(empresa.codempresa), empresa.nomeempresa, empresa.local,
                         getattr(empresa, 'cnpj', '') or '',
                         int(getattr(empresa, 'aproximacao_max_min', 3) or 3),
+                        int(getattr(empresa, 'mostrarcodigo', 1) or 1),
                     ),
                 )
 
@@ -233,6 +234,7 @@ class DbExportService:
                         p.localizacao.strip(),
                         p.cod_dun,
                         p.vol_emb,
+                        p.codoriginal,
                     ))
 
                     if len(batch) >= BATCH_SIZE:
@@ -240,8 +242,9 @@ class DbExportService:
                             """INSERT INTO produtos
                                (tipo, codean, codproduto, descricaoproduto, unidade, casasdecimais,
                                 controlalote, numlote, datafab, dataval,
-                                codgrupo, nomegrupo, localizacao, coddun14, volumesporembalagem)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                codgrupo, nomegrupo, localizacao, coddun14, volumesporembalagem,
+                                codoriginal)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             batch,
                         )
                         conn.commit()
@@ -257,8 +260,9 @@ class DbExportService:
                         """INSERT INTO produtos
                            (tipo, codean, codproduto, descricaoproduto, unidade, casasdecimais,
                             controlalote, numlote, datafab, dataval,
-                            codgrupo, nomegrupo, localizacao, coddun14, volumesporembalagem)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            codgrupo, nomegrupo, localizacao, coddun14, volumesporembalagem,
+                            codoriginal)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         batch,
                     )
                     conn.commit()
@@ -388,7 +392,11 @@ class DbExportService:
                 -- Substituiu `gap_ocioso_min`, que era um limiar de pausa puro.
                 -- Builds antigas do coletor não conhecem esta coluna e caem no
                 -- próprio padrão delas ao ler a carga — continuam funcionando.
-                aproximacao_max_min INTEGER NOT NULL DEFAULT 3
+                aproximacao_max_min INTEGER NOT NULL DEFAULT 3,
+                -- Qual código a tela "Consultar Produtos" do coletor exibe:
+                -- 1 = reduzido (interno do sistema), 2 = original
+                -- (produtos.codoriginal).
+                mostrarcodigo INTEGER NOT NULL DEFAULT 1
             );
 
             CREATE TABLE IF NOT EXISTS vendedor (
@@ -416,7 +424,10 @@ class DbExportService:
                 nomegrupo        TEXT    NOT NULL DEFAULT '',
                 localizacao      TEXT    NOT NULL DEFAULT '',
                 coddun14            TEXT    NOT NULL DEFAULT '',
-                volumesporembalagem INTEGER
+                volumesporembalagem INTEGER,
+                -- Código original cadastrado no produto (ERP: CodOriginal).
+                -- Em branco quando o produto não tiver.
+                codoriginal         TEXT    NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_produtos_codean

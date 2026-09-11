@@ -26,6 +26,7 @@ class ProductData:
     """Estrutura de dados para produto (otimizada)."""
     codproduto: int
     descricaoproduto: str
+    codoriginal: str
     codeanunidade: str
     codgrupo: int
     nomegrupo: str
@@ -46,6 +47,7 @@ class ProductData:
         return cls(
             codproduto=data.get("codproduto", 0),
             descricaoproduto=data.get("descricaoproduto", ""),
+            codoriginal=data.get("codoriginal", "") or "",
             codeanunidade=data.get("codeanunidade", ""),
             codgrupo=data.get("codgrupo", 0),
             nomegrupo=data.get("nomegrupo", ""),
@@ -108,6 +110,7 @@ class LazyTableModel(QAbstractTableModel):
     COLUMNS = [
         ("codproduto",        "Código",           80),
         ("descricaoproduto",  "Descrição",        300),
+        ("codoriginal",       "Cód. original",    110),
         ("codeanunidade",     "Cód. EAN", 130),
         ("cod_dun",           "Cód. DUN",          130),
         ("vol_emb",           "Vol. embalagem",    110),
@@ -227,8 +230,8 @@ class LazyTableModel(QAbstractTableModel):
             if column_key == "codproduto":
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             elif column_key in (
-                "codeanunidade", "cod_dun", "vol_emb", "codgrupo", "nomegrupo",
-                "nomeLocalEstoque", "numlote",
+                "codoriginal", "codeanunidade", "cod_dun", "vol_emb", "codgrupo",
+                "nomegrupo", "nomeLocalEstoque", "numlote",
                 "datafabricacao", "datavalidade",
             ):
                 return Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
@@ -293,8 +296,8 @@ class LazyTableModel(QAbstractTableModel):
                 if key == "codproduto":
                     return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 elif key in (
-                    "codeanunidade", "cod_dun", "vol_emb", "codgrupo", "nomegrupo",
-                    "nomeLocalEstoque", "numlote",
+                    "codoriginal", "codeanunidade", "cod_dun", "vol_emb", "codgrupo",
+                    "nomegrupo", "nomeLocalEstoque", "numlote",
                     "datafabricacao", "datavalidade",
                 ):
                     return Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter

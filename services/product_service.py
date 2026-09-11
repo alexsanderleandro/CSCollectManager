@@ -78,9 +78,10 @@ class ProductService:
     
     # Query base com regras fixas
     _BASE_QUERY = """
-        SELECT 
+        SELECT
             p.codproduto,
             p.descricaoproduto,
+            COALESCE(p.CodOriginal, '') AS codoriginal,
             COALESCE(p.codeanunidade, '') AS codeanunidade,
             p.unidade,
             p.codgrupo,
@@ -452,6 +453,7 @@ class ProductService:
         return {
             "codproduto": row.codproduto,
             "descricaoproduto": row.descricaoproduto or "",
+            "codoriginal": row.codoriginal or "",
             "codeanunidade": row.codeanunidade or "",
             "unidade": row.unidade or "",
             "codgrupo": row.codgrupo,

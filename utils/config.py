@@ -240,6 +240,29 @@ class AppConfig:
         cls._save_settings(settings)
 
     @classmethod
+    def get_default_mostrar_codigo(cls) -> int:
+        """Retorna qual código o coletor deve exibir na consulta de produtos:
+        1 = reduzido (interno do sistema), 2 = original. 1 é o padrão."""
+        settings = cls._load_settings()
+        try:
+            valor = int(settings.get("default_mostrar_codigo", 1))
+            return valor if valor in (1, 2) else 1
+        except Exception:
+            return 1
+
+    @classmethod
+    def set_default_mostrar_codigo(cls, valor: int) -> None:
+        """Salva a escolha de código exibido — chamado a cada exportação de
+        carga com o valor efetivamente usado, para que a próxima já venha
+        com ele."""
+        settings = cls._load_settings()
+        try:
+            settings["default_mostrar_codigo"] = valor if int(valor) in (1, 2) else 1
+        except Exception:
+            settings["default_mostrar_codigo"] = 1
+        cls._save_settings(settings)
+
+    @classmethod
     def get_ultima_verificacao_licenca_online(cls) -> str:
         """Retorna o timestamp ISO da última verificação de licença online
         bem-sucedida (usado para a tolerância offline), ou string vazia se
