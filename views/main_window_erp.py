@@ -1615,8 +1615,13 @@ class MainWindowERP(QMainWindow):
 
     def _on_licenca_revalidada(self, payload):
         """Aplica na sessão o resultado da revalidação manual da licença."""
-        if not payload:
-            # Restaura o rótulo com o que já se sabia da licença.
+        from services.licenca_online import _licenca_bloqueada, verificacao_online_falhou, cancelar_carencia_offline
+
+        if not payload or verificacao_online_falhou(payload):
+            # Restaura o rótulo com o que já se sabia da licença. Uma
+            # carência já em andamento (iniciada por uma falha anterior no
+            # gate de login) continua correndo — este clique só não conseguiu
+            # renová-la.
             self._status_bar.set_license_validity(
                 self._licenca_payload.get("validade", ""),
                 self._licenca_payload.get("tipo_licenca", ""),
@@ -1638,7 +1643,6 @@ class MainWindowERP(QMainWindow):
         self._status_bar.set_license_validity(validade, tipo_licenca)
         self._atualizar_bloqueio_licenca()
 
-        from services.licenca_online import _licenca_bloqueada
         if _licenca_bloqueada(payload):
             self._bloquear_sessao_por_licenca(
                 "Sua licença foi bloqueada ou expirou.\n\n"
@@ -1646,6 +1650,7 @@ class MainWindowERP(QMainWindow):
             )
             return
 
+        cancelar_carencia_offline()
         self._status_bar.show_message("Licença verificada e atualizada.", 5000)
 
     def _get_licensed_ids(self) -> set:

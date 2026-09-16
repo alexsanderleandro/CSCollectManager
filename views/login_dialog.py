@@ -458,6 +458,11 @@ class LoginDialog(QDialog):
         self._license_on_success = None  # Callback chamado quando a licença é validada com sucesso
         self._license_elapsed_timer: Optional[QTimer] = None  # Contador de segundos exibido durante a verificação
         self._license_elapsed_seconds: int = 0
+        # Evita repetir o diálogo de carência a cada nova tentativa que falhe
+        # dentro da mesma sessão de login — o cronômetro em si é reiniciado
+        # a cada falha (ver `licenca_online.iniciar_carencia_offline`), só o
+        # aviso em pop-up não se repete.
+        self._carencia_offline_avisada: bool = False
         
         self._setup_ui()
         self._connect_signals()
@@ -1230,6 +1235,37 @@ class LoginDialog(QDialog):
         if self._license_elapsed_timer is not None:
             self._license_elapsed_timer.stop()
 
+    def _tratar_verificacao_online(self, payload_dict) -> None:
+        """Reage ao resultado de uma tentativa de validação online da licença
+        vinda do gate de login (`_on_startup_license_finished` ou
+        `_on_connection_license_finished`): mostra o aviso de carência (uma
+        vez por sessão de login) e arma o cronômetro de 10 minutos quando a
+        rede falhou, ou desarma um cronômetro em andamento quando a
+        verificação teve sucesso. Mesma regra do app coletor CSCollect
+        (`screens/login_screen.py::_OFFLINE_LIMIT`).
+        """
+        from services import licenca_online
+
+        if not licenca_online.verificacao_online_falhou(payload_dict):
+            licenca_online.cancelar_carencia_offline()
+            return
+
+        licenca_online.iniciar_carencia_offline()
+        if self._carencia_offline_avisada:
+            return
+        self._carencia_offline_avisada = True
+        QMessageBox.warning(
+            self,
+            "Licença não verificada",
+            "Não foi possível verificar a licença online. Verifique a "
+            "conexão com a internet.\n\n"
+            "O aplicativo funcionará por 10 minutos sem essa verificação. "
+            "Depois desse prazo, ele será encerrado automaticamente.\n\n"
+            "Para continuar usando, restabeleça a conexão e clique em "
+            "\"Verificar licença agora\" ou no indicador de licença no "
+            "rodapé do aplicativo.",
+        )
+
     def _on_connection_license_finished(self, cand_path: str, payload_dict, erro):
         """Callback do `LicencaOnlineWorker` disparado por `_validate_license_for_connection`."""
         self._parar_contador_verificacao_licenca()
@@ -1246,6 +1282,7 @@ class LoginDialog(QDialog):
             QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar nenhum arquivo de licença.\n{erro or ''}")
             return
 
+        self._tratar_verificacao_online(payload_dict)
         self._render_licenca_labels(cand_path, payload_dict)
 
         if self._licenca_expirada_bloqueia(payload_dict):
@@ -1278,8 +1315,15 @@ class LoginDialog(QDialog):
 
         # Licença válida: só agora o botão "Conectar" é liberado de novo.
         self._btn_connect.setEnabled(True)
-        self._lbl_connection_status.setText("✅ Licença válida.")
-        self._lbl_connection_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")
+        from services import licenca_online as _lic_online
+        if _lic_online.carencia_offline_ativa():
+            # Local válida, mas ainda não confirmada online — o aviso de
+            # carência já foi mostrado em `_tratar_verificacao_online`.
+            self._lbl_connection_status.setText("⚠️ Licença válida (não verificada online).")
+            self._lbl_connection_status.setStyleSheet(f"color: {_C.WARNING}; font-size: 9pt;")
+        else:
+            self._lbl_connection_status.setText("✅ Licença válida.")
+            self._lbl_connection_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")
 
         on_success = self._license_on_success
         self._license_on_success = None
@@ -1308,6 +1352,8 @@ class LoginDialog(QDialog):
         if payload_dict is None:
             QMessageBox.critical(self, "Erro de licença", f"Não foi possível validar o arquivo de licença.\n{erro or ''}")
             return
+
+        self._tratar_verificacao_online(payload_dict)
 
         self._render_licenca_labels(cand_path, payload_dict)
 
@@ -1347,7 +1393,9 @@ class LoginDialog(QDialog):
         # valida contra a conexão, então não libera "Conectar" diretamente.
         self._btn_connect.setEnabled(self._cmb_connection.currentIndex() > 0)
 
-        if payload_dict is None:
+        from services import licenca_online
+
+        if payload_dict is None or licenca_online.verificacao_online_falhou(payload_dict):
             self._lbl_connection_status.setText("❌ Falha ao verificar licença online.")
             self._lbl_connection_status.setStyleSheet(f"color: {_C.ERROR}; font-size: 9pt;")
             QMessageBox.critical(self, "Erro de licença", f"Não foi possível verificar a licença online.\n{erro or ''}")
@@ -1358,6 +1406,7 @@ class LoginDialog(QDialog):
         if self._licenca_expirada_bloqueia(payload_dict):
             return
 
+        licenca_online.cancelar_carencia_offline()
         self._armazenar_licenca_payload(cand_path, payload_dict)
         self._lbl_connection_status.setText("✅ Licença atualizada com sucesso.")
         self._lbl_connection_status.setStyleSheet(f"color: {_C.SUCCESS}; font-size: 9pt;")

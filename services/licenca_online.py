@@ -6,13 +6,18 @@ substituindo a verificação HMAC local que existia em `cscollectmanager_verify.
 
 Fluxo:
 - `sincronizar_licenca()`: no máximo uma vez por dia (mesma regra do app
-  mobile, para manter consistência), consulta `GET /licenca/{cnpj}` no
-  CSCollectAPI. Se responder, atualiza `validade`/`tipo_licenca` no `.key`
+  coletor CSCollect, para manter consistência), consulta `GET /licenca/{cnpj}`
+  no CSCollectAPI. Se responder, atualiza `validade`/`tipo_licenca` no `.key`
   local (únicos campos regravados — o restante do arquivo, incluindo dados
-  de conexão com o ERP, não é tocado). Se já verificou hoje, ou se a rede
-  falhar, usa o `.key` local como fallback — nesse segundo caso, só dentro
-  de uma janela de tolerância offline (`OFFLINE_TOLERANCIA_DIAS`), rastreada
-  via `AppConfig.get/set_ultima_verificacao_licenca_online`.
+  de conexão com o ERP, não é tocado), e grava a liberação do dia via
+  `AppConfig.set_ultima_verificacao_licenca_online`. Se já verificou hoje,
+  usa o `.key` local direto, sem tocar a rede.
+- Se a rede falhar (e ainda não houve liberação hoje), o `.key` local NÃO é
+  alterado — a licença continua com a validade que já tinha — mas o payload
+  volta marcado (`verificacao_online_falhou`) para o chamador acionar a
+  carência de 10 minutos (`iniciar_carencia_offline`): mesma regra do
+  CSCollect (`screens/login_screen.py::_OFFLINE_LIMIT`), que substituiu a
+  antiga tolerância de dias por um prazo curto com encerramento automático.
 - `iniciar_verificacao_background()`: repete a checagem periodicamente com o
   app aberto (na prática, por causa do limite de uma vez por dia, só bate
   rede de fato na primeira chamada do dia — as demais são leitura local
@@ -38,9 +43,23 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-OFFLINE_TOLERANCIA_DIAS = 4
 TIMEOUT_SEGUNDOS = 60
 INTERVALO_BACKGROUND_MIN = 30
+
+# Carência sem verificação online, antes do aplicativo se encerrar sozinho —
+# mesmo prazo e mesmo aviso a 2 min do fim do app coletor CSCollect
+# (screens/login_screen.py: `_OFFLINE_LIMIT` / `_warn`). Não é persistida em
+# disco: assim como no coletor, fechar e reabrir o aplicativo começa uma
+# carência nova, contada a partir da próxima tentativa que falhar.
+OFFLINE_LIMIT_SEGUNDOS = 10 * 60
+_AVISO_ANTES_SEGUNDOS = 2 * 60
+
+# Timers da carência offline — vivem no processo (QTimer sem parent Qt
+# específico), por isso module-level: a carência começa no gate de login e
+# precisa sobreviver à troca para a janela principal, sem exigir que quem
+# arma o timer conheça a janela que estará ativa quando ele disparar.
+_offline_timer = None
+_aviso_timer = None
 
 
 def _ler_key_local(caminho_key: str) -> Dict[str, Any]:
@@ -252,20 +271,94 @@ def sincronizar_licenca(caminho_key: Optional[str] = None, forcar: bool = False)
         AppConfig.set_ultima_verificacao_licenca_online(datetime.now().isoformat())
         return payload
 
-    # Sem resposta online — aplica a tolerância offline.
-    ultima = AppConfig.get_ultima_verificacao_licenca_online()
-    dentro_da_tolerancia = False
-    if ultima:
-        try:
-            dentro_da_tolerancia = (datetime.now() - datetime.fromisoformat(ultima)) <= timedelta(days=OFFLINE_TOLERANCIA_DIAS)
-        except Exception:
-            dentro_da_tolerancia = False
-
-    if not dentro_da_tolerancia:
-        logger.warning("[licenca_online] Sem verificação online dentro da tolerância — bloqueando por segurança.")
-        payload['validade'] = _data_vencida_ontem()
-
+    # Sem resposta online — o `.key` local não é tocado (continua com a
+    # validade que já tinha: uma licença genuinamente expirada segue
+    # bloqueando normalmente via `_licenca_bloqueada`, sem depender de rede
+    # para saber disso). O payload volta marcado para o chamador acionar a
+    # carência de 10 minutos — ver `verificacao_online_falhou` e
+    # `iniciar_carencia_offline`.
+    logger.warning("[licenca_online] Sem resposta online — carência de "
+                   f"{OFFLINE_LIMIT_SEGUNDOS // 60} min antes do encerramento automático.")
+    payload['_offline_sem_verificacao'] = True
     return payload
+
+
+def verificacao_online_falhou(payload: Optional[Dict[str, Any]]) -> bool:
+    """True quando `payload` veio de uma tentativa de validação online que
+    não conseguiu falar com o servidor — o chamador deve avisar o usuário e
+    armar a carência via `iniciar_carencia_offline()`.
+
+    Distinto de `_licenca_bloqueada`: aqui a licença pode estar perfeitamente
+    válida, só não foi possível confirmar isso agora.
+    """
+    return bool(payload) and bool(payload.get('_offline_sem_verificacao'))
+
+
+def carencia_offline_ativa() -> bool:
+    """True enquanto o cronômetro de encerramento automático está armado."""
+    return _offline_timer is not None and _offline_timer.isActive()
+
+
+def cancelar_carencia_offline() -> None:
+    """Desarma a carência — chamado sempre que uma verificação online termina
+    com sucesso (gate de login, botão "Verificar licença agora" ou clique no
+    indicador do rodapé)."""
+    global _offline_timer, _aviso_timer
+    if _offline_timer is not None:
+        _offline_timer.stop()
+        _offline_timer = None
+    if _aviso_timer is not None:
+        _aviso_timer.stop()
+        _aviso_timer = None
+
+
+def iniciar_carencia_offline() -> None:
+    """Arma o cronômetro que encerra o aplicativo em `OFFLINE_LIMIT_SEGUNDOS`
+    se a licença não for validada online antes disso — mesma regra do app
+    coletor CSCollect (`screens/login_screen.py::_start_offline_timer`).
+
+    Reinicia do zero a cada chamada, igual ao coletor: não há prazo
+    persistido em disco, então uma nova tentativa que falhe recomeça a
+    contagem, e fechar/reabrir o aplicativo também começa uma carência nova.
+    """
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    cancelar_carencia_offline()
+
+    global _offline_timer, _aviso_timer
+    app = QApplication.instance()
+
+    def _avisar():
+        texto = ("⚠️ Licença não verificada — o aplicativo será encerrado "
+                 f"em {_AVISO_ANTES_SEGUNDOS // 60} minutos.")
+        janela = app.activeWindow() if app is not None else None
+        if janela is not None and hasattr(janela, '_status_bar'):
+            janela._status_bar.show_message(texto, 15000)
+        else:
+            logger.warning(f"[licenca_online] {texto}")
+
+    def _encerrar():
+        janela = app.activeWindow() if app is not None else None
+        QMessageBox.critical(
+            janela,
+            "Licença não verificada",
+            "A licença não foi validada online dentro do prazo de carência.\n\n"
+            "O aplicativo será encerrado. Restabeleça a conexão com a "
+            "internet e abra o aplicativo novamente.",
+        )
+        if app is not None:
+            app.quit()
+
+    _aviso_timer = QTimer()
+    _aviso_timer.setSingleShot(True)
+    _aviso_timer.timeout.connect(_avisar)
+    _aviso_timer.start((OFFLINE_LIMIT_SEGUNDOS - _AVISO_ANTES_SEGUNDOS) * 1000)
+
+    _offline_timer = QTimer()
+    _offline_timer.setSingleShot(True)
+    _offline_timer.timeout.connect(_encerrar)
+    _offline_timer.start(OFFLINE_LIMIT_SEGUNDOS * 1000)
 
 
 def _licenca_bloqueada(payload: Dict[str, Any]) -> bool:
