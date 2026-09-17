@@ -3603,7 +3603,8 @@ class MainWindowERP(QMainWindow):
         layout = _QVBoxLayout(dlg)
 
         # ---------------------------------------------------------------- helpers
-        def _tabela(colunas, linhas, alinhar_direita=(), dicas_coluna=None):
+        def _tabela(colunas, linhas, alinhar_direita=(), dicas_coluna=None, alinhar_centro=(),
+                    alinhar_esquerda_cabecalho=()):
             t = QTableWidget()
             t.setColumnCount(len(colunas))
             t.setHorizontalHeaderLabels(colunas)
@@ -3612,6 +3613,11 @@ class MainWindowERP(QMainWindow):
                     item_cab = t.horizontalHeaderItem(c)
                     if item_cab:
                         item_cab.setToolTip(dica)
+            for c in alinhar_esquerda_cabecalho:
+                item_cab = t.horizontalHeaderItem(c)
+                if item_cab:
+                    item_cab.setTextAlignment(_Qt.AlignmentFlag.AlignLeft
+                                              | _Qt.AlignmentFlag.AlignVCenter)
             t.setRowCount(len(linhas))
             header = t.horizontalHeader()
             header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -3624,6 +3630,9 @@ class MainWindowERP(QMainWindow):
                     cel = QTableWidgetItem('' if valor is None else str(valor))
                     if c in alinhar_direita:
                         cel.setTextAlignment(_Qt.AlignmentFlag.AlignRight
+                                             | _Qt.AlignmentFlag.AlignVCenter)
+                    elif c in alinhar_centro:
+                        cel.setTextAlignment(_Qt.AlignmentFlag.AlignHCenter
                                              | _Qt.AlignmentFlag.AlignVCenter)
                     t.setItem(r, c, cel)
             return t
@@ -3695,6 +3704,68 @@ class MainWindowERP(QMainWindow):
                 " QPushButton:hover { background-color: {{ACCENT}}; color: white; }"))
             btn.clicked.connect(lambda: QMessageBox.information(dlg, titulo_popup, texto_html))
             return btn
+
+        def _abrir_tabela_expandida(titulo, colunas, linhas, alinhar_direita, alinhar_centro, dicas_coluna,
+                                    alinhar_esquerda_cabecalho=()):
+            """Reabre os mesmos dados de um card da aba Resumo num modal em
+            tela cheia — os cards ficam lado a lado ou espremidos entre
+            outros elementos, e listas mais longas (Blocos de trabalho,
+            Sessões) pedem mais espaço vertical do que o card cede."""
+            sub = QDialog(dlg)
+            sub.setWindowTitle(titulo)
+            sub.setWindowState(_Qt.WindowState.WindowMaximized)
+            lay = _QVBoxLayout(sub)
+            lay.addWidget(_QLabel(f"<b>{titulo}</b>"))
+            lay.addWidget(_tabela(colunas, linhas, alinhar_direita, dicas_coluna, alinhar_centro,
+                                  alinhar_esquerda_cabecalho), 1)
+            botoes_sub = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            botoes_sub.rejected.connect(sub.reject)
+            botoes_sub.accepted.connect(sub.accept)
+            lay.addWidget(botoes_sub)
+            sub.exec()
+
+        def _botao_expandir(titulo, colunas, linhas, alinhar_direita=(), alinhar_centro=(), dicas_coluna=None,
+                            alinhar_esquerda_cabecalho=()):
+            """Botão "⛶" que reabre o card num modal maior — mesmo padrão
+            visual do botão de ajuda (❓), ao lado dele quando os dois
+            existem na mesma linha de título."""
+            btn = QPushButton("⛶")
+            btn.setFixedSize(22, 22)
+            btn.setCursor(QCursor(_Qt.CursorShape.PointingHandCursor))
+            btn.setToolTip("Expandir em tela cheia")
+            btn.setStyleSheet(themed_qss(
+                "QPushButton { background-color: {{BG_TERTIARY}}; color: {{FG_SECONDARY}};"
+                " border: 1px solid {{BORDER}}; border-radius: 11px; font-size: 9pt; }"
+                " QPushButton:hover { background-color: {{ACCENT}}; color: white; }"))
+            btn.clicked.connect(lambda: _abrir_tabela_expandida(
+                titulo, colunas, linhas, alinhar_direita, alinhar_centro, dicas_coluna,
+                alinhar_esquerda_cabecalho))
+            return btn
+
+        def _secao_tabela(titulo, colunas, linhas, alinhar_direita=(), alinhar_centro=(),
+                          dicas_coluna=None, botao_extra=None, subtitulo='', alinhar_esquerda_cabecalho=()):
+            """Monta um card padrão da aba Resumo: título em negrito (mais o
+            subtítulo normal, quando houver) com o botão de expandir (e o de
+            ajuda, quando houver) alinhados à direita, e a tabela logo
+            abaixo. `titulo` fica só com o texto simples — é reaproveitado
+            como título da janela do modal expandido, que não renderiza
+            HTML. Devolve o container pronto para `addWidget`."""
+            container = _QWidget()
+            v = _QVBoxLayout(container)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(4)
+            texto_titulo = f"<b>{titulo}</b>" + (f" — {subtitulo}" if subtitulo else "")
+            linha_titulo = _QHBoxLayout()
+            linha_titulo.addWidget(_QLabel(texto_titulo), 1)
+            if botao_extra is not None:
+                linha_titulo.addWidget(botao_extra, 0)
+            linha_titulo.addWidget(
+                _botao_expandir(titulo, colunas, linhas, alinhar_direita, alinhar_centro, dicas_coluna,
+                                alinhar_esquerda_cabecalho), 0)
+            v.addLayout(linha_titulo)
+            v.addWidget(_tabela(colunas, linhas, alinhar_direita, dicas_coluna, alinhar_centro,
+                                alinhar_esquerda_cabecalho), 1)
+            return container
 
         # ------------------------------------------------------- faixa de KPIs
         cabecalho = _QLabel(
@@ -3915,11 +3986,13 @@ class MainWindowERP(QMainWindow):
                 horas_agrupadas[chave] = horas_agrupadas.get(chave, 0) + _contagens_de(b)
             linhas_hora = [[data.strftime('%d/%m/%Y'), f"{hora:02d}h", qtd]
                            for (data, hora), qtd in sorted(horas_agrupadas.items())]
-            meio.addWidget(_tabela(["Data", "Hora", "Contagens"], linhas_hora, (2,)), 1)
+            meio.addWidget(_secao_tabela("Contagens por hora", ["Data", "Hora", "Contagens"],
+                                        linhas_hora, alinhar_centro=(1, 2)), 1)
         else:
             horas = ritmo.get('contagens_por_hora') or ritmo.get('leituras_por_hora') or {}
-            meio.addWidget(_tabela(["Hora", "Contagens"],
-                                   [[f"{h}h", q] for h, q in sorted(horas.items())], (1,)), 1)
+            meio.addWidget(_secao_tabela("Contagens por hora", ["Hora", "Contagens"],
+                                        [[f"{h}h", q] for h, q in sorted(horas.items())],
+                                        alinhar_centro=(0, 1)), 1)
         if origem_entrada:
             # 'foto' é a leitura de uma foto com vários produtos de uma vez —
             # na tela isso é "Agrupado", que é o que a operação enxerga; "foto"
@@ -3955,8 +4028,9 @@ class MainWindowERP(QMainWindow):
                     continue
                 if chave in lancamentos:
                     linhas_origem.append([rotulo, lancamentos.get(chave, 0)])
-            meio.addWidget(_tabela(
-                ["Origem da entrada", "Contagens"], linhas_origem, (1,),
+            meio.addWidget(_secao_tabela(
+                "Origem da entrada", ["Origem da entrada", "Contagens"], linhas_origem,
+                alinhar_centro=(1,), alinhar_esquerda_cabecalho=(0,),
                 dicas_coluna={
                     0: "Como cada contagem foi feita. Soma igual ao card <b>Contagens</b>."
                        "<br><br>Na rotina de contagem, pelo código do produto: "
@@ -3977,15 +4051,16 @@ class MainWindowERP(QMainWindow):
         # logo abaixo, que são as corridas de atividade DENTRO de uma sessão.
         if formato_novo and sessoes:
             motivos = {'exportacao': 'exportação', 'nova_sessao': 'saiu do app'}
-            vr.addWidget(_QLabel("<b>Sessões</b> — cada entrada e saída do app"))
-            vr.addWidget(_tabela(
+            vr.addWidget(_secao_tabela(
+                "Sessões",
                 ["Entrada", "Saída", "Duração", "Contagens", "Ocioso", "Encerrada por"],
                 [[_fmt_data_hora_br(s.get('inicio')), _fmt_data_hora_br(s.get('fim')),
                   _fmt_duracao(s.get('duracao_seg')), _contagens_de(s),
                   _fmt_duracao(s.get('tempo_ocioso_seg')),
                   motivos.get(s.get('motivo_fechamento'), s.get('motivo_fechamento') or '—')
                   + (' · sintética' if s.get('sintetica') else '')]
-                 for s in sessoes], (2, 3, 4)), 1)
+                 for s in sessoes], alinhar_centro=(2, 3, 4, 5),
+                subtitulo="cada entrada e saída do app"), 1)
 
         if formato_novo:
             if blocos:
@@ -4035,44 +4110,43 @@ class MainWindowERP(QMainWindow):
                         f"jornada inteira aparecia como ociosa."
                         f"<br><br>Exportações geradas por versões novas do coletor não têm mais "
                         f"nenhum dos dois problemas.")
-                titulo_blocos = _QHBoxLayout()
-                lbl_blocos = _QLabel(f"<b>Blocos de trabalho</b> — {criterio}")
-                titulo_blocos.addWidget(lbl_blocos, 1)
-                titulo_blocos.addWidget(_botao_ajuda(
+                vr.addWidget(_secao_tabela(
                     "Blocos de trabalho",
-                    detalhe_ajuda +
-                    "<br><br><b>Contagens</b> — total de produtos registrados no bloco: "
-                    "câmera (bipado) + teclado (digitado) + voz (ditado)."
-                    "<br><br><b>Não encontrados</b> — dentro desse total, quantos não bateram "
-                    "com nenhum produto cadastrado."
-                    "<br><br><b>Lançados</b> — dentro desse total, quantos vieram da tela "
-                    "Consultar Produtos (produto sem GTIN ou correção de quantidade), onde não "
-                    "há leitura de código nenhuma. Não confundir com \"digitado\": a quebra "
-                    "dos três modos de leitura (bipado, digitado, falado) está na tabela "
-                    "\"Origem da entrada\", ao lado."
-                    "<br><br>Uma linha com 1 contagem, 0 lançadas e 0 não encontrados é o caso "
-                    "mais comum: uma leitura normal pela câmera, que encontrou o produto — não "
-                    "é uma linha vazia."))
-                vr.addLayout(titulo_blocos)
-                vr.addWidget(_tabela(
                     ["Início", "Fim", "Duração", "Contagens", "Não encontrados", "Lançados"],
                     [[_fmt_data_hora_br(b.get('inicio')), _fmt_data_hora_br(b.get('fim')),
                       _fmt_duracao(b.get('duracao_seg')), _contagens_de(b),
                       _num_ou_traco(b.get('nao_encontrado')),
                       _num_ou_traco(b.get('lancamentos_manuais'))]
-                     for b, _s in blocos], (2, 3, 4, 5),
+                     for b, _s in blocos], alinhar_centro=(2, 3, 4, 5),
                     dicas_coluna={
                         3: "Total de produtos registrados no bloco: câmera + teclado + voz",
                         4: "Quantas dessas contagens não bateram com nenhum produto cadastrado",
                         5: "Quantas dessas contagens vieram da tela Consultar Produtos (sem "
                            "GTIN ou correção), sem leitura de código",
-                    }), 1)
+                    },
+                    botao_extra=_botao_ajuda(
+                        "Blocos de trabalho",
+                        detalhe_ajuda +
+                        "<br><br><b>Contagens</b> — total de produtos registrados no bloco: "
+                        "câmera (bipado) + teclado (digitado) + voz (ditado)."
+                        "<br><br><b>Não encontrados</b> — dentro desse total, quantos não bateram "
+                        "com nenhum produto cadastrado."
+                        "<br><br><b>Lançados</b> — dentro desse total, quantos vieram da tela "
+                        "Consultar Produtos (produto sem GTIN ou correção de quantidade), onde não "
+                        "há leitura de código nenhuma. Não confundir com \"digitado\": a quebra "
+                        "dos três modos de leitura (bipado, digitado, falado) está na tabela "
+                        "\"Origem da entrada\", ao lado."
+                        "<br><br>Uma linha com 1 contagem, 0 lançadas e 0 não encontrados é o caso "
+                        "mais comum: uma leitura normal pela câmera, que encontrou o produto — não "
+                        "é uma linha vazia."),
+                    subtitulo=criterio), 1)
         else:
             vr.addWidget(_tabela(
                 ["Início", "Fim", "Duração", "Contagens", "Ociosidade"],
                 [[_fmt_data_hora_br(s.get('inicio')), _fmt_data_hora_br(s.get('fim')),
                   _fmt_duracao_min(s.get('duracao_min')), _contagens_de(s),
-                  _fmt_duracao_min(s.get('tempo_ocioso_min'))] for s in sessoes], (2, 3, 4)), 1)
+                  _fmt_duracao_min(s.get('tempo_ocioso_min'))] for s in sessoes],
+                (2, 4), alinhar_centro=(3,)), 1)
         abas.addTab(aba_resumo, "Resumo")
 
         # --------------------------------------------------- AJUSTES MANUAIS
@@ -4081,7 +4155,8 @@ class MainWindowERP(QMainWindow):
                 ["Código", "Produto", "Descrição", "Vezes", "Primeiro ajuste", "Último ajuste"],
                 [[a.get('codean'), a.get('codproduto') or '', a.get('descricao') or '',
                   a.get('total_ajustes'), _fmt_data_hora_br(a.get('primeiro_ajuste_em')),
-                  _fmt_data_hora_br(a.get('ultimo_ajuste_em'))] for a in ajustes], (3,))
+                  _fmt_data_hora_br(a.get('ultimo_ajuste_em'))] for a in ajustes],
+                alinhar_centro=(1, 3, 5))
         else:
             aba_aj = _aviso("Nenhum produto teve a quantidade digitada em vez de bipada.\n\n"
                             "Este contador é acumulado: não zera na exportação, só em "
@@ -4106,7 +4181,8 @@ class MainWindowERP(QMainWindow):
                   i.get('descricao') or '',
                   f"{i.get('quantidade'):g} {i.get('unidade') or ''}".strip()
                   if i.get('quantidade') is not None else '',
-                  i.get('localizacao') or ''] for i in itens_lanc], (4,))
+                  i.get('localizacao') or ''] for i in itens_lanc],
+                alinhar_centro=(2, 4, 5))
         elif lancamentos.get('total'):
             # 2.0 intermediário: tem os contadores, não tem a lista item a item.
             aba_lm = _aviso(
@@ -4140,12 +4216,12 @@ class MainWindowERP(QMainWindow):
                 [[p.get('localizacao'), _contagens_de(p),
                   _fmt_duracao(p.get('tempo_produtivo_seg')),
                   f"{p.get('pct_tempo', 0)}%", _ritmo(p)]
-                 for p in por_localizacao], (1, 2, 3, 4))
+                 for p in por_localizacao], alinhar_centro=(1, 2, 3, 4))
         elif por_localizacao:
             aba_loc = _tabela(
                 colunas_loc,
                 [[p.get('localizacao'), _contagens_de(p), '—', '—', '—']
-                 for p in por_localizacao], (1, 2, 3, 4))
+                 for p in por_localizacao], alinhar_centro=(1, 2, 3, 4))
         else:
             aba_loc = _aviso("Sem contagens com localização neste export.\n\n"
                              "A localização vem preenchida na carga; se todos os produtos "
