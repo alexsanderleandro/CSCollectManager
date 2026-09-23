@@ -683,7 +683,7 @@ class LoginDialog(QDialog):
         title.setStyleSheet("color: #ffffff;")
         text_box.addWidget(title)
 
-        subtitle = QLabel("Sistema de exportação de carga e contagens de estoque")
+        subtitle = QLabel("Gerenciamento de dados")
         subtitle.setStyleSheet("color: #dbe8ff; font-size: 9.5pt;")
         subtitle.setWordWrap(True)
         text_box.addWidget(subtitle)

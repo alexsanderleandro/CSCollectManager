@@ -80,7 +80,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QFileDialog, QApplication, QSpacerItem, QGroupBox,
     QScrollArea, QTableWidgetItem, QTreeWidget, QTreeWidgetItem
 )
-from PySide6.QtCore import Qt, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve, QThreadPool
+from PySide6.QtCore import Qt, QEvent, Signal, Slot, QSize, QTimer, QPropertyAnimation, QEasingCurve, QThreadPool
 from PySide6.QtGui import QFont, QAction, QIcon, QCloseEvent, QKeySequence, QShortcut, QCursor, QPixmap
 
 from utils.constants import APP_INFO, Icons, Messages, Shortcuts, UIConfig
@@ -156,49 +156,110 @@ class _SortableTableItem(QTableWidgetItem):
         return self.text() < outro_texto
 
 
-class SidebarButton(QPushButton):
-    """Botão estilizado para sidebar."""
+# Cor de identidade de cada módulo da barra lateral:
+# (rgb no tema escuro, rgb no tema claro, cor cheia da seleção no escuro, idem no claro).
+# A chave é o id do módulo (`MainWindow.MODULE_*`).
+_NAV_CORES = {
+    "products":           ("62,156,247",  "47,125,216",  "#1d6bb0", "#2a72c8"),
+    "export":             ("76,175,80",   "46,139,61",   "#2e7d32", "#2a7d37"),
+    "history":            ("155,127,230", "112,80,200",  "#6a4fc0", "#6d4bc4"),
+    "download_contagens": ("255,152,0",   "199,109,0",   "#a85700", "#b25f00"),
+    "metrics":            ("232,96,154",  "194,48,111",  "#a8285f", "#b8306c"),
+    "stock_analysis":     ("38,198,218",  "15,143,163",  "#0e7385", "#0b7688"),
+    "settings":           ("138,155,184", "85,97,122",   "#46577a", "#55617a"),
+}
+# Vermelho do "Sair" (escuro, claro).
+_NAV_VERMELHO = ("244,67,54", "211,47,47")
 
-    # __COR__ é substituído por texto simples (não por .format) antes de ir
-    # para themed_qss(), assim os placeholders {{TOKEN}} do tema não colidem
-    # com a sintaxe de chaves do Python.
+
+def _rgba(rgb: str, alpha: float) -> str:
+    """`rgba()` para QSS — o Qt exige o alfa em 0-255, não em 0-1."""
+    return f"rgba({rgb},{round(alpha * 255)})"
+
+
+class SidebarButton(QPushButton):
+    """Bloco colorido da barra lateral: ícone grande, nome e atalho no canto.
+
+    Cada módulo tem a própria cor (`_NAV_CORES`): contorno e tom de fundo
+    suaves no repouso, cor cheia quando selecionado. É um QPushButton com
+    QLabels filhos (transparentes ao mouse) porque o QPushButton não sabe
+    empilhar ícone e texto com tamanhos diferentes.
+    """
+
+    # __X__ são trocados por texto simples (não por .format) antes de ir para
+    # themed_qss(), assim os {{TOKEN}} do tema não colidem com as chaves do QSS.
     _QSS = """
-        QPushButton {
+        QPushButton#sidebarBtn {
+            background-color: __FUNDO__;
+            border: 1.5px solid __BORDA__;
+            border-radius: 10px;
+            padding: 0;
+            min-height: __ALTURA_MIN__px;
+            max-height: __ALTURA_MAX__px;
+        }
+        QPushButton#sidebarBtn:hover {
+            background-color: __HOVER__;
+        }
+        QPushButton#sidebarBtn:checked {
+            background-color: __SOLIDO__;
+            border: 1.5px solid __SOLIDO__;
+        }
+        QPushButton#sidebarBtn:disabled {
             background-color: transparent;
-            color: __COR__;
-            text-align: left;
-            padding: 10px 12px;
-            border: none;
-            border-radius: 0;
-            font-size: 10.5pt;
-        }
-        QPushButton:hover {
-            background-color: {{BG_TERTIARY}};
-            color: {{FG_PRIMARY}};
-        }
-        QPushButton:checked {
-            background-color: #1d6bb0;
-            color: #ffffff;
-            border-left: 3px solid {{ACCENT}};
+            border: 1.5px solid {{BORDER}};
         }
     """
 
-    def __init__(self, icon: str, text: str, parent=None):
+    def __init__(self, icon: str, text: str, module_id: str, atalho: str = "",
+                 larga: bool = False, parent=None):
         """
-        Inicializa o botão da barra lateral.
+        Inicializa o bloco da barra lateral.
 
         Args:
             icon: Emoji ou carácter unicode usado como ícone.
-            text: Texto exibido ao lado do ícone.
+            text: Nome do módulo.
+            module_id: Id do módulo — escolhe a cor em `_NAV_CORES`.
+            atalho: Tecla de atalho exibida no canto (vazio = sem rótulo).
+            larga: Bloco de uma linha só (ícone ao lado do nome), para ocupar
+                a grade inteira quando sobra um módulo ímpar.
             parent: Widget pai (opcional).
         """
         super().__init__(parent)
         self._icon = icon
         self._label = text
+        self._module_id = module_id
+        self._atalho = atalho
+        self._larga = larga
         self._locked = False
+        self.setObjectName("sidebarBtn")
         self.setCheckable(True)
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setMinimumHeight(44)
+        # Altura adaptativa: o bloco cresce até o teto quando a janela é alta e
+        # encolhe até o mínimo do conteúdo quando é baixa (limites em `_alturas`).
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.toggled.connect(lambda _c: self._atualizar_textos())
+        if atalho:
+            self.setToolTip(f"{text}  [{atalho}]")
+
+        self._lbl_icone = QLabel(icon)
+        self._lbl_icone.setObjectName("sidebarIcone")
+        self._lbl_texto = QLabel(text)
+        self._lbl_texto.setObjectName("sidebarTexto")
+        self._lbl_texto.setWordWrap(not larga)
+        self._lbl_texto.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_icone.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._lbl_atalho = QLabel(atalho, self)
+        self._lbl_atalho.setObjectName("sidebarAtalho")
+        for lbl in (self._lbl_icone, self._lbl_texto, self._lbl_atalho):
+            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        lay = QHBoxLayout(self) if larga else QVBoxLayout(self)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(10 if larga else 4)
+        lay.addStretch(1)
+        lay.addWidget(self._lbl_icone)
+        lay.addWidget(self._lbl_texto)
+        lay.addStretch(1)
         self._apply_visual()
 
     def set_locked(self, locked: bool):
@@ -214,10 +275,103 @@ class SidebarButton(QPushButton):
         self._apply_visual()
 
     def _apply_visual(self):
-        icon = "🔒" if self._locked else self._icon
-        self.setText(f"  {icon}  {self._label}")
-        cor = "{{FG_DISABLED}}" if self._locked else "{{FG_SECONDARY}}"
-        self.setStyleSheet(themed_qss(self._QSS.replace("__COR__", cor)))
+        escuro = get_active_theme().__name__ == "DarkTheme"
+        rgb_e, rgb_c, solido_e, solido_c = _NAV_CORES.get(
+            self._module_id, ("138,155,184", "85,97,122", "#46577a", "#55617a"))
+        rgb, solido = (rgb_e, solido_e) if escuro else (rgb_c, solido_c)
+
+        self._lbl_icone.setText("🔒" if self._locked else self._icon)
+        if self._locked:
+            qss = (self._QSS
+                   .replace("__FUNDO__", "transparent")
+                   .replace("__BORDA__", "{{BORDER}}")
+                   .replace("__HOVER__", "{{BG_TERTIARY}}")
+                   .replace("__SOLIDO__", "{{BG_TERTIARY}}")
+                   .replace("__TEXTO__", "{{FG_DISABLED}}")
+                   .replace("__ATALHO__", "{{FG_DISABLED}}"))
+            # Borda tracejada só no bloqueado: diferencia de "desabilitado" sem cor.
+            qss += "QPushButton#sidebarBtn { border-style: dashed; }"
+        else:
+            qss = (self._QSS
+                   .replace("__FUNDO__", _rgba(rgb, 0.06))
+                   .replace("__BORDA__", _rgba(rgb, 0.6))
+                   .replace("__HOVER__", _rgba(rgb, 0.20))
+                   .replace("__SOLIDO__", solido)
+                   .replace("__TEXTO__", "{{FG_PRIMARY}}")
+                   .replace("__ATALHO__", f"rgb({rgb})"))
+        self._rgb_atalho = rgb
+        self._atualizar_textos()
+        altura_min, altura_max = self._alturas()
+        # min/max-height no QSS porque o QSS global de QPushButton fixa um
+        # min-height que sobrepõe setMinimumHeight()/setFixedHeight().
+        qss = (qss.replace("__ALTURA_MIN__", str(altura_min))
+               .replace("__ALTURA_MAX__", str(altura_max)))
+        self.setStyleSheet(themed_qss(qss))
+        self._posicionar_atalho()
+
+    def _alturas(self):
+        """(mínima, máxima) da caixa de conteúdo do bloco, em px.
+
+        O mínimo sai das fontes reais (ícone + 2 linhas de texto), então
+        acompanha a escala de fonte do Windows; o teto mantém o mosaico
+        proporcional em janelas altas.
+        """
+        borda, margens = 3, 8
+        self._lbl_icone.ensurePolished()
+        self._lbl_texto.ensurePolished()
+        icone = self._lbl_icone.sizeHint().height()
+        linha = self._lbl_texto.fontMetrics().lineSpacing()
+        if self._larga:
+            minimo = max(icone, linha) + margens + borda
+            maximo = 56
+        else:
+            minimo = icone + 4 + 2 * linha + margens + borda
+            maximo = 96
+        maximo = max(maximo, minimo)
+        return minimo - borda, maximo - borda
+
+    def _atualizar_textos(self):
+        """Cor dos textos por estado (selecionado / bloqueado / desabilitado).
+
+        Feito aqui e não no QSS porque o Qt não avalia `:checked`/`:disabled`
+        de forma confiável no seletor de ancestral (`QPushButton:checked QLabel`):
+        o estado errado era aplicado a todos os blocos.
+        """
+        tema = get_active_theme()
+        if self._locked or not self.isEnabled():
+            cor_texto = cor_atalho = tema.FG_DISABLED
+        elif self.isChecked():
+            cor_texto = cor_atalho = "#ffffff"
+        else:
+            cor_texto = tema.FG_PRIMARY
+            cor_atalho = f"rgb({self._rgb_atalho})"
+        base = "background: transparent; border: none;"
+        icone_pt = 14 if self._larga else 16
+        self._lbl_icone.setStyleSheet(f"{base} color: {cor_texto}; font-size: {icone_pt}pt;")
+        self._lbl_texto.setStyleSheet(f"{base} color: {cor_texto}; font-size: 9.5pt; font-weight: bold;")
+        self._lbl_atalho.setStyleSheet(
+            f"{base} color: {cor_atalho}; font-family: Consolas, monospace;"
+            " font-size: 8pt; font-weight: bold;")
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange and hasattr(self, "_rgb_atalho"):
+            self._atualizar_textos()
+            self._posicionar_atalho()
+
+    def _posicionar_atalho(self):
+        """Fixa o rótulo do atalho no canto superior direito do bloco."""
+        if not self._atalho:
+            self._lbl_atalho.hide()
+            return
+        self._lbl_atalho.adjustSize()
+        self._lbl_atalho.move(self.width() - self._lbl_atalho.width() - 8, 5)
+        self._lbl_atalho.raise_()
+        self._lbl_atalho.show()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._posicionar_atalho()
 
 
 class ModuleHeader(QFrame):
@@ -495,40 +649,51 @@ class MainWindowERP(QMainWindow):
         nav_frame = QFrame()
         nav_frame.setStyleSheet("border: none;")
         nav_layout = QVBoxLayout(nav_frame)
-        nav_layout.setContentsMargins(8, 16, 8, 8)
+        nav_layout.setContentsMargins(12, 14, 12, 8)
         nav_layout.setSpacing(4)
 
         # Label de seção
         section_label = QLabel("  NAVEGAÇÃO")
-        section_label.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 9pt; font-weight: bold; padding: 8px 0;"))
+        section_label.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 9pt; font-weight: bold; padding: 6px 0 8px 0;"))
         nav_layout.addWidget(section_label)
-        
+
         # Botões
         self._sidebar_buttons = {}
-        
+
         modules = [
-            (self.MODULE_PRODUCTS,           "📦", "Produtos           F1"),
-            (self.MODULE_EXPORT,              "📤", "Exportar Carga     F2"),
-            (self.MODULE_HISTORY,             "📋", "Histórico           F3"),
-            (self.MODULE_DOWNLOAD_CONTAGENS,  "📥", "Download Contagens F4"),
-            (self.MODULE_METRICS,             "📊", "Métricas            F7"),
-            (self.MODULE_STOCK_ANALYSIS,      "🔎", "Análise de Estoque"),
-            (self.MODULE_SETTINGS,            "⚙️", "Configurações      F12"),
+            (self.MODULE_PRODUCTS,           "📦", "Produtos",           "F1"),
+            (self.MODULE_EXPORT,              "📤", "Exportar Carga",     "F2"),
+            (self.MODULE_HISTORY,             "📋", "Histórico",          "F3"),
+            (self.MODULE_DOWNLOAD_CONTAGENS,  "📥", "Download Contagens", "F4"),
+            (self.MODULE_METRICS,             "📊", "Métricas",           "F7"),
+            (self.MODULE_STOCK_ANALYSIS,      "🔎", "Análise de Estoque", ""),
+            (self.MODULE_SETTINGS,            "⚙️", "Configurações",      "F12"),
         ]
-        
-        for module_id, icon, text in modules:
-            btn = SidebarButton(icon, text)
+
+        # Mosaico de 2 colunas; se sobrar um módulo ímpar, ele ocupa a linha toda.
+        grade = QGridLayout()
+        grade.setContentsMargins(0, 0, 0, 0)
+        grade.setSpacing(8)
+        grade.setColumnStretch(0, 1)
+        grade.setColumnStretch(1, 1)
+        for i, (module_id, icon, text, atalho) in enumerate(modules):
+            ultimo_impar = (i == len(modules) - 1) and len(modules) % 2 == 1
+            btn = SidebarButton(icon, text, module_id, atalho, larga=ultimo_impar)
             btn.clicked.connect(lambda checked, m=module_id: self._on_sidebar_click(m))
-            nav_layout.addWidget(btn)
+            if ultimo_impar:
+                grade.addWidget(btn, i // 2, 0, 1, 2)
+            else:
+                grade.addWidget(btn, i // 2, i % 2)
             self._sidebar_buttons[module_id] = btn
-        
+        nav_layout.addLayout(grade, 1)
+
         nav_layout.addStretch()
         
         layout.addWidget(nav_frame)
         
         # Info do usuário na parte inferior
         user_frame = QFrame()
-        user_frame.setMinimumHeight(90)
+        user_frame.setMinimumHeight(64)
         user_frame.setStyleSheet(themed_qss("""
             QFrame {
                 background-color: {{BG_SECONDARY}};
@@ -536,24 +701,25 @@ class MainWindowERP(QMainWindow):
                 border-right: none;
             }
         """))
-        user_layout = QVBoxLayout(user_frame)
-        user_layout.setContentsMargins(8, 8, 8, 8)
-        user_layout.setSpacing(2)
+        user_layout = QHBoxLayout(user_frame)
+        user_layout.setContentsMargins(12, 10, 12, 10)
+        user_layout.setSpacing(8)
 
         # Botão de logoff (volta à tela de login para trocar usuário/empresa)
-        btn_logoff = QPushButton("  🔓  Logoff")
+        btn_logoff = QPushButton("🔓  Logoff")
         btn_logoff.setToolTip("Fazer logoff e voltar à tela de login")
-        btn_logoff.setMinimumHeight(36)
+        btn_logoff.setFixedHeight(40)
+        btn_logoff.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         btn_logoff.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_logoff.setStyleSheet(_mw_qss("""
             QPushButton {
                 background-color: transparent;
                 color: {{FG_SECONDARY}};
-                border: none;
+                border: 1.5px solid {{BORDER}};
                 border-radius: 8px;
-                text-align: left;
-                padding: 8px 10px;
-                font-size: 10pt;
+                padding: 0 6px;
+                font-size: 9.5pt;
+                font-weight: bold;
             }
             QPushButton:hover {
                 background-color: {{BG_HOVER}};
@@ -567,20 +733,22 @@ class MainWindowERP(QMainWindow):
         btn_logoff.clicked.connect(self._on_logout)
         user_layout.addWidget(btn_logoff)
 
-        # Botão de sair do aplicativo
-        btn_exit = QPushButton("  🚪  Sair  (F10)")
+        # Botão de sair do aplicativo (vermelho, como no mosaico dos módulos)
+        vermelho = _NAV_VERMELHO[0] if get_active_theme().__name__ == "DarkTheme" else _NAV_VERMELHO[1]
+        btn_exit = QPushButton("🚪  Sair (F10)")
         btn_exit.setToolTip("Sair do aplicativo  [F10]")
-        btn_exit.setMinimumHeight(36)
+        btn_exit.setFixedHeight(40)
+        btn_exit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         btn_exit.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn_exit.setStyleSheet(_mw_qss("""
             QPushButton {
-                background-color: transparent;
-                color: {{FG_SECONDARY}};
-                border: none;
+                background-color: __FUNDO__;
+                color: rgb(__RGB__);
+                border: 1.5px solid __BORDA__;
                 border-radius: 8px;
-                text-align: left;
-                padding: 8px 10px;
-                font-size: 10pt;
+                padding: 0 6px;
+                font-size: 9.5pt;
+                font-weight: bold;
             }
             QPushButton:hover {
                 background-color: {{DANGER_HOVER_BG}};
@@ -589,7 +757,9 @@ class MainWindowERP(QMainWindow):
             QPushButton:pressed {
                 background-color: {{DANGER_PRESSED_BG}};
             }
-        """))
+        """.replace("__FUNDO__", _rgba(vermelho, 0.08))
+           .replace("__BORDA__", _rgba(vermelho, 0.6))
+           .replace("__RGB__", vermelho)))
         btn_exit.clicked.connect(self.close)
         user_layout.addWidget(btn_exit)
 

@@ -1,0 +1,17 @@
+{
+  "provider": "anthropic",
+  "providers": {
+    "openai": {
+      "token": "",
+      "model": "gpt-5"
+    },
+    "anthropic": {
+      "token": "",
+      "model": "claude-sonnet-5"
+    },
+    "google": {
+      "token": "",
+      "model": "gemini-2.5-pro"
+    }
+  }
+}
