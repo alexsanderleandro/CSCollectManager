@@ -30,18 +30,30 @@ logger = get_logger(__name__)
 
 _TAMANHO_LOTE_BATCH = 200
 
+# Máximo de PDFs comparados lado a lado — um por coluna de contado na grade.
+MAX_PDFS_ANALISE = 3
+
 
 @dataclass
 class ItemAnalise:
-    """Resultado da comparação de um produto (ou produto+lote) contado."""
+    """Um registro (produto+lote) da grade.
+
+    ``contados`` tem a quantidade de cada PDF, na ordem das colunas de
+    contado (``None`` = aquele PDF não contou o registro). ``contado``,
+    ``diferenca`` e ``situacao`` são os da coluna usada como base da
+    diferença — preenchidos por ``StockAnalysisService.aplicar_base``.
+    """
     codigo: str
     descricao: str
     lote: str
-    contado: float
-    sistema: Optional[float]   # None quando situacao == "lote_novo" (não consultado)
-    diferenca: Optional[float]  # None quando situacao == "lote_novo"
-    situacao: str               # "confere" | "falta" | "sobra" | "lote_novo"
+    contados: List[Optional[float]]
+    sistema: Optional[float]    # None quando o lote não existe no ERP (não consultado)
+    lote_novo: bool = False
     grupo: str = ""
+    contado: Optional[float] = None
+    diferenca: Optional[float] = None
+    # "confere" | "falta" | "sobra" | "lote_novo" | "nao_contado"
+    situacao: str = ""
 
 
 @dataclass
@@ -53,14 +65,21 @@ class ResultadoAnalise:
     distintos. Um produto com N lotes soma N registros e 1 produto — a mesma
     separação que o rodapé do PDF faz entre "Total de registros" e "Total de
     produtos contados".
+
+    ``colunas`` tem o rótulo de cada coluna de contado ("Contado 014"), um por
+    PDF; ``indice_base`` diz qual delas é a base da diferença. Os totais por
+    situação são os da coluna base.
     """
     itens: List[ItemAnalise] = field(default_factory=list)
+    colunas: List[str] = field(default_factory=list)
+    indice_base: int = 0
     total_itens: int = 0
     total_produtos: int = 0
     total_confere: int = 0
     total_falta: int = 0
     total_sobra: int = 0
     total_lote_novo: int = 0
+    total_nao_contado: int = 0
 
 
 class StockAnalysisValidationError(ValueError):
@@ -152,65 +171,86 @@ class StockAnalysisService:
             )
 
         itens: List[ItemAnalise] = []
-        totais = {"confere": 0, "falta": 0, "sobra": 0, "lote_novo": 0}
 
-        for chave in sem_lote:
-            codigo, lote = chave
-            dados = itens_agrupados[chave]
-            sistema = estoque_sem_lote.get(codigo, 0.0)
-            self._adicionar_item(itens, totais, codigo, dados, lote, sistema)
-
-        for chave in com_lote_existente:
-            codigo, lote = chave
-            dados = itens_agrupados[chave]
-            sistema = estoque_com_lote.get(chave, 0.0)
-            self._adicionar_item(itens, totais, codigo, dados, lote, sistema)
-
-        for chave in lote_novo:
+        def _novo_item(chave, sistema, eh_lote_novo=False):
             codigo, lote = chave
             dados = itens_agrupados[chave]
             itens.append(ItemAnalise(
                 codigo=codigo,
                 descricao=dados["descricao"],
                 lote=lote,
-                contado=dados["contado"],
-                sistema=None,
-                diferenca=None,
-                situacao="lote_novo",
+                contados=dados["contados"],
+                sistema=sistema,
+                lote_novo=eh_lote_novo,
                 grupo=dados["grupo"],
             ))
-            totais["lote_novo"] += 1
 
-        return ResultadoAnalise(
+        for chave in sem_lote:
+            _novo_item(chave, estoque_sem_lote.get(chave[0], 0.0))
+        for chave in com_lote_existente:
+            _novo_item(chave, estoque_com_lote.get(chave, 0.0))
+        for chave in lote_novo:
+            _novo_item(chave, None, eh_lote_novo=True)
+
+        resultado = ResultadoAnalise(
             itens=itens,
+            colunas=self.rotulos_colunas(contagens),
             total_itens=len(itens),
             total_produtos=len({i.codigo for i in itens}),
-            total_confere=totais["confere"],
-            total_falta=totais["falta"],
-            total_sobra=totais["sobra"],
-            total_lote_novo=totais["lote_novo"],
         )
+        self.aplicar_base(resultado, 0)
+        return resultado
 
     @staticmethod
-    def _adicionar_item(itens, totais, codigo, dados, lote, sistema):
-        diferenca = dados["contado"] - sistema
-        if diferenca == 0:
-            situacao = "confere"
-        elif diferenca < 0:
-            situacao = "falta"
-        else:
-            situacao = "sobra"
-        totais[situacao] += 1
-        itens.append(ItemAnalise(
-            codigo=codigo,
-            descricao=dados["descricao"],
-            lote=lote,
-            contado=dados["contado"],
-            sistema=sistema,
-            diferenca=diferenca,
-            situacao=situacao,
-            grupo=dados["grupo"],
-        ))
+    def aplicar_base(resultado: ResultadoAnalise, indice: int) -> None:
+        """Recalcula contado, diferença, situação e totais usando a coluna de
+        contado ``indice`` como base. Não consulta o banco: o estoque do
+        sistema é o mesmo para qualquer coluna."""
+        totais = {"confere": 0, "falta": 0, "sobra": 0, "lote_novo": 0, "nao_contado": 0}
+        for item in resultado.itens:
+            contado = item.contados[indice] if indice < len(item.contados) else None
+            item.contado = contado
+            if contado is None:
+                # O PDF base não contou este registro (só outro PDF contou):
+                # não há o que comparar com o sistema.
+                item.diferenca = None
+                item.situacao = "nao_contado"
+            elif item.lote_novo:
+                item.diferenca = None
+                item.situacao = "lote_novo"
+            else:
+                item.diferenca = contado - item.sistema
+                if item.diferenca == 0:
+                    item.situacao = "confere"
+                elif item.diferenca < 0:
+                    item.situacao = "falta"
+                else:
+                    item.situacao = "sobra"
+            totais[item.situacao] += 1
+
+        resultado.indice_base = indice
+        resultado.total_confere = totais["confere"]
+        resultado.total_falta = totais["falta"]
+        resultado.total_sobra = totais["sobra"]
+        resultado.total_lote_novo = totais["lote_novo"]
+        resultado.total_nao_contado = totais["nao_contado"]
+
+    @staticmethod
+    def rotulos_colunas(contagens: List[ContagemPDF]) -> List[str]:
+        """"Contado <codvendedor>" por PDF. O mesmo vendedor em mais de um PDF
+        (uma recontagem, por exemplo) ganha a hora da exportação no rótulo, para
+        as colunas não ficarem com o mesmo nome."""
+        codigos = [str(c.codvendedor or "").strip() or "?" for c in contagens]
+        rotulos = []
+        for c, cod in zip(contagens, codigos):
+            rotulo = f"Contado {cod}"
+            if codigos.count(cod) > 1:
+                rotulo += f" · {c.data_exportacao:%H:%M}"
+            rotulos.append(rotulo)
+        for i, rotulo in enumerate(rotulos):
+            if rotulos.count(rotulo) > 1:  # mesmo vendedor e mesma hora
+                rotulos[i] = f"{rotulo} ({rotulos[:i + 1].count(rotulo)})"
+        return rotulos
 
     # ------------------------------------------------------------------
     # Agrupamento dos itens de todos os PDFs anexados
@@ -219,21 +259,23 @@ class StockAnalysisService:
     @staticmethod
     def _agrupar_itens(contagens: List[ContagemPDF]) -> Dict[Tuple[str, str], Dict[str, Any]]:
         """
-        Agrupa itens de todos os PDFs por (codigo, lote), somando a
-        quantidade contada — vários PDFs podem cobrir partes diferentes da
-        mesma contagem.
+        Agrupa os itens por (codigo, lote), com a quantidade de cada PDF
+        separada (``contados``, na ordem dos PDFs; ``None`` = não contado
+        naquele PDF). Dentro do mesmo PDF as quantidades são somadas: o mesmo
+        produto+lote pode aparecer em mais de uma localização.
         """
         agrupados: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        for contagem in contagens:
+        for indice, contagem in enumerate(contagens):
             for item in contagem.itens:
                 chave = (item.codigo, item.lote)
                 if chave not in agrupados:
                     agrupados[chave] = {
                         "descricao": item.descricao,
                         "grupo": item.grupo,
-                        "contado": 0.0,
+                        "contados": [None] * len(contagens),
                     }
-                agrupados[chave]["contado"] += item.qtde_contada
+                contados = agrupados[chave]["contados"]
+                contados[indice] = (contados[indice] or 0.0) + item.qtde_contada
         return agrupados
 
     # ------------------------------------------------------------------
@@ -353,43 +395,65 @@ class StockAnalysisService:
         empresa_nome: str,
         data_referencia: date,
         limite: Optional[int] = None,
+        colunas: Optional[List[int]] = None,
     ) -> str:
         """
         Monta o texto enviado à IA: resumo agregado (sempre completo) + as N
         maiores divergências (``limite``; ``None`` = todas). Nunca inclui o
         PDF nem a tabela inteira.
+
+        ``colunas`` = índices das colunas de contado a considerar (``None`` =
+        todas). A coluna base entra sempre: é ela que define as divergências.
         """
+        base = resultado.indice_base
+        indices = list(range(len(resultado.colunas))) if colunas is None else list(colunas)
+        if base not in indices:
+            indices.insert(0, base)
+        rotulo_base = resultado.colunas[base] if resultado.colunas else "Contado"
+
+        def _qtd(v):
+            return "—" if v is None else f"{v:g}"
+
         linhas = [
             f"# Contagem — {empresa_nome} — {data_referencia.strftime('%d/%m/%Y')}",
             "",
+            f"Contagens consideradas: {', '.join(resultado.colunas[i] for i in indices)}",
+            f"Base da diferença: {rotulo_base}",
             f"Produtos contados: {resultado.total_produtos}",
             f"Registros (produto+lote): {resultado.total_itens}",
             f"Conferem: {resultado.total_confere}",
             f"Divergências: {resultado.total_falta + resultado.total_sobra}"
             f"  (falta: {resultado.total_falta} · sobra: {resultado.total_sobra})",
             f"Lotes novos: {resultado.total_lote_novo}",
-            "",
         ]
+        if resultado.total_nao_contado:
+            linhas.append(f"Não contados em {rotulo_base} (só em outra contagem): "
+                          f"{resultado.total_nao_contado}")
+        linhas.append("")
 
         divergentes = [i for i in resultado.itens if i.situacao in ("falta", "sobra")]
         divergentes.sort(key=lambda i: abs(i.diferenca or 0), reverse=True)
         if limite is not None:
             divergentes = divergentes[:limite]
 
+        cab_contados = " | ".join(resultado.colunas[i].lower() for i in indices)
         if divergentes:
-            linhas.append("# Divergências")
-            linhas.append("codproduto | descricao | grupo | contado | sistema | dif")
+            linhas.append(f"# Divergências (diferença = {rotulo_base} − sistema)")
+            linhas.append(f"codproduto | descricao | grupo | {cab_contados} | sistema | dif")
             for i in divergentes:
+                contados = " | ".join(_qtd(i.contados[c]) for c in indices)
                 linhas.append(
                     f"{i.codigo} | {i.descricao} | {i.grupo} | "
-                    f"{i.contado:g} | {i.sistema:g} | {i.diferenca:+g}"
+                    f"{contados} | {i.sistema:g} | {i.diferenca:+g}"
                 )
             linhas.append("")
 
         lotes_novos = [i for i in resultado.itens if i.situacao == "lote_novo"]
         if lotes_novos:
             linhas.append("# Lotes sem cadastro")
+            linhas.append(f"codproduto | lote | {cab_contados}")
             for i in lotes_novos:
-                linhas.append(f"{i.codigo} | {i.lote} | {i.contado:g} unidades contadas")
+                contados = " | ".join(_qtd(i.contados[c]) for c in indices)
+                linhas.append(f"{i.codigo} | {i.lote} | {contados}")
 
         return "\n".join(linhas).strip()

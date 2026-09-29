@@ -23,6 +23,8 @@ toda) e que **não são itens**:
 - ``Produto: <cod> - <desc>``  — agrupador de um produto com controle de lote.
 - ``Obs. produto: <texto>``    — observação do produto (vem logo após ``Produto:``).
 - ``Obs.: <texto>``            — observação da linha/lote (vem logo após o item).
+- ``Vencimento do lote: <texto>`` — situação do vencimento do lote (vem logo
+  após o item, antes de ``Obs.:`` quando os dois existem).
 
 Extrai apenas dados estruturados, sem nenhuma interpretação de negócio: a
 comparação com o estoque do sistema e a análise de divergências ficam a cargo
@@ -56,7 +58,7 @@ _TOTAL_REGISTROS_RE = re.compile(r"Total de registros:\s*(\d+)")
 # Linhas "vazadas" da tabela, que não são itens. A alternação é ordenada:
 # "Obs. produto" precisa vir antes de "Obs." para não ser engolida por ela.
 _LINHA_PREFIXO_RE = re.compile(
-    r"^(?P<tipo>Grupo|Produto|Obs\.\s*produto|Obs\.)\s*:\s*(?P<valor>.*)$",
+    r"^(?P<tipo>Grupo|Produto|Obs\.\s*produto|Obs\.|Vencimento do lote)\s*:\s*(?P<valor>.*)$",
     re.IGNORECASE,
 )
 # "060460 - PLACA MAE H61 K LGA1155 REVENGER" -> "060460"
@@ -172,6 +174,19 @@ def _parse_qtde_bruto(txt: Optional[str]) -> "tuple[float, str]":
         return 0.0, txt
     qtde = float(m.group("num").replace(",", "."))
     return qtde, txt[:m.start()].strip()
+
+
+def _juntar_linhas(txt: Optional[str], sem_espaco: bool = False) -> str:
+    """Célula que quebrou em várias linhas no PDF volta a ser uma linha só.
+
+    pdfplumber separa cada linha visual da célula com "\\n". Texto comum
+    quebra em espaço, então as linhas voltam unidas por espaço. O número de
+    lote não tem espaço — o gerador do PDF no coletor corta no caractere —,
+    então ali as linhas se juntam direto: "UMDOISTRÊSQUA" + "TROCINCOSEIS".
+    Sem isso o lote não bate com `produtoslote` e vira "lote novo".
+    """
+    partes = [p.strip() for p in (txt or "").splitlines() if p.strip()]
+    return ("" if sem_espaco else " ").join(partes)
 
 
 def _normalizar_cabecalho(txt: Optional[str]) -> str:
@@ -321,7 +336,10 @@ class PdfContagemParser:
                     mapa[campo] = idx
 
             for cells in linhas_extraidas[1:]:
-                primeira_celula = (cells[0] or "").strip()
+                # Junta antes do regex: uma "Obs.:" longa quebra em várias
+                # linhas, e o `.*$` do regex não atravessa o "\n" — a linha
+                # deixaria de ser reconhecida e viraria um item fantasma.
+                primeira_celula = _juntar_linhas(cells[0])
                 if not primeira_celula:
                     continue
 
@@ -334,7 +352,7 @@ class PdfContagemParser:
                     idx = mapa.get(campo)
                     if idx is None or idx >= len(cells):
                         return ""
-                    return (cells[idx] or "").strip()
+                    return _juntar_linhas(cells[idx], sem_espaco=(campo == "lote"))
 
                 codigo = _col("codigo")
                 if not codigo:
@@ -377,6 +395,8 @@ class PdfContagemParser:
             estado.observacao_produto = ""
         elif tipo == "obs. produto":
             estado.observacao_produto = valor
+        elif tipo == "vencimento do lote":
+            pass  # só decide a cor da linha no PDF; sem uso na análise (já há `validade`)
         else:  # "obs." — observação da linha/lote imediatamente anterior
             item = estado.ultimo_item
             if item is not None and valor:
