@@ -17,12 +17,15 @@ from PySide6.QtWidgets import (
     QHeaderView, QAbstractItemView, QDateEdit, QSpinBox,
     QRadioButton, QButtonGroup, QTextEdit, QFileDialog, QMenu,
     QMessageBox, QGroupBox, QSizePolicy, QCheckBox, QStyledItemDelegate, QStyle,
-    QTabWidget, QApplication
+    QTabWidget, QApplication, QFrame, QStackedWidget, QTabBar, QGraphicsOpacityEffect
 )
-from PySide6.QtCore import Qt, QDate, QEvent, QThreadPool, QMarginsF, QPointF, QRectF, QSizeF
+from PySide6.QtCore import (
+    Qt, QDate, QEvent, QThreadPool, QMarginsF, QPointF, QRectF, QSize, QSizeF,
+    QTimer, QElapsedTimer, QEasingCurve, QPropertyAnimation
+)
 from PySide6.QtGui import (
-    QBrush, QColor, QCursor, QFont, QFontMetricsF, QImage, QPainter, QPen,
-    QPdfWriter, QPageSize, QPageLayout, QTextDocument
+    QBrush, QColor, QCursor, QFont, QFontMetricsF, QImage, QLinearGradient, QPainter,
+    QPainterPath, QPen, QPdfWriter, QPageSize, QPageLayout, QTextDocument
 )
 
 from app.styles import themed_qss, get_active_theme
@@ -30,7 +33,7 @@ from services.pdf_contagem_parser import PdfContagemParser, ContagemPDF
 from services.stock_analysis_service import (
     StockAnalysisService, StockAnalysisValidationError, ResultadoAnalise, MAX_PDFS_ANALISE
 )
-from services.ai_config_service import AIConfigService
+from services.ai_config_service import AIConfigService, NOMES_PROVEDOR
 from services.ai_client import AIClient, AIClientError
 from utils.workers import WorkerSignals, TaskRunnable
 from utils.config import AppConfig
@@ -75,6 +78,171 @@ class _DelegateFundoCelula(QStyledItemDelegate):
             painter.fillRect(option.rect, fundo)
 
 
+class _FolhaLeituraIA(QWidget):
+    """Folha com a linha de leitura da animação da análise com IA.
+
+    Linhas apagadas, como as de um relatório, e uma faixa com brilho que desce
+    e sobe, como o leitor de código de barras do coletor. A posição da faixa
+    vem de fora (`set_fase`): um único QTimer da página move a faixa e gira o
+    indicador da aba juntos. A altura é flexível: numa janela baixa a folha
+    encolhe e desenha só as linhas que couberem.
+    """
+
+    LARGURA, ALTURA = 380, 176
+    ALTURA_MIN = 64
+    _MARGEM_X, _MARGEM_Y = 18, 16
+    _ALTURA_LINHA, _ENTRE_LINHAS, _ENTRE_BARRAS = 8, 12, 10
+    _BARRAS_FIXAS = (72, 30, 30)  # código e duas quantidades; a descrição fica com o resto
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._fase = 0.0
+        self.setMinimumSize(240, self.ALTURA_MIN)
+        self.setMaximumSize(self.LARGURA, self.ALTURA)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Maximum)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.LARGURA, self.ALTURA)
+
+    def set_fase(self, fase: float):
+        """Posição da faixa: 0 = topo, 1 = base (já com a suavização aplicada)."""
+        self._fase = fase
+        self.update()
+
+    def paintEvent(self, event):
+        tema = get_active_theme()
+        largura, altura = self.width(), self.height()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        contorno = QPainterPath()
+        contorno.addRoundedRect(QRectF(0.5, 0.5, largura - 1, altura - 1), 8, 8)
+        p.fillPath(contorno, QColor(tema.BG_PRIMARY))
+        p.setPen(QPen(QColor(tema.BORDER), 1))
+        p.drawPath(contorno)
+        p.setClipPath(contorno)
+
+        barra = QColor(tema.FG_PRIMARY)
+        barra.setAlphaF(0.10)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(barra)
+        codigo, qtd1, qtd2 = self._BARRAS_FIXAS
+        descricao = (largura - 2 * self._MARGEM_X - sum(self._BARRAS_FIXAS)
+                     - 3 * self._ENTRE_BARRAS)
+        passo = self._ALTURA_LINHA + self._ENTRE_LINHAS
+        linhas = max(1, (altura - 2 * self._MARGEM_Y + self._ENTRE_LINHAS) // passo)
+        y = self._MARGEM_Y
+        for _ in range(linhas):
+            x = self._MARGEM_X
+            for w in (codigo, descricao, qtd1, qtd2):
+                p.drawRoundedRect(QRectF(x, y, w, self._ALTURA_LINHA), 4, 4)
+                x += w + self._ENTRE_BARRAS
+            y += passo
+
+        # Faixa de leitura: brilho suave em volta de uma linha nítida.
+        acento = QColor(tema.ACCENT)
+        centro = 10 + self._fase * (altura - 20)
+        transparente = QColor(acento)
+        transparente.setAlphaF(0.0)
+        suave = QColor(acento)
+        suave.setAlphaF(0.16)
+        faixa = QLinearGradient(0, centro - 20, 0, centro + 20)
+        faixa.setColorAt(0.0, transparente)
+        faixa.setColorAt(0.5, suave)
+        faixa.setColorAt(1.0, transparente)
+        p.fillRect(QRectF(0, centro - 20, largura, 40), QBrush(faixa))
+        for espessura, alfa in ((7, 0.12), (4, 0.25)):
+            brilho = QColor(acento)
+            brilho.setAlphaF(alfa)
+            p.fillRect(QRectF(0, centro - espessura / 2, largura, espessura), brilho)
+        p.fillRect(QRectF(0, centro - 1, largura, 2), acento)
+        p.end()
+
+
+class _GiroAbaIA(QWidget):
+    """Indicador girando no canto da aba "Análise da IA" enquanto a IA analisa;
+    continua visível quando o usuário volta para a grade."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._angulo = 0.0
+        self.setFixedSize(14, 14)
+        # Um clique em cima do indicador tem que selecionar a aba, como no resto dela.
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def set_angulo(self, angulo: float):
+        self._angulo = angulo
+        self.update()
+
+    def paintEvent(self, event):
+        acento = QColor(get_active_theme().ACCENT)
+        trilho = QColor(acento)
+        trilho.setAlphaF(0.25)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        area = QRectF(2, 2, 10, 10)
+        p.setPen(QPen(trilho, 2))
+        p.drawEllipse(area)
+        p.setPen(QPen(acento, 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        # Arco de 90° girando no sentido horário (ângulos do Qt em 1/16 de grau).
+        p.drawArc(area, round((90 - self._angulo) * 16), -90 * 16)
+        p.end()
+
+
+class _AnimacaoLeituraIA(QFrame):
+    """Painel que fica no lugar do texto enquanto a IA analisa.
+
+    Folha com a linha de leitura, quantas divergências foram enviadas, o
+    modelo e o tempo decorrido. Só informação real: a IA não informa
+    progresso, então não há porcentagem nem etapas.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # objectName no seletor: QLabel também é um QFrame, e um seletor
+        # `QFrame` genérico poria a borda em volta de cada texto.
+        self.setObjectName("animacaoIA")
+        self.setStyleSheet(themed_qss("""
+            QFrame#animacaoIA {
+                background-color: {{BG_SECONDARY}}; border: 1px solid {{BORDER}}; border-radius: 8px;
+            }
+        """))
+        # Não impõe altura mínima à aba (a tela tem que caber em notebook):
+        # numa janela baixa a folha encolhe e, no limite, some, ficando só os textos.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+        layout.addStretch(1)
+        self.folha = _FolhaLeituraIA()
+        layout.addWidget(self.folha, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(8)
+        # Fundo transparente explícito: o fundo da página (QSS sem seletor)
+        # desce para os filhos e pintaria uma faixa atrás de cada texto.
+        self.lbl_mensagem = QLabel("")
+        self.lbl_mensagem.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_mensagem.setWordWrap(True)
+        self.lbl_mensagem.setStyleSheet(themed_qss(
+            "background: transparent; color: {{FG_PRIMARY}}; font-size: 12.5pt; font-weight: 600;"))
+        layout.addWidget(self.lbl_mensagem)
+        self.lbl_info = QLabel("")
+        self.lbl_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_info.setWordWrap(True)
+        self.lbl_info.setStyleSheet(themed_qss(
+            "background: transparent; color: {{FG_SECONDARY}}; font-size: 9pt;"))
+        layout.addWidget(self.lbl_info)
+        layout.addStretch(1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        margens = self.layout().contentsMargins()
+        textos = (self.lbl_mensagem.sizeHint().height() + self.lbl_info.sizeHint().height()
+                  + 3 * self.layout().spacing() + 8)
+        livre = self.height() - margens.top() - margens.bottom() - textos
+        self.folha.setVisible(livre >= _FolhaLeituraIA.ALTURA_MIN)
+
+
 class StockAnalysisPage(QWidget):
     """Página de análise de estoque (anexar PDFs → comparar → IA)."""
 
@@ -88,6 +256,13 @@ class StockAnalysisPage(QWidget):
         self._contagem_referencia: Optional[ContagemPDF] = None
         self._resultado: Optional[ResultadoAnalise] = None
         self._analise_ia_texto: str = ""
+        # Análise da IA em andamento (animação na aba). A geração descarta a
+        # resposta de uma análise que o usuário abandonou limpando a tela.
+        self._ia_em_andamento = False
+        self._ia_geracao = 0
+        # Contexto da análise anterior, para voltar junto com o texto dela se
+        # a nova falhar.
+        self._contexto_ia_anterior = ""
         # Incrementada a cada nova comparação disparada (troca de data/local de
         # estoque); descarta resultados de uma comparação anterior que ainda
         # não tinha voltado do worker quando o usuário já mudou o parâmetro de
@@ -352,9 +527,28 @@ class StockAnalysisPage(QWidget):
                 border: 1px solid {{BORDER}}; border-radius: 8px; padding: 14px; font-size: 10.5pt;
             }
         """))
-        aba_ia_layout.addWidget(self._txt_analise, 1)
-        self._abas.addTab(aba_ia, "🤖  Análise da IA")
+        # Enquanto a IA analisa, a animação ocupa o lugar do texto; o texto de
+        # uma análise anterior fica guardado atrás dela e volta se a nova falhar.
+        self._animacao_ia = _AnimacaoLeituraIA()
+        self._pilha_ia = QStackedWidget()
+        self._pilha_ia.setMaximumWidth(1100)
+        self._pilha_ia.addWidget(self._txt_analise)
+        self._pilha_ia.addWidget(self._animacao_ia)
+        aba_ia_layout.addWidget(self._pilha_ia, 1)
+        self._indice_aba_ia = self._abas.addTab(aba_ia, "🤖  Análise da IA")
         self._contexto_ia_pendente = ""
+
+        # Um único QTimer move a linha de leitura, gira o indicador da aba e
+        # conta o tempo; só roda enquanto a análise está em andamento.
+        self._giro_aba_ia = _GiroAbaIA(self._abas.tabBar())
+        self._giro_aba_ia.hide()
+        self._timer_ia = QTimer(self)
+        self._timer_ia.setInterval(30)
+        self._timer_ia.timeout.connect(self._animar_ia)
+        self._relogio_ia = QElapsedTimer()
+        self._curva_ia = QEasingCurve(QEasingCurve.Type.InOutSine)
+        self._segundos_ia = -1
+        self._descricao_modelo_ia = ""
 
         content_layout.addWidget(self._abas, 1)
 
@@ -552,6 +746,8 @@ class StockAnalysisPage(QWidget):
 
     def _on_limpar_clicked(self):
         self._analise_geracao += 1  # descarta uma consulta ainda em andamento
+        self._ia_geracao += 1  # e uma análise da IA também
+        self._parar_animacao_ia()
         self._contagens = []
         self._contagem_referencia = None
         self._resultado = None
@@ -752,7 +948,11 @@ class StockAnalysisPage(QWidget):
     def _atualizar_botoes_resultado(self):
         resultado = self._resultado
         tem_divergencia = bool(resultado) and (resultado.total_falta + resultado.total_sobra) > 0
-        self._btn_analisar_ia.setEnabled(tem_divergencia and AIConfigService().is_configured())
+        # Uma troca de data ou de base no meio da análise refaz a grade, mas
+        # não pode liberar uma segunda análise ao mesmo tempo.
+        self._btn_analisar_ia.setEnabled(
+            tem_divergencia and not self._ia_em_andamento and AIConfigService().is_configured()
+        )
         self._btn_exportar.setEnabled(resultado is not None)
 
     def _montar_cabecalho(self):
@@ -968,6 +1168,7 @@ class StockAnalysisPage(QWidget):
         self._btn_analisar_ia.setEnabled(False)
         self._lbl_status.setText("🔄 Analisando com IA...")
         self._lbl_status.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 9pt;"))
+        self._iniciar_animacao_ia(self._spin_limite.value())
 
         system = (
             "Você é um analista de estoque. Recebe um resumo já calculado de uma "
@@ -975,31 +1176,143 @@ class StockAnalysisPage(QWidget):
             "divergências, em português, destacando padrões relevantes. Quando houver "
             "mais de uma contagem, compare também as contagens entre si e aponte onde "
             "os conferentes discordam. Nunca invente números — use apenas os valores "
-            "do resumo recebido."
+            "do resumo recebido.\n\n"
+            # Sem isto o modelo fecha oferecendo "se quiser, eu elaboro...", e
+            # aqui não há como responder — a frase ia parar até no PDF.
+            "O texto é um relatório fechado: aparece numa tela do sistema e é "
+            "exportado em PDF, e quem lê não tem como responder. Não faça perguntas "
+            "nem ofereça ajuda adicional, outras versões ou próximos passos. Termine "
+            "com a seção \"Ações recomendadas\", com as ações em ordem de prioridade; "
+            "não indique responsáveis por nome — quando fizer sentido, indique a "
+            "área (estoque, compras, fiscal).\n\n"
+            # A tela (setPlainText) e o PDF mostram o texto como veio: Markdown
+            # apareceria cru, com ** e ##.
+            "Escreva em texto simples, sem Markdown (nada de **, ## ou tabelas): cada "
+            "título numa linha sozinho e os itens de lista começando com \"• \"."
         )
+        self._ia_geracao += 1
         signals = WorkerSignals()
+        # Métodos da página, nunca lambda (ver `_rodar_comparacao`).
         signals.finished.connect(self._on_ia_finished)
         signals.error.connect(self._on_ia_error)
-        runnable = TaskRunnable(AIClient().analisar, args=(system, payload), signals=signals)
+        runnable = TaskRunnable(
+            self._analisar_ia_em_background, args=(self._ia_geracao, system, payload),
+            signals=signals,
+        )
         QThreadPool.globalInstance().start(runnable)
 
-    def _on_ia_finished(self, texto: str):
+    def _analisar_ia_em_background(self, geracao: int, system: str, payload: str):
+        """Roda no worker. Devolve a geração junto do texto para o slot saber
+        se a resposta ainda vale (o usuário pode ter limpado a tela)."""
+        try:
+            texto = AIClient().analisar(system, payload)
+        except Exception as exc:
+            exc.geracao_ia = geracao
+            raise
+        return geracao, texto
+
+    def _on_ia_finished(self, payload):
+        geracao, texto = payload
+        if geracao != self._ia_geracao:
+            return  # a tela foi limpa enquanto a IA analisava
+        self._parar_animacao_ia()
         self._btn_analisar_ia.setEnabled(True)
         self._analise_ia_texto = texto
         self._txt_analise.setPlainText(texto)
+        self._mostrar_texto_ia_com_fade()
         self._lbl_contexto_ia.setText(
             f"Análise gerada às {datetime.now():%H:%M} · {self._contexto_ia_pendente}"
         )
-        self._abas.setCurrentIndex(1)
+        self._abas.setCurrentIndex(self._indice_aba_ia)
         self._lbl_status.setText("✅ Análise concluída — veja a aba \"Análise da IA\".")
         self._lbl_status.setStyleSheet(themed_qss("color: {{SUCCESS}}; font-size: 9pt;"))
 
     def _on_ia_error(self, exc: Exception):
+        if getattr(exc, "geracao_ia", self._ia_geracao) != self._ia_geracao:
+            return  # erro de uma análise que o usuário abandonou limpando a tela
+        self._parar_animacao_ia()
+        # O texto da análise anterior (se houver) volta, com o contexto dele.
+        self._lbl_contexto_ia.setText(self._contexto_ia_anterior)
         self._btn_analisar_ia.setEnabled(True)
         mensagem = str(exc) if isinstance(exc, AIClientError) else f"Erro inesperado: {exc}"
         QMessageBox.critical(self, "Erro na Análise", mensagem)
         self._lbl_status.setText(f"❌ {mensagem}")
         self._lbl_status.setStyleSheet(themed_qss("color: {{ERROR}}; font-size: 9pt;"))
+
+    # ------------------------------------------------------------------
+    # Animação da análise com IA ("linha de leitura")
+    # ------------------------------------------------------------------
+
+    def _iniciar_animacao_ia(self, qtd_divergencias: int):
+        """Leva a tela para a aba da IA e põe a animação no lugar do texto."""
+        self._ia_em_andamento = True
+        palavra = "divergência" if qtd_divergencias == 1 else "divergências"
+        self._animacao_ia.lbl_mensagem.setText(f"Analisando {qtd_divergencias} {palavra} com a IA")
+        self._descricao_modelo_ia = self._texto_modelo_ia()
+        self._segundos_ia = -1
+        # O contexto na linha de cima é da análise anterior: some enquanto a
+        # nova roda, para não parecer que descreve o que está sendo analisado.
+        self._contexto_ia_anterior = self._lbl_contexto_ia.text()
+        self._lbl_contexto_ia.setText("")
+        self._pilha_ia.setCurrentWidget(self._animacao_ia)
+        self._abas.setCurrentIndex(self._indice_aba_ia)
+        self._abas.tabBar().setTabButton(
+            self._indice_aba_ia, QTabBar.ButtonPosition.RightSide, self._giro_aba_ia
+        )
+        self._relogio_ia.start()
+        self._animar_ia()  # primeiro quadro já com "0:00"
+        self._timer_ia.start()
+
+    def _parar_animacao_ia(self):
+        """Volta a aba da IA para o texto e tira o indicador da aba."""
+        self._ia_em_andamento = False
+        self._timer_ia.stop()
+        self._pilha_ia.setCurrentWidget(self._txt_analise)
+        self._abas.tabBar().setTabButton(self._indice_aba_ia, QTabBar.ButtonPosition.RightSide, None)
+
+    def _animar_ia(self):
+        """Um quadro: move a linha de leitura, gira o indicador da aba e, a
+        cada segundo, atualiza o tempo decorrido."""
+        ms = self._relogio_ia.elapsed()
+        ida = (ms % 5200) / 2600  # a linha vai e volta a cada 2,6 s
+        if ida > 1:
+            ida = 2 - ida
+        self._animacao_ia.folha.set_fase(self._curva_ia.valueForProgress(ida))
+        self._giro_aba_ia.set_angulo((ms % 800) / 800 * 360)
+        segundos = ms // 1000
+        if segundos != self._segundos_ia:
+            self._segundos_ia = segundos
+            self._animacao_ia.lbl_info.setText(
+                f"{self._descricao_modelo_ia} · tempo decorrido {segundos // 60}:{segundos % 60:02d}"
+            )
+
+    def _texto_modelo_ia(self) -> str:
+        """Provedor e modelo configurados, como o usuário os vê nas
+        Configurações (ex.: "Anthropic · Claude Sonnet 5")."""
+        config = AIConfigService()
+        provedor = config.get_provider()
+        modelo = config.get_model(provedor)
+        nome_modelo = next(
+            (m.nome for m in config.list_models(provedor) if m.id == modelo), modelo
+        )
+        return f"{NOMES_PROVEDOR.get(provedor, provedor)} · {nome_modelo}"
+
+    def _mostrar_texto_ia_com_fade(self):
+        """O texto novo entra num fade curto no lugar da animação."""
+        efeito = QGraphicsOpacityEffect(self._txt_analise)
+        efeito.setOpacity(0.0)
+        self._txt_analise.setGraphicsEffect(efeito)
+        fade = QPropertyAnimation(efeito, b"opacity", self)
+        fade.setDuration(250)
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        fade.finished.connect(self._remover_fade_texto_ia)
+        fade.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+    def _remover_fade_texto_ia(self):
+        # Sem o efeito depois do fade: enquanto aplicado, ele deixa o desenho
+        # do texto (e a rolagem) mais lento.
+        self._txt_analise.setGraphicsEffect(None)
 
     # ------------------------------------------------------------------
     # Exportar

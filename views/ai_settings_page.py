@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QCursor
 
 from app.styles import themed_qss
-from services.ai_config_service import AIConfigService
+from services.ai_config_service import AIConfigService, NOMES_PROVEDOR, PROVIDERS
 from services.ai_client import AIClient, AIClientError
 from utils.workers import WorkerSignals, TaskRunnable
 
@@ -75,9 +75,8 @@ class AISettingsPage(QWidget):
 
         # Provedor
         self._cmb_provider = QComboBox()
-        self._cmb_provider.addItem("OpenAI", "openai")
-        self._cmb_provider.addItem("Anthropic", "anthropic")
-        self._cmb_provider.addItem("Google", "google")
+        for provedor in PROVIDERS:
+            self._cmb_provider.addItem(NOMES_PROVEDOR[provedor], provedor)
         self._cmb_provider.setMinimumHeight(36)
         self._cmb_provider.currentIndexChanged.connect(self._on_provider_changed)
         form.addRow("Provedor:", self._cmb_provider)

@@ -16,6 +16,9 @@ from utils.config import AppConfig
 
 PROVIDERS = ("openai", "anthropic", "google")
 
+# Nome de cada provedor como aparece para o usuário.
+NOMES_PROVEDOR = {"openai": "OpenAI", "anthropic": "Anthropic", "google": "Google"}
+
 # Modelos disponíveis por provedor, com nível de consumo relativo (para a
 # barra de indicação na tela de Configurações). Revisar periodicamente
 # contra o catálogo vigente de cada provedor — muda com frequência.

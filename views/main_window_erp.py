@@ -376,8 +376,8 @@ class SidebarButton(QPushButton):
 
 class ModuleHeader(QFrame):
     """Cabeçalho de módulo com título e ações."""
-    
-    def __init__(self, icon: str, title: str, subtitle: str = "", parent=None):
+
+    def __init__(self, icon: str, title: str, subtitle: str = "", parent=None, *, modulo: str = ""):
         """
         Inicializa o cabeçalho do módulo.
 
@@ -386,10 +386,72 @@ class ModuleHeader(QFrame):
             title: Título principal exibido em negrito.
             subtitle: Subtexto descritivo abaixo do título (opcional).
             parent: Widget pai (opcional).
+            modulo: Id do módulo (`MainWindow.MODULE_*`). Quando informado, usa
+                o visual "selo": ícone num quadrado na cor do módulo (a mesma
+                do bloco da barra lateral) e só o título — o subtítulo é ignorado.
         """
         super().__init__(parent)
-        self._setup_ui(icon, title, subtitle)
-    
+        if modulo:
+            self._setup_ui_selo(icon, title, modulo)
+        else:
+            self._setup_ui(icon, title, subtitle)
+
+    def _setup_ui_selo(self, icon: str, title: str, modulo: str):
+        """
+        Monta o cabeçalho no visual "selo".
+
+        Os tamanhos de fonte vão no QSS de cada rótulo porque o QSS global
+        (`QWidget { font-size: 10pt }`) sobrepõe o `setFont()`. A regra do
+        quadro mira o objectName porque QLabel também é um QFrame: um seletor
+        `QFrame` genérico pintava a borda inferior embaixo de cada texto.
+
+        Args:
+            icon: Ícone do módulo.
+            title: Título principal.
+            modulo: Id do módulo — escolhe a cor em `_NAV_CORES`.
+        """
+        self.setObjectName("moduleHeader")
+        self.setStyleSheet(themed_qss("""
+            QFrame#moduleHeader {
+                background-color: {{BG_SECONDARY}};
+                border-bottom: 1px solid {{BORDER}};
+            }
+        """))
+        # Mesma altura do cabeçalho padrão: trocar de módulo não desloca a tela.
+        self.setMinimumHeight(80)
+        self.setMaximumHeight(80)
+
+        escuro = get_active_theme().__name__ == "DarkTheme"
+        rgb_e, rgb_c, _solido_e, _solido_c = _NAV_CORES.get(
+            modulo, ("138,155,184", "85,97,122", "#46577a", "#55617a"))
+        rgb = rgb_e if escuro else rgb_c
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(24, 0, 24, 0)
+        layout.setSpacing(14)
+
+        selo = QLabel(icon)
+        selo.setFixedSize(44, 44)
+        selo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        selo.setStyleSheet(
+            f"background-color: {_rgba(rgb, 0.16)}; border: 1.5px solid {_rgba(rgb, 0.6)};"
+            " border-radius: 10px; font-size: 18pt;"
+        )
+        layout.addWidget(selo)
+
+        title_label = QLabel(title)
+        title_label.setStyleSheet(themed_qss(
+            "color: {{FG_PRIMARY}}; background: transparent; border: none;"
+            " font-size: 15pt; font-weight: 600;"
+        ))
+        layout.addWidget(title_label)
+        layout.addStretch()
+
+        # Container para botões de ação (mesma API do cabeçalho padrão)
+        self._action_layout = QHBoxLayout()
+        self._action_layout.setSpacing(8)
+        layout.addLayout(self._action_layout)
+
     def _setup_ui(self, icon: str, title: str, subtitle: str):
         """
         Monta o layout visual do cabeçalho.
@@ -652,11 +714,6 @@ class MainWindowERP(QMainWindow):
         nav_layout.setContentsMargins(12, 14, 12, 8)
         nav_layout.setSpacing(4)
 
-        # Label de seção
-        section_label = QLabel("  NAVEGAÇÃO")
-        section_label.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 9pt; font-weight: bold; padding: 6px 0 8px 0;"))
-        nav_layout.addWidget(section_label)
-
         # Botões
         self._sidebar_buttons = {}
 
@@ -845,7 +902,7 @@ class MainWindowERP(QMainWindow):
         layout.setSpacing(0)
 
         # Header
-        header = ModuleHeader("📤", "Exportar Carga", "Configure e execute a exportação para coletores")
+        header = ModuleHeader("📤", "Exportar Carga", modulo=self.MODULE_EXPORT)
         layout.addWidget(header)
 
         # Conteúdo
