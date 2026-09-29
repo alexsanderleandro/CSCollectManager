@@ -7,6 +7,7 @@ estoque atual no ERP e aciona a IA para redigir a análise das divergências.
 
 import html as html_lib
 import os
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -15,10 +16,14 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QDateEdit, QSpinBox,
     QRadioButton, QButtonGroup, QTextEdit, QFileDialog, QMenu,
-    QMessageBox, QGroupBox, QSizePolicy, QCheckBox, QStyledItemDelegate, QStyle
+    QMessageBox, QGroupBox, QSizePolicy, QCheckBox, QStyledItemDelegate, QStyle,
+    QTabWidget, QApplication
 )
-from PySide6.QtCore import Qt, QDate, QEvent, QThreadPool
-from PySide6.QtGui import QBrush, QColor, QCursor, QPdfWriter, QPageSize, QPageLayout, QTextDocument
+from PySide6.QtCore import Qt, QDate, QEvent, QThreadPool, QMarginsF, QPointF, QRectF, QSizeF
+from PySide6.QtGui import (
+    QBrush, QColor, QCursor, QFont, QFontMetricsF, QImage, QPainter, QPen,
+    QPdfWriter, QPageSize, QPageLayout, QTextDocument
+)
 
 from app.styles import themed_qss, get_active_theme
 from services.pdf_contagem_parser import PdfContagemParser, ContagemPDF
@@ -29,6 +34,7 @@ from services.ai_config_service import AIConfigService
 from services.ai_client import AIClient, AIClientError
 from utils.workers import WorkerSignals, TaskRunnable
 from utils.config import AppConfig
+from utils.constants import APP_INFO
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -101,6 +107,7 @@ class StockAnalysisPage(QWidget):
         self._data_antes: Optional[date] = None
         self._codempresa = ""
         self._nome_empresa = ""
+        self._nome_usuario = ""
         self._locais_estoque_mode = "A"
         self._setup_ui()
 
@@ -112,6 +119,10 @@ class StockAnalysisPage(QWidget):
         """Define a empresa logada, usada para validar os PDFs anexados."""
         self._codempresa = str(codigo or "")
         self._nome_empresa = nome or ""
+
+    def set_usuario_info(self, nome: str):
+        """Usuário logado — vai no rodapé dos PDFs exportados ("Gerado por")."""
+        self._nome_usuario = nome or ""
 
     def configure_local_estoque(self, modo: str, locais_list: Optional[List[str]] = None):
         """
@@ -249,6 +260,15 @@ class StockAnalysisPage(QWidget):
         self._pdf_list.itemDoubleClicked.connect(self._on_pdf_double_clicked)
         content_layout.addWidget(self._pdf_list)
 
+        # ----- Abas: grade comparativa | análise da IA -----
+        # A análise da IA é texto corrido e longo: numa aba própria ela usa a
+        # área inteira da grade, em vez de uma faixa espremida embaixo dela.
+        self._abas = QTabWidget()
+        aba_grade = QWidget()
+        aba_grade_layout = QVBoxLayout(aba_grade)
+        aba_grade_layout.setContentsMargins(0, 8, 0, 0)
+        aba_grade_layout.setSpacing(8)
+
         # ----- Base da diferença + colunas para exportação/IA -----
         # Só aparece com mais de um PDF na grade: com um só não há o que escolher.
         self._linha_colunas = QWidget()
@@ -267,7 +287,7 @@ class StockAnalysisPage(QWidget):
         linha_colunas.addLayout(self._layout_checks_export)
         self._checks_export: List[QCheckBox] = []
         self._linha_colunas.setVisible(False)
-        content_layout.addWidget(self._linha_colunas)
+        aba_grade_layout.addWidget(self._linha_colunas)
 
         # ----- Tabela de divergências -----
         self._table = QTableWidget()
@@ -304,7 +324,39 @@ class StockAnalysisPage(QWidget):
             }
             QTableWidget::item:alternate { background-color: {{BG_TERTIARY}}; }
         """))
-        content_layout.addWidget(self._table, 1)
+        aba_grade_layout.addWidget(self._table, 1)
+        self._abas.addTab(aba_grade, "📊  Resultado comparativo")
+
+        # ----- Aba da análise da IA -----
+        aba_ia = QWidget()
+        aba_ia_layout = QVBoxLayout(aba_ia)
+        aba_ia_layout.setContentsMargins(0, 8, 0, 0)
+        aba_ia_layout.setSpacing(8)
+        # Com a análise numa aba separada da grade, fica registrado de quais
+        # dados ela saiu — a grade pode mudar depois (data, base da diferença).
+        self._lbl_contexto_ia = QLabel("")
+        self._lbl_contexto_ia.setWordWrap(True)
+        self._lbl_contexto_ia.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 9pt;"))
+        aba_ia_layout.addWidget(self._lbl_contexto_ia)
+        self._txt_analise = QTextEdit()
+        self._txt_analise.setReadOnly(True)
+        self._txt_analise.setPlaceholderText(
+            "A análise aparece aqui depois de clicar em \"🤖 Analisar com IA\", abaixo."
+        )
+        # Largura máxima: numa tela larga, linhas de texto do tamanho da janela
+        # inteira ficam cansativas de acompanhar.
+        self._txt_analise.setMaximumWidth(1100)
+        self._txt_analise.setStyleSheet(themed_qss("""
+            QTextEdit {
+                background-color: {{BG_SECONDARY}}; color: {{FG_PRIMARY}};
+                border: 1px solid {{BORDER}}; border-radius: 8px; padding: 14px; font-size: 10.5pt;
+            }
+        """))
+        aba_ia_layout.addWidget(self._txt_analise, 1)
+        self._abas.addTab(aba_ia, "🤖  Análise da IA")
+        self._contexto_ia_pendente = ""
+
+        content_layout.addWidget(self._abas, 1)
 
         # ----- Toolbar: analisar / limite / exportar -----
         toolrow2 = QHBoxLayout()
@@ -355,19 +407,6 @@ class StockAnalysisPage(QWidget):
         toolrow2.addWidget(self._btn_exportar)
 
         content_layout.addLayout(toolrow2)
-
-        # ----- Texto da análise da IA -----
-        self._txt_analise = QTextEdit()
-        self._txt_analise.setReadOnly(True)
-        self._txt_analise.setMaximumHeight(160)
-        self._txt_analise.setVisible(False)
-        self._txt_analise.setStyleSheet(themed_qss("""
-            QTextEdit {
-                background-color: {{BG_SECONDARY}}; color: {{FG_PRIMARY}};
-                border: 1px solid {{BORDER}}; border-radius: 8px; padding: 10px; font-size: 10pt;
-            }
-        """))
-        content_layout.addWidget(self._txt_analise)
 
         self._lbl_status = QLabel("")
         self._lbl_status.setWordWrap(True)
@@ -530,7 +569,8 @@ class StockAnalysisPage(QWidget):
         self._montar_opcoes_colunas()
         self._lbl_pdf_info.setText(f"Nenhum PDF anexado (máximo {MAX_PDFS_ANALISE}).")
         self._txt_analise.clear()
-        self._txt_analise.setVisible(False)
+        self._lbl_contexto_ia.setText("")
+        self._abas.setCurrentIndex(0)
         self._btn_analisar_ia.setEnabled(False)
         self._btn_exportar.setEnabled(False)
         self._spin_limite.setMaximum(0)
@@ -916,6 +956,15 @@ class StockAnalysisPage(QWidget):
             colunas=self._colunas_export(),
         )
 
+        r = self._resultado
+        partes = [f"estoque de {self._data_do_resultado():%d/%m/%Y}"]
+        if len(r.colunas) > 1:
+            partes.append(f"base da diferença: {r.colunas[r.indice_base]}")
+            partes.append("contagens: " + ", ".join(r.colunas[i] for i in self._colunas_export()))
+        partes.append(f"{self._spin_limite.value()} de {r.total_falta + r.total_sobra} "
+                      f"divergências enviadas")
+        self._contexto_ia_pendente = " · ".join(partes)
+
         self._btn_analisar_ia.setEnabled(False)
         self._lbl_status.setText("🔄 Analisando com IA...")
         self._lbl_status.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 9pt;"))
@@ -938,8 +987,11 @@ class StockAnalysisPage(QWidget):
         self._btn_analisar_ia.setEnabled(True)
         self._analise_ia_texto = texto
         self._txt_analise.setPlainText(texto)
-        self._txt_analise.setVisible(True)
-        self._lbl_status.setText("✅ Análise concluída.")
+        self._lbl_contexto_ia.setText(
+            f"Análise gerada às {datetime.now():%H:%M} · {self._contexto_ia_pendente}"
+        )
+        self._abas.setCurrentIndex(1)
+        self._lbl_status.setText("✅ Análise concluída — veja a aba \"Análise da IA\".")
         self._lbl_status.setStyleSheet(themed_qss("color: {{SUCCESS}}; font-size: 9pt;"))
 
     def _on_ia_error(self, exc: Exception):
@@ -979,38 +1031,44 @@ class StockAnalysisPage(QWidget):
         return f"analise_estoque_{self._codempresa}_{data_str}_{sufixo}.pdf"
 
     def _exportar_comparativo(self):
-        caminho, _ = QFileDialog.getSaveFileName(
-            self, "Exportar resultado comparativo",
-            self._sugestao_nome("comparativo"), "PDF (*.pdf)"
-        )
-        if not caminho:
-            return
-        html = self._cabecalho_html() + self._tabela_comparativo_html()
-        self._salvar_pdf(html, caminho, paisagem=True)
+        self._exportar("comparativo", [self._secao_comparativo()])
 
     def _exportar_ia(self):
-        caminho, _ = QFileDialog.getSaveFileName(
-            self, "Exportar análise da IA",
-            self._sugestao_nome("analise_ia"), "PDF (*.pdf)"
-        )
-        if not caminho:
-            return
-        html = self._cabecalho_html() + self._analise_ia_html()
-        self._salvar_pdf(html, caminho)
+        self._exportar("analise_ia", [self._secao_analise_ia()])
 
     def _exportar_ambos(self):
-        caminho, _ = QFileDialog.getSaveFileName(
-            self, "Exportar resultado comparativo + análise da IA",
-            self._sugestao_nome("completo"), "PDF (*.pdf)"
-        )
-        if not caminho:
+        self._exportar("completo", [self._secao_comparativo(), self._secao_analise_ia()])
+
+    def _exportar(self, sufixo: str, secoes: list):
+        """Grava o PDF direto em <pasta do app>/Exportados (criada se não
+        existir) e oferece abrir a pasta ao final."""
+        try:
+            pasta = AppConfig.get_exportados_path()
+        except OSError as exc:
+            QMessageBox.critical(
+                self, "Erro ao Exportar",
+                f"Não foi possível criar a pasta de exportação:\n{exc}")
             return
-        html = (
-            self._cabecalho_html()
-            + self._tabela_comparativo_html()
-            + self._analise_ia_html()
-        )
-        self._salvar_pdf(html, caminho, paisagem=True)
+        caminho = _caminho_livre(os.path.join(pasta, self._sugestao_nome(sufixo)))
+        if not self._salvar_pdf(secoes, caminho):
+            return
+
+        pergunta = QMessageBox(self)
+        pergunta.setWindowTitle("Exportação concluída")
+        pergunta.setIcon(QMessageBox.Icon.Question)
+        pergunta.setText(f"Arquivo gerado: <b>{html_lib.escape(os.path.basename(caminho))}</b>")
+        pergunta.setInformativeText(f"Pasta: {pasta}\n\nDeseja abrir a pasta de exportação?")
+        btn_sim = pergunta.addButton("Sim", QMessageBox.ButtonRole.YesRole)
+        pergunta.addButton("Não", QMessageBox.ButtonRole.NoRole)
+        pergunta.setDefaultButton(btn_sim)
+        pergunta.exec()
+
+        if pergunta.clickedButton() is btn_sim:
+            _abrir_pasta_com_arquivo(caminho)
+        else:
+            janela = self.window()
+            janela.raise_()
+            janela.activateWindow()
 
     # ------------------------------------------------------------------
     # Geração de PDF (QTextDocument + QPdfWriter — sem dependência nova)
@@ -1026,35 +1084,32 @@ class StockAnalysisPage(QWidget):
             total_div = self._resultado.total_falta + self._resultado.total_sobra
             total_produtos = self._resultado.total_produtos
             total_registros = self._resultado.total_itens
-        referencia_html = ""
+        # Fonte 9 e linhas coladas: o cabeçalho se repete em toda página e
+        # não pode roubar espaço da grade.
+        linha = "font-size:9pt; margin-top:1px; margin-bottom:0px;"
+        separador = f"&nbsp;<span style='color:{_PDF_BORDA};'>|</span>&nbsp;"
+        linhas = [
+            f"<p style='{linha} margin-top:0px; font-weight:bold; color:{_PDF_MARCA};'>"
+            f"Análise de Estoque</p>",
+            f"<p style='{linha}'><b>Empresa:</b> {empresa}{separador}"
+            f"<b>Data de referência:</b> {data_str}{separador}"
+            f"<b>Produtos:</b> {total_produtos}{separador}"
+            f"<b>Registros:</b> {total_registros}{separador}"
+            f"<b>Divergências:</b> {total_div}</p>",
+        ]
         if self._contagem_referencia is not None:
             nome_arquivo = html_lib.escape(os.path.basename(self._contagem_referencia.arquivo))
-            referencia_html = f"<p><b>Referência:</b> apenas o arquivo {nome_arquivo}</p>"
+            linhas.append(f"<p style='{linha}'><b>Referência:</b> apenas o arquivo {nome_arquivo}</p>")
         if self._resultado and len(self._resultado.colunas) > 1:
             r = self._resultado
             consideradas = ", ".join(html_lib.escape(r.colunas[i]) for i in self._colunas_export())
-            referencia_html += (
-                f"<p><b>Contagens consideradas:</b> {consideradas} &nbsp;·&nbsp; "
+            linhas.append(
+                f"<p style='{linha}'><b>Contagens consideradas:</b> {consideradas}{separador}"
                 f"<b>Base da diferença:</b> {html_lib.escape(r.colunas[r.indice_base])}</p>"
             )
+        return "".join(linhas)
 
-        return (
-            f"<h2>Análise de Estoque</h2>"
-            f"<p><b>Empresa:</b> {empresa} &nbsp;·&nbsp; "
-            f"<b>Data de referência:</b> {data_str} &nbsp;·&nbsp; "
-            f"<b>Produtos:</b> {total_produtos} &nbsp;·&nbsp; "
-            f"<b>Registros:</b> {total_registros} &nbsp;·&nbsp; "
-            f"<b>Divergências:</b> {total_div}</p>"
-            f"{referencia_html}"
-        )
-
-    def _tabela_comparativo_html(self) -> str:
-        theme = get_active_theme()
-        cores = {
-            "confere": theme.SUCCESS, "falta": theme.ERROR,
-            "sobra": theme.WARNING, "lote_novo": theme.ACCENT,
-            "nao_contado": "#888888",
-        }
+    def _secao_comparativo(self) -> "_SecaoTabela":
         r = self._resultado
         indices = self._colunas_export()
         varias = len(r.colunas) > 1
@@ -1064,73 +1119,391 @@ class StockAnalysisPage(QWidget):
                 return "—"
             return f"{valor:+g}" if sinal else f"{valor:g}"
 
-        # Larguras por coluna (soma 100%): as fixas primeiro, e "Descrição"
-        # fica com o que sobrar — encolhe a cada coluna de contado a mais.
-        larguras = [8, 0, 12] + [8] * len(indices) + [9, 9, 12]
-        larguras[1] = 100 - sum(larguras)
-        colgroup = "".join(f'<col width="{w}%">' for w in larguras)
-        cab_contados = "".join(
-            f"<th>{html_lib.escape(r.colunas[i])}"
-            f"{' (base)' if varias and i == r.indice_base else ''}</th>"
-            for i in indices
-        )
-        linhas = ["<h3>Resultado comparativo</h3>",
-                  # table-layout:fixed obriga a coluna a respeitar a largura do
-                  # <col> mesmo com texto mais longo que ela — sem isso o texto
-                  # empurra a coluna para o lado em vez de quebrar linha.
-                  '<table border="1" cellspacing="0" cellpadding="5" width="100%" '
-                  'style="table-layout:fixed; word-wrap:break-word;">',
-                  f"<colgroup>{colgroup}</colgroup>",
-                  f"<tr><th>Produto</th><th>Descrição</th><th>Lote</th>{cab_contados}"
-                  "<th>Sistema</th><th>Diferença</th><th>Situação</th></tr>"]
-        for item in r.itens:
-            cor = cores.get(item.situacao, "#000000")
+        # (título, alinhamento do título) de cada coluna. Larguras: calculadas
+        # na geração do PDF — cada coluna do tamanho do seu conteúdo, e a
+        # Descrição (coluna_flexivel) com o resto.
+        colunas = [("Produto", "center"), ("Descrição", "left"), ("Lote", "center")]
+        colunas += [(html_lib.escape(r.colunas[i])
+                     + (" (base)" if varias and i == r.indice_base else ""), "center")
+                    for i in indices]
+        colunas += [("Sistema", "center"), ("Diferença", "center"), ("Situação", "left")]
+        linhas = []
+        for n, item in enumerate(r.itens):
+            fundo = f" bgcolor='{_PDF_ZEBRA}'" if n % 2 else ""
+            cor = _PDF_COR_SITUACAO.get(item.situacao, _PDF_TEXTO)
             situacao = _SITUACAO_LABEL.get(item.situacao, item.situacao)
-            contados = "".join(f"<td align='right'>{_num(item.contados[i])}</td>" for i in indices)
+            contados = "".join(
+                f"<td align='center'{fundo}>{_num(item.contados[i])}</td>" for i in indices
+            )
             linhas.append(
                 "<tr>"
-                f"<td>{html_lib.escape(item.codigo)}</td>"
-                f"<td>{html_lib.escape(item.descricao)}</td>"
-                f"<td>{html_lib.escape(item.lote or '—')}</td>"
+                f"<td{fundo}>{html_lib.escape(item.codigo)}</td>"
+                f"<td{fundo}>{html_lib.escape(item.descricao)}</td>"
+                f"<td align='center'{fundo}>{html_lib.escape(item.lote or '—')}</td>"
                 f"{contados}"
-                f"<td align='right'>{_num(item.sistema)}</td>"
-                f"<td align='right'>{_num(item.diferenca, sinal=True)}</td>"
-                f"<td><span style='color:{cor}; font-weight:bold;'>{situacao}</span></td>"
+                f"<td align='center'{fundo}>{_num(item.sistema)}</td>"
+                f"<td align='center'{fundo}>{_num(item.diferenca, sinal=True)}</td>"
+                f"<td{fundo}><span style='color:{cor}; font-weight:bold;'>{situacao}</span></td>"
                 "</tr>"
             )
-        linhas.append("</table>")
-        return "".join(linhas)
+        return _SecaoTabela(
+            titulo_html=(
+                f"<p style='font-size:9pt; font-weight:bold; color:{_PDF_MARCA}; "
+                f"margin-top:0px; margin-bottom:4px;'>Resultado comparativo</p>"
+            ),
+            atributos_tabela=(
+                f"border='1' cellspacing='0' cellpadding='3' "
+                f"style='border-collapse:collapse; border-style:solid; border-color:{_PDF_BORDA};'"
+            ),
+            colunas=colunas,
+            coluna_flexivel=1,
+            linhas_html=linhas,
+        )
 
-    def _analise_ia_html(self) -> str:
+    def _secao_analise_ia(self) -> "_SecaoTexto":
+        # Fonte 8 e parágrafos quase colados: o texto da IA é longo, e o
+        # espaçamento padrão do HTML (uma linha em branco entre parágrafos)
+        # espalhava a análise por várias páginas.
         paragrafos = "".join(
-            f"<p>{html_lib.escape(p)}</p>"
+            f"<p style='margin-top:0px; margin-bottom:3px;'>{html_lib.escape(p)}</p>"
             for p in self._analise_ia_texto.splitlines() if p.strip()
         )
-        return f"<h3>Análise da IA</h3>{paragrafos}"
+        return _SecaoTexto(
+            f"<p style='font-size:9pt; font-weight:bold; color:{_PDF_MARCA}; "
+            f"margin-top:0px; margin-bottom:4px;'>Análise da IA</p>{paragrafos}"
+        )
 
-    def _salvar_pdf(self, html: str, caminho: str, paisagem: bool = False):
+    def _salvar_pdf(self, secoes: list, caminho: str) -> bool:
+        agora = datetime.now()
+        rodape = f"Gerado em {agora:%d/%m/%Y} às {agora:%H:%M}"
+        if self._nome_usuario:
+            rodape += f" por {self._nome_usuario}"
         try:
-            writer = QPdfWriter(caminho)
-            writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-            if paisagem:
-                writer.setPageOrientation(QPageLayout.Orientation.Landscape)
-            writer.setResolution(150)
-
-            doc = QTextDocument()
-            # Largura do texto = largura útil da página (a favor do writer, já
-            # na orientação certa) — sem isso o QTextDocument faz o layout com
-            # a largura padrão (retrato) antes do print_(), e a tabela em
-            # paisagem não aproveita a largura extra.
-            pagina_pt = writer.pageLayout().paintRectPoints()
-            doc.setPageSize(pagina_pt.size())
-            doc.setHtml(html)
-            doc.print_(writer)
-
-            self._lbl_status.setText(f"✅ Exportado: {caminho}")
-            self._lbl_status.setStyleSheet(themed_qss("color: {{SUCCESS}}; font-size: 9pt;"))
+            _gerar_pdf_relatorio(
+                caminho, self._cabecalho_html(), secoes, rodape, "Análise de Estoque"
+            )
         except Exception as exc:
             logger.error(f"Erro ao exportar PDF: {exc}")
             QMessageBox.critical(self, "Erro ao Exportar", f"Não foi possível gerar o PDF:\n{exc}")
+            return False
+        self._lbl_status.setText(f"✅ Exportado: {caminho}")
+        self._lbl_status.setStyleSheet(themed_qss("color: {{SUCCESS}}; font-size: 9pt;"))
+        return True
+
+
+# ----------------------------------------------------------------------
+# PDF de relatório: A4 paisagem, cabeçalho e rodapé em todas as páginas
+# ----------------------------------------------------------------------
+
+def _caminho_livre(caminho: str) -> str:
+    """O próprio caminho, se ainda não existe; senão "nome (2).pdf",
+    "nome (3).pdf"... — uma exportação nunca sobrescreve a anterior."""
+    if not os.path.exists(caminho):
+        return caminho
+    base, extensao = os.path.splitext(caminho)
+    n = 2
+    while os.path.exists(f"{base} ({n}){extensao}"):
+        n += 1
+    return f"{base} ({n}){extensao}"
+
+
+def _abrir_pasta_com_arquivo(caminho: str) -> None:
+    """Abre a pasta no Explorer com o arquivo já selecionado (mesmo jeito da
+    exportação de carga); se não der, abre só a pasta."""
+    import subprocess
+    try:
+        # Caminho como STRING (não lista), para preservar espaços.
+        subprocess.Popen(f'explorer /select,"{os.path.normpath(caminho)}"')
+    except Exception:
+        try:
+            os.startfile(os.path.dirname(caminho))
+        except Exception as exc:
+            logger.warning(f"Não foi possível abrir a pasta de exportação: {exc}")
+
+
+_LOGO_PATH = AppConfig.get_asset_path("logo.png")
+
+# Cores de impressão: fixas, sem depender do tema da tela — o papel é sempre
+# branco, e as cores do tema escuro (claras) somem nele.
+_PDF_TEXTO = "#1b2433"
+_PDF_SUAVE = "#5b6577"
+_PDF_MARCA = "#1d6bb0"
+_PDF_BORDA = "#cfd6e0"
+_PDF_ZEBRA = "#f2f5f9"
+_PDF_COR_SITUACAO = {
+    "confere": "#2e7d32",
+    "falta": "#c62828",
+    "sobra": "#b26a00",
+    "lote_novo": "#1d6bb0",
+    "nao_contado": "#7a8494",
+}
+
+@dataclass
+class _SecaoTabela:
+    """Grade do PDF. Paginada à mão (ver `_paginar_tabela`): cada página
+    recebe uma tabela completa, com a linha de títulos repetida."""
+    titulo_html: str
+    atributos_tabela: str       # atributos do <table> (borda, espaçamento)
+    colunas: list               # (título HTML, alinhamento) de cada coluna
+    coluna_flexivel: int        # a que fica com a sobra da largura (Descrição)
+    linhas_html: List[str]      # um <tr> por registro
+
+
+@dataclass
+class _SecaoTexto:
+    """Texto corrido (análise da IA), paginado pelo próprio Qt."""
+    html: str
+
+
+_logo_pdf_cache: Optional[QImage] = None
+
+
+def _logo_pdf() -> Optional[QImage]:
+    """Logotipo recortado nas bordas transparentes e reduzido: o PNG tem
+    1024 px com margem vazia em volta do ícone — sem o recorte, o ícone fica
+    menor e desalinhado com a margem da página."""
+    global _logo_pdf_cache
+    if _logo_pdf_cache is None:
+        img = QImage(_LOGO_PATH)
+        if img.isNull():
+            _logo_pdf_cache = QImage()
+        else:
+            _logo_pdf_cache = _recortar_transparencia(img).scaledToHeight(
+                240, Qt.TransformationMode.SmoothTransformation)
+    return None if _logo_pdf_cache.isNull() else _logo_pdf_cache
+
+
+def _recortar_transparencia(img: QImage) -> QImage:
+    alfa = img.convertToFormat(QImage.Format.Format_Alpha8)
+    largura, altura, por_linha = alfa.width(), alfa.height(), alfa.bytesPerLine()
+    dados = bytes(alfa.constBits())[:por_linha * altura]
+    # Brilho quase invisível (alfa < 16) conta como transparente.
+    limiar = bytes(0 if v < 16 else 255 for v in range(256))
+    topo, base, esquerda, direita = altura, -1, largura, -1
+    for y in range(altura):
+        linha = dados[y * por_linha:y * por_linha + largura].translate(limiar)
+        miolo = linha.strip(b"\x00")
+        if miolo:
+            topo, base = min(topo, y), y
+            inicio = len(linha) - len(linha.lstrip(b"\x00"))
+            esquerda = min(esquerda, inicio)
+            direita = max(direita, inicio + len(miolo) - 1)
+    if base < 0:
+        return img
+    return img.copy(esquerda, topo, direita - esquerda + 1, base - topo + 1)
+
+
+def _linha_titulos(secao: _SecaoTabela, larguras: Optional[List[float]] = None) -> str:
+    """<tr> com os títulos das colunas (larguras em %, quando informadas)."""
+    estilo = f"background-color:{_PDF_MARCA}; color:#ffffff; font-weight:bold;"
+    celulas = []
+    for c, (texto, alinhamento) in enumerate(secao.colunas):
+        largura = f" width='{larguras[c]:.3f}%'" if larguras else ""
+        celulas.append(f"<th align='{alinhamento}'{largura} style='{estilo}'>{texto}</th>")
+    return "<tr>" + "".join(celulas) + "</tr>"
+
+
+def _tabela_de_celulas(doc: QTextDocument):
+    return next((f for f in doc.rootFrame().childFrames() if hasattr(f, "rows")), None)
+
+
+def _larguras_colunas(secao: _SecaoTabela, documento, largura: float,
+                      folga: float) -> Optional[List[float]]:
+    """Largura de cada coluna, em % da página: a do seu maior conteúdo (título
+    incluso), medida na grade inteira; a coluna flexível (Descrição) fica com
+    o que sobrar.
+
+    Medir uma vez e aplicar a mesma largura em todas as páginas mantém as
+    colunas alinhadas entre uma página e outra — cada página é uma tabela
+    própria, e sozinha cada uma se dimensionaria pelo próprio conteúdo."""
+    # Sem largura na tabela e com espaço de sobra, o Qt deixa cada coluna com
+    # a largura natural do conteúdo, sem quebrar linha.
+    medida = documento(f"<table {secao.atributos_tabela}>" + _linha_titulos(secao)
+                       + "".join(secao.linhas_html) + "</table>", 8, 100000)
+    tabela = _tabela_de_celulas(medida)
+    if tabela is None:
+        return None
+    layout = medida.documentLayout()
+    n = len(secao.colunas)
+    esquerdas = [layout.blockBoundingRect(tabela.cellAt(0, c).firstCursorPosition().block()).left()
+                 for c in range(n)]
+    moldura = layout.frameBoundingRect(tabela)
+    esquerdas.append(moldura.right() + (esquerdas[0] - moldura.left()))
+    # `folga`: o Qt aplica a % sobre uma largura útil um pouco menor que a da
+    # página (bordas, espaçamento) — sem ela, texto que cabia exato quebrava
+    # no meio da palavra ("Produt|o").
+    naturais = [(esquerdas[c + 1] - esquerdas[c] + folga) / largura * 100 for c in range(n)]
+
+    flex = secao.coluna_flexivel
+    fixas = sum(p for c, p in enumerate(naturais) if c != flex)
+    limite_fixas = 80.0   # a Descrição fica sempre com pelo menos 20% da página
+    if fixas > limite_fixas:
+        naturais = [p if c == flex else p * limite_fixas / fixas for c, p in enumerate(naturais)]
+        fixas = limite_fixas
+    naturais[flex] = 100 - fixas
+    return naturais
+
+
+def _paginar_tabela(secao: _SecaoTabela, documento, largura: float,
+                    alt_corpo: float, folga: float, folga_coluna: float) -> List[str]:
+    """Divide a grade em páginas e devolve o HTML de cada uma: uma tabela
+    completa por página, com a linha de títulos repetida.
+
+    Deixar o Qt quebrar uma tabela única entre páginas esticava a última
+    linha de cada página até o fim da área, parecendo uma linha vazia. Aqui a
+    altura de cada linha é medida numa tabela inteira e as linhas são
+    distribuídas de modo que cada página só receba as que cabem."""
+    larguras = _larguras_colunas(secao, documento, largura, folga_coluna)
+    abertura = f"<table width='100%' {secao.atributos_tabela}>" + _linha_titulos(secao, larguras)
+
+    medida = documento(abertura + "".join(secao.linhas_html) + "</table>", 8, largura)
+    tabela = _tabela_de_celulas(medida)
+    alt_titulo = documento(secao.titulo_html, 8, largura).size().height()
+    if tabela is None or not secao.linhas_html:
+        return [secao.titulo_html + abertura + "".join(secao.linhas_html) + "</table>"]
+
+    layout = medida.documentLayout()
+    topos = [layout.blockBoundingRect(tabela.cellAt(r, 0).firstCursorPosition().block()).top()
+             for r in range(tabela.rows())]
+    topos.append(layout.frameBoundingRect(tabela).bottom())
+    alt_titulos_colunas = topos[1] - topos[0]
+    alturas = [topos[r + 1] - topos[r] for r in range(1, tabela.rows())]
+
+    paginas: List[List[int]] = [[]]
+    disponivel = alt_corpo - alt_titulo - alt_titulos_colunas - folga
+    for indice, altura_linha in enumerate(alturas):
+        if paginas[-1] and altura_linha > disponivel:
+            paginas.append([])
+            disponivel = alt_corpo - alt_titulos_colunas - folga
+        paginas[-1].append(indice)
+        disponivel -= altura_linha
+
+    return [
+        (secao.titulo_html if n == 0 else "") + abertura
+        + "".join(secao.linhas_html[i] for i in indices) + "</table>"
+        for n, indices in enumerate(paginas)
+    ]
+
+
+def _gerar_pdf_relatorio(caminho: str, cabecalho_html: str, secoes: list,
+                         rodape_esquerda: str, titulo: str) -> None:
+    """Gera o PDF paginado à mão (o `QTextDocument.print_` não aceita
+    cabeçalho/rodapé próprios): em cada página, marca + dados da análise no
+    topo, o conteúdo da página no meio, e "gerado em/por" + numeração no
+    rodapé. Cada seção (grade, análise da IA) começa numa página nova."""
+    writer = QPdfWriter(caminho)
+    writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+    writer.setPageOrientation(QPageLayout.Orientation.Landscape)
+    writer.setPageMargins(QMarginsF(12, 10, 12, 9), QPageLayout.Unit.Millimeter)
+    writer.setResolution(300)
+    writer.setTitle(titulo)
+    writer.setCreator(f"{APP_INFO.NAME} {APP_INFO.VERSION} — {APP_INFO.COMPANY}")
+
+    dpi = writer.resolution()
+
+    def mm(valor: float) -> float:
+        return valor * dpi / 25.4
+
+    largura, altura = writer.width(), writer.height()   # área útil, dentro das margens
+    familia = QApplication.font().family()
+
+    def _documento(html: str, tamanho_pt: int, largura_texto: float) -> QTextDocument:
+        doc = QTextDocument()
+        doc.documentLayout().setPaintDevice(writer)   # pt medidos na resolução do PDF
+        doc.setDocumentMargin(0)
+        doc.setDefaultFont(QFont(familia, tamanho_pt))
+        doc.setHtml(f"<div style='color:{_PDF_TEXTO};'>{html}</div>")
+        doc.setTextWidth(largura_texto)
+        return doc
+
+    # --- Marca: logotipo + "LogScan Manager" / "by CEOsoftware" ---
+    logo = _logo_pdf()
+    alt_logo = mm(11)
+    larg_logo = logo.width() * alt_logo / logo.height() if logo else 0.0
+    fonte_marca = QFont(familia, 12, QFont.Weight.Bold)
+    fonte_by = QFont(familia, 7)
+    fm_marca = QFontMetricsF(fonte_marca, writer)
+    fm_by = QFontMetricsF(fonte_by, writer)
+    x_nome = larg_logo + mm(2.5) if logo else 0.0
+    larg_marca = x_nome + max(fm_marca.horizontalAdvance(APP_INFO.NAME),
+                              fm_by.horizontalAdvance("by CEOsoftware"))
+    x_divisor = larg_marca + mm(4)
+    x_info = x_divisor + mm(4)
+
+    doc_cab = _documento(cabecalho_html, 9, largura - x_info)
+    alt_cab = max(alt_logo, doc_cab.size().height())
+    y_regua = alt_cab + mm(2)
+    y_corpo = y_regua + mm(4)
+
+    alt_rodape = mm(6)
+    alt_corpo = altura - y_corpo - alt_rodape - mm(2)
+
+    # Conteúdo de cada página: (documento, deslocamento vertical dentro dele).
+    paginas_corpo = []
+    for secao in secoes:
+        if isinstance(secao, _SecaoTabela):
+            for html in _paginar_tabela(secao, _documento, largura, alt_corpo, mm(1), mm(1.5)):
+                paginas_corpo.append((_documento(html, 8, largura), 0.0))
+        else:
+            doc_texto = _documento(secao.html, 8, largura)
+            doc_texto.setPageSize(QSizeF(largura, alt_corpo))
+            for k in range(doc_texto.pageCount()):
+                paginas_corpo.append((doc_texto, k * alt_corpo))
+    if not paginas_corpo:
+        paginas_corpo.append((_documento("", 8, largura), 0.0))
+    total_paginas = len(paginas_corpo)
+
+    fonte_rodape = QFont(familia, 7)
+    fm_rodape = QFontMetricsF(fonte_rodape, writer)
+
+    painter = QPainter(writer)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        for pagina in range(total_paginas):
+            if pagina:
+                writer.newPage()
+
+            # Cabeçalho
+            if logo:
+                painter.drawImage(QRectF(0, (alt_cab - alt_logo) / 2, larg_logo, alt_logo), logo)
+            bloco = fm_marca.height() + fm_by.height()
+            y_bloco = (alt_cab - bloco) / 2
+            painter.setFont(fonte_marca)
+            painter.setPen(QColor(_PDF_TEXTO))
+            painter.drawText(QPointF(x_nome, y_bloco + fm_marca.ascent()), APP_INFO.NAME)
+            painter.setFont(fonte_by)
+            painter.setPen(QColor(_PDF_SUAVE))
+            painter.drawText(QPointF(x_nome, y_bloco + fm_marca.height() + fm_by.ascent()),
+                             "by CEOsoftware")
+            painter.setPen(QPen(QColor(_PDF_BORDA), mm(0.25)))
+            painter.drawLine(QPointF(x_divisor, 0), QPointF(x_divisor, alt_cab))
+            painter.save()
+            painter.translate(x_info, (alt_cab - doc_cab.size().height()) / 2)
+            doc_cab.drawContents(painter)
+            painter.restore()
+            painter.setPen(QPen(QColor(_PDF_MARCA), mm(0.45)))
+            painter.drawLine(QPointF(0, y_regua), QPointF(largura, y_regua))
+
+            # Conteúdo desta página
+            doc_pagina, deslocamento = paginas_corpo[pagina]
+            painter.save()
+            painter.translate(0, y_corpo - deslocamento)
+            doc_pagina.drawContents(painter, QRectF(0, deslocamento, largura, alt_corpo))
+            painter.restore()
+
+            # Rodapé
+            y_rodape = altura - alt_rodape
+            painter.setPen(QPen(QColor(_PDF_BORDA), mm(0.25)))
+            painter.drawLine(QPointF(0, y_rodape), QPointF(largura, y_rodape))
+            painter.setFont(fonte_rodape)
+            painter.setPen(QColor(_PDF_SUAVE))
+            y_texto = y_rodape + (alt_rodape + fm_rodape.ascent() - fm_rodape.descent()) / 2
+            painter.drawText(QPointF(0, y_texto), rodape_esquerda)
+            numero = f"Página {pagina + 1}/{total_paginas}"
+            painter.drawText(QPointF(largura - fm_rodape.horizontalAdvance(numero), y_texto), numero)
+    finally:
+        painter.end()
 
 
 def _qcolor_from_token(token: str):

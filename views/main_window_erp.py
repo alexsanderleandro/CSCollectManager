@@ -1710,6 +1710,7 @@ class MainWindowERP(QMainWindow):
         # Define a empresa logada na análise de estoque, para validar os PDFs anexados
         if hasattr(self, "_stock_analysis_page") and self._stock_analysis_page:
             self._stock_analysis_page.set_empresa_info(empresa.get("codigo"), empresa.get("nome"))
+            self._stock_analysis_page.set_usuario_info(usuario.get("nome", ""))
 
         if licenca:
             self._licenca_payload = licenca

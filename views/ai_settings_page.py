@@ -7,7 +7,7 @@ usada pela análise de estoque.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QLabel, QLineEdit, QComboBox, QPushButton
+    QLabel, QLineEdit, QComboBox, QPushButton, QMessageBox
 )
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QCursor
@@ -241,8 +241,7 @@ class AISettingsPage(QWidget):
 
     def _on_save_clicked(self):
         self._salvar_campos_atuais()
-        self._lbl_status.setText("✅ Configuração salva.")
-        self._lbl_status.setStyleSheet(themed_qss("color: {{SUCCESS}}; font-size: 9pt;"))
+        QMessageBox.information(self, "Configurações", "Configuração da IA salva com sucesso.")
 
     def _on_test_clicked(self):
         if not self._txt_token.text().strip():

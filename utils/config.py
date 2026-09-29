@@ -84,6 +84,19 @@ class AppConfig:
         return str(path)
     
     @classmethod
+    def get_exportados_path(cls) -> str:
+        """
+        Retorna a pasta dos relatórios exportados: <pasta_do_exe>/Exportados.
+
+        Cria a pasta se ainda não existir. Diferente das outras pastas, a
+        falha ao criar não é engolida: sem a pasta não há onde gravar, e quem
+        exporta precisa saber o motivo.
+        """
+        path = cls.get_app_dir() / "Exportados"
+        os.makedirs(path, exist_ok=True)
+        return str(path)
+
+    @classmethod
     def get_asset_path(cls, filename: str) -> str:
         """
         Retorna caminho completo para um asset.

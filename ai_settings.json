@@ -1,12 +1,12 @@
 {
-  "provider": "anthropic",
+  "provider": "openai",
   "providers": {
     "openai": {
-      "token": "",
-      "model": "gpt-5"
+      "token": "gAAAAABqvAywjYyOgXVj8h0AukhMtjLpG1Qe75_yWw0fNoUJd60U59uipRgg5hSZnqjQ21bP3cTjXxedNiGE5gER77sd4fBsIgwXlApYqsskfTXN33j99t0-MuWsKfs7d6a12z_ZvL-tgbhRTtaWHcyDtu3-GrGZg3e45E87s7KSwa8BOE4AwdzzeTOs3qt_lf54HTPR2LmCrGdxHxxVzuOg9vRdpfO27VdDCTCQIBplLZHhnV14BWmiE12klAYY7elbJ5BxwkU2_a6p7_pqK2l8w4U4zqDFcocWVgf2Ydk59XJSHOUZcbo=",
+      "model": "gpt-5-mini"
     },
     "anthropic": {
-      "token": "",
+      "token": "gAAAAABqu_9USeFXPKTIgTiexMsGYCME-i4o_yz2e5lzPgnmbV6tBr0gfMGh9BroIYrWSbOOpmuktdy773JqZX0usQXt_ok8_xpizWlsPitUsU-rUKwAWcSYaLxh5Wh6NLGQeD3zIdwP-aydHWGvYJu9Ssa642nDHtfGYyucGzBbvclUJmbP3C4MEmF8lBhb4qrUZLOA-zWo2Yqk7oXJaDdM6rcx2qSzOMZZ9PXh545pLfvdfW1xnjJKnohuLBG_adR66y2wuTpXNtTIYtcizBy8hHBEaZfg7VVEr5j0pwRzT7l7DPaAIQs=",
       "model": "claude-sonnet-5"
     },
     "google": {
