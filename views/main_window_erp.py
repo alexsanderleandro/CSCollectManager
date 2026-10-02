@@ -607,6 +607,10 @@ class MainWindowERP(QMainWindow):
         # Códigos selecionados para exportação (preenchidos em _on_export_selected)
         self._export_codprodutos: List = []
         self._last_export_filters: Dict = {}  # Filtros ativos na última exportação
+        # Carga de recontagem pedida pela Análise de Estoque: {"produtos": [...],
+        # "local": "Loja"/"Depósito"/ENDLOCALESTOQUE}. Enquanto existir, a
+        # exportação usa esses produtos no lugar da seleção da tela Produtos.
+        self._recontagem: Optional[Dict[str, Any]] = None
         
         # Setup
         self._setup_window()
@@ -1340,7 +1344,7 @@ class MainWindowERP(QMainWindow):
             }
             QPushButton:hover { background-color: {{HOVER_STRONG}}; }
         """))
-        btn_cancel.clicked.connect(lambda: self._switch_module(self.MODULE_PRODUCTS))
+        btn_cancel.clicked.connect(self._on_cancelar_exportacao)
         action_layout.addWidget(btn_cancel)
 
         self._btn_start_export = QPushButton("📤  Iniciar Exportação  [F11]")
@@ -1764,9 +1768,10 @@ class MainWindowERP(QMainWindow):
         if hasattr(self, "_filter_panel") and self._filter_panel:
             self._filter_panel.set_company_code(empresa.get("codigo"))
 
-        # Define a empresa logada na análise de estoque, para validar os PDFs anexados
+        # Define a empresa logada na análise de estoque, para validar as contagens
         if hasattr(self, "_stock_analysis_page") and self._stock_analysis_page:
-            self._stock_analysis_page.set_empresa_info(empresa.get("codigo"), empresa.get("nome"))
+            self._stock_analysis_page.set_empresa_info(
+                empresa.get("codigo"), empresa.get("nome"), empresa.get("cnpj", ""))
             self._stock_analysis_page.set_usuario_info(usuario.get("nome", ""))
 
         if licenca:
@@ -2340,17 +2345,19 @@ class MainWindowERP(QMainWindow):
     def _on_cancel_export_shortcut(self):
         """Aciona Cancelar via ESC (apenas quando no módulo de exportação)."""
         if self._current_module == self.MODULE_EXPORT:
-            self._switch_module(self.MODULE_PRODUCTS)
-    
+            self._on_cancelar_exportacao()
+
     def _on_export_selected(self):
         """Navega para a página de exportação com os produtos selecionados."""
         codprodutos = self._product_table.get_selected_codprodutos()
         if not codprodutos:
             QMessageBox.warning(self, "Aviso", "Selecione produtos para exportar.")
             return
-        
-        # Armazena códigos selecionados para uso na exportação
+
+        # Armazena códigos selecionados para uso na exportação; uma
+        # recontagem pendente da Análise de Estoque deixa de valer.
         self._export_codprodutos = codprodutos
+        self._recontagem = None
         
         self._switch_module(self.MODULE_EXPORT)
         self._lbl_export_summary.setText(
@@ -2543,13 +2550,39 @@ class MainWindowERP(QMainWindow):
             )
             return
 
-        # 2. Obtém produtos selecionados como dicts completos
-        produtos = self._product_table.get_selected_products_as_dicts()
+        # 2. Obtém produtos selecionados como dicts completos. Uma recontagem
+        # pedida pela Análise de Estoque tem prioridade sobre a seleção da
+        # tela Produtos: busca os produtos pela mesma projeção da UI.
+        recontagem = self._recontagem
+        if recontagem:
+            from services.product_service import ProductService, ProductFilter
+            try:
+                pf = ProductFilter.from_dict({
+                    "company_code": self._empresa_info.get("codigo"),
+                    "produtos": recontagem["produtos"],
+                    # Divergência de produto sem GTIN também precisa ser recontada.
+                    "incluir_sem_gtin": True,
+                })
+                produtos = ProductService().get_products(pf)
+            except Exception as e:
+                QMessageBox.critical(self, "Recontagem", f"Não foi possível buscar os produtos da recontagem:\n{e}")
+                return
+            encontrados = {str(p.get("codproduto")).strip() for p in produtos}
+            fora = [c for c in recontagem["produtos"] if c not in encontrados]
+            if fora:
+                QMessageBox.information(
+                    self, "Recontagem",
+                    f"{len(fora)} produto(s) ficaram fora da carga por estarem inativos, sem controle "
+                    f"de estoque ou sem código de barras no cadastro:\n\n" + ", ".join(fora[:30])
+                    + (" …" if len(fora) > 30 else "")
+                )
+        else:
+            produtos = self._product_table.get_selected_products_as_dicts()
 
         # Se não há seleção na grid principal, tenta usar o filtro de produto
         # presente no painel de filtros (ProductSearchCombo). O filtro mostrado
         # na UI é o painel lateral — não confundir com o diálogo de busca.
-        if not produtos:
+        if not produtos and not recontagem:
             try:
                 filtros = self._filter_panel.get_filters()
                 selecionados = filtros.get("produtos") or []
@@ -2568,6 +2601,14 @@ class MainWindowERP(QMainWindow):
             except Exception:
                 produtos = []
 
+        if not produtos and recontagem:
+            QMessageBox.warning(
+                self,
+                "Nenhum produto",
+                "Nenhum produto da recontagem pode ir para a carga (veja o aviso anterior).\n\n"
+                "Volte para a Análise de Estoque e escolha outros produtos, ou clique em Cancelar."
+            )
+            return
         if not produtos:
             QMessageBox.warning(
                 self,
@@ -2643,7 +2684,9 @@ class MainWindowERP(QMainWindow):
             codempresa=int(self._empresa_info.get("codigo", 1) or 1),
             nomeempresa=self._empresa_info.get("nome", ""),
             local=(
-                "Depósito" if self._local_estoque == "deposito"
+                # Recontagem: o mesmo local de estoque da análise que a pediu.
+                recontagem["local"] if recontagem
+                else "Depósito" if self._local_estoque == "deposito"
                 else "Loja" if self._local_estoque in ("loja", "")
                 else self._local_estoque  # valor ENDLOCALESTOQUE (modo "T")
             ),
@@ -2777,6 +2820,12 @@ class MainWindowERP(QMainWindow):
         self._status_bar.hide_progress()
         self._status_bar.show_message(f"✅ Exportação concluída: {os.path.basename(filepath)}", 8000)
         logger.info(f"Exportação concluída: {filepath}")
+        if self._recontagem is not None:
+            # A recontagem foi exportada: a próxima carga volta a sair da tela Produtos.
+            self._recontagem = None
+            self._lbl_export_summary.setText(
+                "🔁 Carga de recontagem gerada. Quando ela voltar do coletor, baixe-a em Download "
+                "Contagens e selecione-a na Análise de Estoque como mais uma contagem.")
 
         # Diálogo de sucesso com opção de abrir pasta
         msg = QMessageBox(self)
@@ -3613,8 +3662,32 @@ class MainWindowERP(QMainWindow):
         from views.stock_analysis_page import StockAnalysisPage
 
         self._stock_analysis_page = StockAnalysisPage()
+        self._stock_analysis_page.recontagem_solicitada.connect(self._on_recontagem_solicitada)
         self._module_stack.addWidget(self._stock_analysis_page)
         self._pages[self.MODULE_STOCK_ANALYSIS] = self._module_stack.count() - 1
+
+    def _on_recontagem_solicitada(self, codprodutos: list, local: str):
+        """Análise de Estoque → Exportar Carga só com os produtos divergentes.
+
+        Mesmo caminho da seleção da tela Produtos (a carga passa pelo mesmo
+        DbExportService e é assinada igual); só a origem dos produtos muda.
+        """
+        nome_local = {"L": "Loja", "D": "Depósito"}.get(local, local)
+        self._recontagem = {"produtos": [str(c) for c in codprodutos], "local": nome_local}
+        self._switch_module(self.MODULE_EXPORT)
+        self._lbl_export_summary.setText(
+            f"🔁 Recontagem da Análise de Estoque: {len(codprodutos):,} produto(s), local {nome_local}.\n"
+            "Escolha o conferente e o dispositivo e clique em Iniciar Exportação."
+        )
+
+    def _on_cancelar_exportacao(self):
+        """Cancelar [ESC] na tela de exportação: volta para Produtos e
+        descarta uma recontagem pendente."""
+        if self._recontagem is not None:
+            self._recontagem = None
+            self._lbl_export_summary.setText(
+                "Selecione produtos na aba ‘Produtos’ e clique em Exportar Selecionados.")
+        self._switch_module(self.MODULE_PRODUCTS)
 
     def _on_metrics_refresh(self):
         """Recarrega a tabela de métricas a partir dos zips na pasta de contagens."""

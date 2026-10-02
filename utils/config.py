@@ -204,16 +204,37 @@ class AppConfig:
         cls._save_settings(settings)
 
     @classmethod
-    def get_last_pdf_dir(cls) -> str:
-        """Retorna o último diretório de anexo de PDF de contagem salvo, ou a pasta do usuário."""
+    def get_analise_campo_custo(cls) -> str:
+        """Campo de ``produtosestoque`` usado no valor das divergências da
+        Análise de Estoque (ex.: "customedio"). Custo médio é o padrão."""
         settings = cls._load_settings()
-        return settings.get("last_pdf_dir", str(Path.home() / "Documents"))
+        return str(settings.get("analise_campo_custo") or "customedio")
 
     @classmethod
-    def set_last_pdf_dir(cls, path: str) -> None:
-        """Salva o último diretório usado para anexar PDFs de contagem."""
+    def set_analise_campo_custo(cls, campo: str) -> None:
+        """Guarda o campo de custo escolhido na Análise de Estoque."""
         settings = cls._load_settings()
-        settings["last_pdf_dir"] = path
+        settings["analise_campo_custo"] = campo
+        cls._save_settings(settings)
+
+    @classmethod
+    def get_analise_validade_dias(cls) -> int:
+        """Prazo (dias) da aba Validade da Análise de Estoque: lotes que vencem
+        até a data de referência + este prazo. 30 é o padrão."""
+        settings = cls._load_settings()
+        try:
+            return int(settings.get("analise_validade_dias", 30))
+        except Exception:
+            return 30
+
+    @classmethod
+    def set_analise_validade_dias(cls, dias: int) -> None:
+        """Guarda o prazo da aba Validade da Análise de Estoque."""
+        settings = cls._load_settings()
+        try:
+            settings["analise_validade_dias"] = int(dias)
+        except Exception:
+            settings["analise_validade_dias"] = 30
         cls._save_settings(settings)
 
     @classmethod
