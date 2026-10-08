@@ -543,6 +543,15 @@ class AppConfig:
             pass
 
     @classmethod
+    def save_export_history(cls, history: list) -> None:
+        """Regrava o histórico inteiro — usado para apagar só parte dele (ex.:
+        as exportações de uma empresa)."""
+        import json
+        path = cls.get_export_history_path()
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+
+    @classmethod
     def clear_export_history(cls) -> None:
         """
         Limpa o histórico de exportações persistido no JSON.

@@ -1379,6 +1379,8 @@ class MainWindowERP(QMainWindow):
     
     def _create_history_page(self):
         """Cria página de histórico."""
+        from PySide6.QtWidgets import QCheckBox
+
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1414,12 +1416,28 @@ class MainWindowERP(QMainWindow):
 
         btn_clear = QPushButton("🗑️ Limpar Histórico")
         btn_clear.setMinimumHeight(36)
-        btn_clear.setToolTip("Apaga todo o histórico de exportações (arquivo JSON)")
+        btn_clear.setToolTip("Apaga as exportações que estão na lista")
         btn_clear.clicked.connect(self._clear_export_history)
         controls_layout.addWidget(btn_clear)
 
         controls_layout.addStretch()
+
+        # O arquivo de histórico é um só para a máquina (C:\ceosoftware), com
+        # as exportações de todas as empresas: por padrão a lista mostra só a
+        # empresa logada; marcando aqui, mostra todas, com a empresa na linha.
+        self._chk_history_todas = QCheckBox("Todas as empresas")
+        self._chk_history_todas.setToolTip(
+            "Desmarcado: só as exportações da empresa logada.\n"
+            "Marcado: as de todas as empresas, com a empresa em cada linha.")
+        self._chk_history_todas.setStyleSheet(themed_qss("QCheckBox { color: {{FG_PRIMARY}}; }"))
+        self._chk_history_todas.toggled.connect(self._refresh_history)
+        controls_layout.addWidget(self._chk_history_todas)
         content_layout.addWidget(controls)
+
+        self._lbl_history_info = QLabel("")
+        self._lbl_history_info.setWordWrap(True)
+        self._lbl_history_info.setStyleSheet(themed_qss("color: {{FG_SECONDARY}}; font-size: 9pt;"))
+        content_layout.addWidget(self._lbl_history_info)
 
         # Lista de histórico
         self._history_list = QListWidget()
@@ -1440,13 +1458,31 @@ class MainWindowERP(QMainWindow):
     # -------------------------
     # Histórico helpers
     # -------------------------
-    def _refresh_history(self):
-        """Carrega e exibe o histórico em ordem decrescente por timestamp."""
+    def _history_da_empresa_logada(self, entry: dict) -> bool:
+        """Diz se a exportação é da empresa logada. Compara pelo CNPJ: o
+        histórico é um arquivo só para a máquina, e o mesmo código de empresa
+        pode existir em bancos diferentes. Sem CNPJ, compara pelo código."""
+        import re
+        empresa = entry.get('empresa') or {}
+        cnpj_logado = re.sub(r"\D", "", str(self._empresa_info.get("cnpj") or ""))
+        cnpj_entrada = re.sub(r"\D", "", str(empresa.get('cnpj') or ""))
+        if cnpj_logado and cnpj_entrada:
+            return cnpj_logado == cnpj_entrada
+        return str(empresa.get('codigo', '')).strip() == str(self._empresa_info.get("codigo", "")).strip()
+
+    def _refresh_history(self, *_args):
+        """Carrega e exibe o histórico em ordem decrescente por timestamp —
+        só da empresa logada, a não ser que "todas as empresas" esteja marcado."""
         try:
             from utils.config import AppConfig
             history = AppConfig.load_export_history()
         except Exception:
             history = []
+
+        todas = self._chk_history_todas.isChecked()
+        total_arquivo = len(history)
+        if not todas:
+            history = [e for e in history if self._history_da_empresa_logada(e)]
 
         def parse_entry_dt(e):
             # Primeiro tenta usar os campos date + time no formato dd-mm-aaaa e HH:MM
@@ -1476,11 +1512,29 @@ class MainWindowERP(QMainWindow):
             aparelho = entry.get('aparelho', '')
             total = entry.get('product_count', entry.get('total_produtos', 0))
 
-            display = f"{date_str} {time_str}  •  Usuário: {usuario_nome}  •  Conferente: {vendedor}  •  Aparelho: {aparelho}  •  {total} produtos"
+            display = f"{date_str} {time_str}  •  "
+            if todas:
+                # Com todas as empresas na lista, cada linha diz de qual é.
+                empresa = entry.get('empresa') or {}
+                rotulo_empresa = " – ".join(
+                    str(v) for v in (empresa.get('codigo'), empresa.get('nome')) if v) or "não identificada"
+                display += f"Empresa: {rotulo_empresa}  •  "
+            display += f"Usuário: {usuario_nome}  •  Conferente: {vendedor}  •  Aparelho: {aparelho}  •  {total} produtos"
 
             item = QListWidgetItem(display)
             item.setData(Qt.ItemDataRole.UserRole, entry)
             self._history_list.addItem(item)
+
+        empresa_logada = " – ".join(
+            str(v) for v in (self._empresa_info.get("codigo"), self._empresa_info.get("nome")) if v)
+        if todas:
+            self._lbl_history_info.setText(f"{total_arquivo} exportação(ões) de todas as empresas.")
+        else:
+            outras = total_arquivo - len(history_sorted)
+            texto = f"{len(history_sorted)} exportação(ões) da empresa {empresa_logada or 'logada'}."
+            if outras:
+                texto += f" {outras} de outras empresas não aparecem (marque \"Todas as empresas\" para ver)."
+            self._lbl_history_info.setText(texto)
 
     def _on_history_item_double_clicked(self, item: QListWidgetItem):
         """Ao dar duplo-clique: tentar abrir pasta do arquivo ZIP gerado."""
@@ -1567,20 +1621,34 @@ class MainWindowERP(QMainWindow):
         )
 
     def _clear_export_history(self):
-        """Limpa o arquivo de histórico após confirmação do usuário."""
+        """Apaga do histórico as exportações que estão na lista (só as da
+        empresa logada, ou todas, conforme "todas as empresas")."""
         from utils.config import AppConfig
 
+        todas = self._chk_history_todas.isChecked()
+        if todas:
+            pergunta = "Deseja apagar o histórico de exportações de TODAS as empresas?"
+        else:
+            empresa_logada = " – ".join(
+                str(v) for v in (self._empresa_info.get("codigo"), self._empresa_info.get("nome")) if v)
+            pergunta = (f"Deseja apagar o histórico de exportações da empresa {empresa_logada or 'logada'}? "
+                        "O das outras empresas é mantido.")
         resp = QMessageBox.question(
             self,
             "Limpar Histórico",
-            "Deseja apagar todo o histórico de exportações? Esta ação não pode ser desfeita.",
+            f"{pergunta}\n\nEsta ação não pode ser desfeita.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
 
         try:
-            AppConfig.clear_export_history()
+            if todas:
+                AppConfig.clear_export_history()
+            else:
+                restante = [e for e in AppConfig.load_export_history()
+                            if not self._history_da_empresa_logada(e)]
+                AppConfig.save_export_history(restante)
             self._refresh_history()
             # Feedback na status bar
             try:
@@ -1767,6 +1835,10 @@ class MainWindowERP(QMainWindow):
         # Define código da empresa no painel de filtros para buscas dinâmicas
         if hasattr(self, "_filter_panel") and self._filter_panel:
             self._filter_panel.set_company_code(empresa.get("codigo"))
+
+        # O histórico mostra só a empresa logada: refaz a lista com ela.
+        if hasattr(self, "_history_list"):
+            self._refresh_history()
 
         # Define a empresa logada na análise de estoque, para validar as contagens
         if hasattr(self, "_stock_analysis_page") and self._stock_analysis_page:
