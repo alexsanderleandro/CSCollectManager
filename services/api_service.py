@@ -337,7 +337,7 @@ class ApiService:
         Remove uma carga pelo seu ID.
 
         Se ``database_url`` for informado → DELETE direto no banco.
-        Caso contrário → DELETE /cargas/{id} via HTTP.
+        Caso contrário → DELETE /carga/{id} via HTTP.
 
         Returns:
             (sucesso, mensagem)
@@ -367,13 +367,13 @@ class ApiService:
             return False, f"Erro ao remover do banco: {exc}"
 
     def _delete_carga_http(self, carga_id) -> "Tuple[bool, str]":
-        """Remove carga via DELETE /cargas/{id} na API HTTP."""
+        """Remove carga via DELETE /carga/{id} na API HTTP."""
         try:
             import requests
         except ImportError:
             return False, "Biblioteca 'requests' não instalada."
 
-        url = f"{self._base_url}/cargas/{carga_id}"
+        url = f"{self._base_url}/carga/{carga_id}"
         headers = {"Authorization": self._authorization}
         try:
             resp = requests.delete(url, headers=headers, timeout=self.TIMEOUT)
@@ -388,7 +388,7 @@ class ApiService:
         Remove uma contagem pelo seu ID.
 
         Se ``database_url`` for informado → DELETE direto no banco.
-        Caso contrário → DELETE /contagens/{id} via HTTP.
+        Caso contrário → DELETE /contagem/{id} via HTTP.
 
         Returns:
             (sucesso, mensagem)
