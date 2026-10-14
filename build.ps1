@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 
 $ErrorActionPreference = 'Stop'
 
-Write-Host "Iniciando build do CSCollectManager..."
+Write-Host "Iniciando build do CSColetor Manager..."
 
 # Garante que estamos na raiz do projeto
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -24,7 +24,7 @@ $paths = "--paths=."
 
 # DefiniÃ§Ãµes
 $entry = "run.py"
-$outName = "LogScanManager"
+$outName = "CSColetorManager"
 $icon = "assets/icon.ico"
 $verFile = "version.txt"
 $assetsSrc = "assets"
@@ -92,8 +92,8 @@ VSVersionInfo(
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('FileDescription', 'CSColetor Manager'),
                         StringStruct('FileVersion', '$versionStr'),
-                        StringStruct('InternalName', 'LogScanManager.exe'),
-                        StringStruct('OriginalFilename', 'LogScanManager.exe'),
+                        StringStruct('InternalName', 'CSColetorManager.exe'),
+                        StringStruct('OriginalFilename', 'CSColetorManager.exe'),
                         StringStruct('ProductName', 'CSColetor Manager'),
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('LegalTrademarks', ''),
@@ -112,7 +112,7 @@ Set-Content -Path $verFile -Value $versionTxt -Encoding UTF8
 Write-Host "Arquivo $verFile atualizado com versÃ£o: $versionStr"
 
 # Prefere usar o .spec (garante runtime_hooks e hiddenimports corretos)
-$specFile = "LogScanManager.spec"
+$specFile = "CSColetorManager.spec"
 if (Test-Path $specFile) {
     Write-Host "Usando arquivo .spec: $specFile"
     & .\.venv\Scripts\pyinstaller.exe --noconfirm --clean $specFile
