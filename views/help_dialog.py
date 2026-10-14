@@ -1,7 +1,7 @@
 """
 help_dialog.py
 ===============
-Diálogo de ajuda/documentação do LogScan Manager.
+Diálogo de ajuda/documentação do CSColetor Manager.
 
 Exibe o conteúdo de docs/ajuda_usuario.md (Markdown), versionado
 automaticamente por update_version.py junto com version.py.

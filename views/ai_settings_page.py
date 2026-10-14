@@ -9,13 +9,25 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLabel, QLineEdit, QComboBox, QPushButton, QMessageBox
 )
-from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtGui import QCursor
+from PySide6.QtCore import Qt, QThreadPool, QUrl
+from PySide6.QtGui import QCursor, QDesktopServices
 
 from app.styles import themed_qss
-from services.ai_config_service import AIConfigService, NOMES_PROVEDOR, PROVIDERS
+from services import ai_consumo
+from services.ai_config_service import AIConfigService, NOMES_PROVEDOR, PROVIDERS, URL_COBRANCA
 from services.ai_client import AIClient, AIClientError
 from utils.workers import WorkerSignals, TaskRunnable
+
+_QSS_BOTAO_SECUNDARIO = """
+    QPushButton {
+        background-color: {{BG_HOVER}};
+        color: {{FG_PRIMARY}};
+        border: none;
+        border-radius: 8px;
+        padding: 8px 18px;
+    }
+    QPushButton:hover { background-color: {{BG_SELECTED}}; }
+"""
 
 _CONSUMO_BADGE = {
     "baixo": ("🟢 Consumo baixo", "{{SUCCESS}}"),
@@ -123,22 +135,38 @@ class AISettingsPage(QWidget):
         lbl_model_hint.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 9pt;"))
         form.addRow("", lbl_model_hint)
 
+        # Gasto estimado + saldo no site do provedor
+        gasto_row = QHBoxLayout()
+        gasto_row.setSpacing(10)
+        self._lbl_gasto = QLabel("")
+        self._lbl_gasto.setWordWrap(True)
+        self._lbl_gasto.setTextFormat(Qt.TextFormat.RichText)
+        self._lbl_gasto.setStyleSheet(themed_qss("color: {{FG_PRIMARY}}; font-size: 10pt;"))
+        gasto_row.addWidget(self._lbl_gasto, 1)
+
+        self._btn_saldo = QPushButton("💳  Ver saldo no site")
+        self._btn_saldo.setMinimumHeight(36)
+        self._btn_saldo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._btn_saldo.setStyleSheet(themed_qss(_QSS_BOTAO_SECUNDARIO))
+        self._btn_saldo.clicked.connect(self._on_ver_saldo_clicked)
+        gasto_row.addWidget(self._btn_saldo)
+        form.addRow("Gasto estimado:", gasto_row)
+
+        lbl_gasto_hint = QLabel(
+            "Estimativa: tokens informados em cada resposta da IA × preço de tabela do modelo. "
+            "Conta só os pedidos feitos neste computador — o saldo real está no site do provedor."
+        )
+        lbl_gasto_hint.setWordWrap(True)
+        lbl_gasto_hint.setStyleSheet(themed_qss("color: {{FG_DISABLED}}; font-size: 9pt;"))
+        form.addRow("", lbl_gasto_hint)
+
         # Botões
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
         self._btn_test = QPushButton("Testar conexão")
         self._btn_test.setMinimumHeight(36)
         self._btn_test.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._btn_test.setStyleSheet(themed_qss("""
-            QPushButton {
-                background-color: {{BG_HOVER}};
-                color: {{FG_PRIMARY}};
-                border: none;
-                border-radius: 8px;
-                padding: 8px 18px;
-            }
-            QPushButton:hover { background-color: {{BG_SELECTED}}; }
-        """))
+        self._btn_test.setStyleSheet(themed_qss(_QSS_BOTAO_SECUNDARIO))
         self._btn_test.clicked.connect(self._on_test_clicked)
         btn_row.addWidget(self._btn_test)
 
@@ -203,6 +231,35 @@ class AISettingsPage(QWidget):
         self._cmb_model.blockSignals(False)
         self._cmb_model.setCurrentIndex(idx_atual)
         self._update_consumo_badge()
+        self._atualizar_gasto()
+
+    def _atualizar_gasto(self):
+        """Gasto estimado do provedor do combo neste mês e no anterior."""
+        provider = self._cmb_provider.currentData()
+        nome = NOMES_PROVEDOR.get(provider, provider)
+        mes, mes_anterior = ai_consumo.mes_atual_e_anterior()
+        atual = ai_consumo.resumo_mes(provider, mes)
+        anterior = ai_consumo.resumo_mes(provider, mes_anterior)
+
+        if atual.pedidos:
+            plural = "pedido" if atual.pedidos == 1 else "pedidos"
+            texto = (f"<b>{ai_consumo.formatar_usd(atual.custo_usd)}</b> neste mês "
+                     f"({atual.pedidos} {plural} à IA)")
+        else:
+            texto = "Nenhum pedido à IA neste mês"
+        if anterior.pedidos:
+            texto += f" &nbsp;·&nbsp; mês passado: {ai_consumo.formatar_usd(anterior.custo_usd)}"
+        sem_preco = atual.sem_preco + anterior.sem_preco
+        if sem_preco:
+            texto += (f" &nbsp;·&nbsp; {sem_preco} pedido(s) de modelo sem preço na tabela, "
+                      "fora da soma")
+        self._lbl_gasto.setText(texto)
+
+        url = URL_COBRANCA.get(provider, "")
+        self._btn_saldo.setEnabled(bool(url))
+        self._btn_saldo.setToolTip(
+            f"Abre a página de cobrança da conta {nome}:\n{url}\n"
+            "O saldo aparece depois de entrar na conta." if url else "")
 
     def _update_consumo_badge(self):
         data = self._cmb_model.currentData()
@@ -233,6 +290,18 @@ class AISettingsPage(QWidget):
     def _on_model_changed(self):
         self._update_consumo_badge()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Pode ter havido análises desde a última vez que a tela apareceu.
+        self._atualizar_gasto()
+
+    def _on_ver_saldo_clicked(self):
+        url = URL_COBRANCA.get(self._cmb_provider.currentData(), "")
+        if url and not QDesktopServices.openUrl(QUrl(url)):
+            QMessageBox.information(
+                self, "Ver saldo no site",
+                f"Não foi possível abrir o navegador. Acesse este endereço:\n\n{url}")
+
     def _on_reveal_toggled(self, checked: bool):
         self._txt_token.setEchoMode(
             QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
@@ -262,11 +331,15 @@ class AISettingsPage(QWidget):
 
     def _on_test_finished(self, resultado):
         self._btn_test.setEnabled(True)
+        self._atualizar_gasto()
         self._lbl_status.setText("✅ Conexão validada com sucesso.")
         self._lbl_status.setStyleSheet(themed_qss("color: {{SUCCESS}}; font-size: 9pt;"))
 
     def _on_test_error(self, exc: Exception):
         self._btn_test.setEnabled(True)
-        mensagem = str(exc) if isinstance(exc, AIClientError) else f"Erro inesperado: {exc}"
+        if isinstance(exc, AIClientError):
+            mensagem = f"{exc.mensagem}\n{exc.orientacao}".strip()
+        else:
+            mensagem = f"Erro inesperado: {exc}"
         self._lbl_status.setText(f"❌ {mensagem}")
         self._lbl_status.setStyleSheet(themed_qss("color: {{ERROR}}; font-size: 9pt;"))

@@ -90,11 +90,11 @@ VSVersionInfo(
                     '041604B0',  # PortuguÃªs Brasil
                     [
                         StringStruct('CompanyName', 'CEOsoftware'),
-                        StringStruct('FileDescription', 'LogScan Manager'),
+                        StringStruct('FileDescription', 'CSColetor Manager'),
                         StringStruct('FileVersion', '$versionStr'),
                         StringStruct('InternalName', 'LogScanManager.exe'),
                         StringStruct('OriginalFilename', 'LogScanManager.exe'),
-                        StringStruct('ProductName', 'LogScan Manager'),
+                        StringStruct('ProductName', 'CSColetor Manager'),
                         StringStruct('CompanyName', 'CEOsoftware'),
                         StringStruct('LegalTrademarks', ''),
                         StringStruct('ProductVersion', '$versionStr'),

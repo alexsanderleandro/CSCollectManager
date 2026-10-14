@@ -9,7 +9,7 @@ de estoque. Persiste em ``ai_settings.json`` (mesma pasta de
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from encryption import decrypt_field, encrypt_field, is_encrypted
 from utils.config import AppConfig
@@ -19,26 +19,45 @@ PROVIDERS = ("openai", "anthropic", "google")
 # Nome de cada provedor como aparece para o usuário.
 NOMES_PROVEDOR = {"openai": "OpenAI", "anthropic": "Anthropic", "google": "Google"}
 
+# Página de cobrança de cada provedor, onde fica o saldo: nenhum deles informa
+# o saldo pela API com a chave comum, então a tela de Configurações abre esta.
+URL_COBRANCA = {
+    "openai": "https://platform.openai.com/settings/organization/billing/overview",
+    "anthropic": "https://platform.claude.com/settings/billing",
+    "google": "https://aistudio.google.com/billing",
+}
+
 # Modelos disponíveis por provedor, com nível de consumo relativo (para a
-# barra de indicação na tela de Configurações). Revisar periodicamente
-# contra o catálogo vigente de cada provedor — muda com frequência.
-_MODELOS: Dict[str, List[Dict[str, str]]] = {
+# barra de indicação na tela de Configurações) e preço de tabela em US$ por
+# 1 milhão de tokens (entrada, saída), usado no gasto estimado. Revisar
+# periodicamente contra o catálogo e os preços vigentes de cada provedor —
+# mudam com frequência. Preços conferidos em 10/2026.
+_MODELOS: Dict[str, List[Dict[str, Any]]] = {
     "anthropic": [
-        {"id": "claude-haiku-4-5", "nome": "Claude Haiku 4.5", "consumo": "baixo"},
-        {"id": "claude-sonnet-5", "nome": "Claude Sonnet 5", "consumo": "medio"},
-        {"id": "claude-opus-5", "nome": "Claude Opus 5", "consumo": "alto"},
+        {"id": "claude-haiku-4-5", "nome": "Claude Haiku 4.5", "consumo": "baixo", "preco": (1.00, 5.00)},
+        {"id": "claude-sonnet-5", "nome": "Claude Sonnet 5", "consumo": "medio", "preco": (2.00, 10.00)},
+        {"id": "claude-opus-5", "nome": "Claude Opus 5", "consumo": "alto", "preco": (5.00, 25.00)},
     ],
     "openai": [
-        {"id": "gpt-5-mini", "nome": "GPT-5 Mini", "consumo": "baixo"},
-        {"id": "gpt-5", "nome": "GPT-5", "consumo": "medio"},
-        {"id": "gpt-5-pro", "nome": "GPT-5 Pro", "consumo": "alto"},
+        {"id": "gpt-5-mini", "nome": "GPT-5 Mini", "consumo": "baixo", "preco": (0.25, 2.00)},
+        {"id": "gpt-5", "nome": "GPT-5", "consumo": "medio", "preco": (1.25, 10.00)},
+        {"id": "gpt-5-pro", "nome": "GPT-5 Pro", "consumo": "alto", "preco": (15.00, 120.00)},
     ],
     "google": [
-        {"id": "gemini-2.5-flash-lite", "nome": "Gemini 2.5 Flash-Lite", "consumo": "baixo"},
-        {"id": "gemini-2.5-flash", "nome": "Gemini 2.5 Flash", "consumo": "medio"},
-        {"id": "gemini-2.5-pro", "nome": "Gemini 2.5 Pro", "consumo": "alto"},
+        {"id": "gemini-2.5-flash-lite", "nome": "Gemini 2.5 Flash-Lite", "consumo": "baixo", "preco": (0.10, 0.40)},
+        {"id": "gemini-2.5-flash", "nome": "Gemini 2.5 Flash", "consumo": "medio", "preco": (0.30, 2.50)},
+        {"id": "gemini-2.5-pro", "nome": "Gemini 2.5 Pro", "consumo": "alto", "preco": (1.25, 10.00)},
     ],
 }
+
+
+def preco_modelo(provider: str, model: str) -> Optional[Tuple[float, float]]:
+    """Preço de tabela (US$ por 1 milhão de tokens de entrada, de saída) do
+    modelo, ou ``None`` se ele não estiver na tabela."""
+    for m in _MODELOS.get(provider, []):
+        if m["id"] == model:
+            return m["preco"]
+    return None
 
 _MODELO_PADRAO = {
     "openai": "gpt-5",
@@ -142,7 +161,7 @@ class AIConfigService:
 
     def list_models(self, provider: str) -> List[ModeloInfo]:
         """Modelos disponíveis do provedor, cada um com seu nível de consumo."""
-        return [ModeloInfo(**m) for m in _MODELOS.get(provider, [])]
+        return [ModeloInfo(m["id"], m["nome"], m["consumo"]) for m in _MODELOS.get(provider, [])]
 
     # ------------------------------------------------------------------
     # Estado geral

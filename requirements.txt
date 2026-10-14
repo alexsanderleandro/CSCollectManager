@@ -20,7 +20,7 @@ python-dotenv>=1.0.0
 # Fusos horários (conversão UTC -> local em exportação e telas)
 pytz>=2024.1
 
-# Leitura de PDF (parser de relatórios de contagem LOGSCAN)
+# Leitura de PDF (parser de relatórios de contagem do CSColetor)
 pdfplumber>=0.11.0
 
 # SDKs de IA (análise de estoque) — import preguiçoso, só pesam se usados

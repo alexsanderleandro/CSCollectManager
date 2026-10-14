@@ -328,7 +328,7 @@ class AppStatusBar(QStatusBar):
         caixa = QMessageBox(self)
         caixa.setIcon(QMessageBox.Icon.Information)
         caixa.setWindowTitle("Tema alterado")
-        caixa.setText("O novo tema será aplicado a partir da próxima abertura do LogScan Manager.")
+        caixa.setText("O novo tema será aplicado a partir da próxima abertura do CSColetor Manager.")
         # Estilo explícito na instância: reforça o texto legível independente
         # de qualquer estilização nativa do Windows para QMessageBox.
         caixa.setStyleSheet(themed_qss("""

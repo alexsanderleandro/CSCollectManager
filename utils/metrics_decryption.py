@@ -1,7 +1,7 @@
 """Decriptação do envelope de métricas de produtividade gerado pelo CSCollect
 (ver `CSCollect/security/metrics_encryption.py` — AES-256-GCM + RSA-OAEP-SHA256).
 
-Só o LogScan Manager tem a chave privada correspondente à chave pública fixa
+Só o CSColetor Manager tem a chave privada correspondente à chave pública fixa
 embutida em todo celular CSCollect — por isso ela vive aqui, embutida como
 constante, mesmo padrão já usado do lado CSCollect para as chaves fixas do
 app (`security/export_db_signing.py::_PRIVATE_KEY_PEM`). O par completo (essa

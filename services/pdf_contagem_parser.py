@@ -1,8 +1,10 @@
 """
 pdf_contagem_parser.py
 =======================
-Parser determinístico de PDFs de contagem exportados pelo LOGSCAN (coletor
-mobile), formato "LOGSCAN vX.Y.Z rev. N | RELATÓRIO DE CONTAGEM DE ESTOQUE".
+Parser determinístico de PDFs de contagem exportados pelo CSColetor (coletor
+mobile), formato "CSCOLETOR vX.Y.Z rev. N | RELATÓRIO DE CONTAGEM DE ESTOQUE".
+Versões antigas do coletor se chamavam LOGSCAN e trazem "LOGSCAN" no lugar de
+"CSCOLETOR" — o resto do layout é o mesmo, então os dois são aceitos.
 
 Cobre os dois layouts do relatório, que diferem em mais do que a ordem das
 linhas — têm **conjuntos de colunas diferentes**:
@@ -41,8 +43,9 @@ from typing import Dict, List, Optional
 
 import pdfplumber
 
+# Nome do app no início do cabeçalho: CSCOLETOR (atual) ou LOGSCAN (antigo).
 _HEADER_RE = re.compile(
-    r"^LOGSCAN\s+(?P<versao>[^|]+?)\s*\|\s*RELAT[ÓO]RIO DE CONTAGEM DE ESTOQUE\s*\|\s*"
+    r"^(?:CSCOLETOR|LOGSCAN)\s+(?P<versao>[^|]+?)\s*\|\s*RELAT[ÓO]RIO DE CONTAGEM DE ESTOQUE\s*\|\s*"
     r"Modelo\s+(?P<modelo_num>\d+)\s*-\s*(?P<modelo_desc>.+)$",
     re.IGNORECASE,
 )
@@ -107,7 +110,7 @@ class ContagemItem:
 
 @dataclass
 class ContagemPDF:
-    """Dados extraídos de um PDF de contagem LOGSCAN."""
+    """Dados extraídos de um PDF de contagem do CSColetor."""
     arquivo: str
     modelo: str               # "MOD1" ou "MOD2"
     versao_app: str
@@ -152,7 +155,7 @@ def _parse_ddmmyyyy(txt: Optional[str]) -> Optional[date]:
 
 
 # Extrai o número do final do texto da célula "Qtde". Cobre um glitch do
-# PDF de origem: quando a descrição é muito longa, o LOGSCAN às vezes cola o
+# PDF de origem: quando a descrição é muito longa, o coletor às vezes cola o
 # início da localização junto da quantidade sem espaço (ex.: "TIGU...1.000"),
 # e pdfplumber devolve os dois grudados numa célula só.
 _QTDE_RE = re.compile(r"(?P<num>\d+(?:[.,]\d+)?)\s*$")
@@ -197,11 +200,11 @@ def _normalizar_cabecalho(txt: Optional[str]) -> str:
 
 
 class PdfContagemParser:
-    """Parser de PDFs de contagem no layout LOGSCAN (Modelo 1 e Modelo 2)."""
+    """Parser de PDFs de contagem no layout do CSColetor (Modelo 1 e Modelo 2)."""
 
     def parse(self, caminho: str) -> ContagemPDF:
         """
-        Lê e valida um PDF de contagem LOGSCAN.
+        Lê e valida um PDF de contagem do CSColetor.
 
         Args:
             caminho: Caminho do arquivo PDF.
@@ -210,8 +213,8 @@ class PdfContagemParser:
             ``ContagemPDF`` com cabeçalho e itens extraídos.
 
         Raises:
-            ValueError: Se o cabeçalho não corresponder ao formato LOGSCAN
-                conhecido, ou se a quantidade de itens/produtos extraídos não
+            ValueError: Se o cabeçalho não corresponder ao formato do
+                CSColetor, ou se a quantidade de itens/produtos extraídos não
                 bater com os totais declarados no rodapé.
         """
         with pdfplumber.open(caminho) as pdf:
@@ -226,8 +229,8 @@ class PdfContagemParser:
             header_match = _HEADER_RE.match(linhas[0].strip())
             if not header_match:
                 raise ValueError(
-                    f"Cabeçalho não corresponde ao formato LOGSCAN esperado "
-                    f"(esperado 'LOGSCAN vX.Y.Z ... | RELATÓRIO DE CONTAGEM DE "
+                    f"Cabeçalho não corresponde ao formato do CSColetor "
+                    f"(esperado 'CSCOLETOR vX.Y.Z ... | RELATÓRIO DE CONTAGEM DE "
                     f"ESTOQUE | Modelo N - ...'): {linhas[0]!r}"
                 )
             modelo = f"MOD{header_match.group('modelo_num')}"

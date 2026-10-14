@@ -15,12 +15,12 @@ from version import VERSION, BUILD
 @dataclass(frozen=True)
 class AppInfo:
     """Informações da aplicação."""
-    NAME: str = "LogScan Manager"
+    NAME: str = "CSColetor Manager"
     VERSION: str = VERSION
     BUILD: str = BUILD
     AUTHOR: str = "CEOsoftware"
     COMPANY: str = "CEOsoftware"
-    DESCRIPTION: str = "Sistema de gestão de cargas para o aplicativo LogScan"
+    DESCRIPTION: str = "Sistema de gestão de cargas para o aplicativo CSColetor"
     COPYRIGHT: str = "© 2026 CEOsoftware. Todos os direitos reservados."
     WEBSITE: str = "https://www.ceosoftware.com.br"
     EMAIL: str = "suporte@ceosoftware.com.br"

@@ -1078,7 +1078,7 @@ class MainWindowERP(QMainWindow):
         fields_layout.addWidget(metrics_group)
 
         # ===== GRUPO: CÓDIGO EXIBIDO NO COLETOR =====
-        codigo_group = QGroupBox("Mostrar na consulta de produtos no LogScan")
+        codigo_group = QGroupBox("Mostrar na consulta de produtos no CSColetor")
         codigo_group.setStyleSheet(themed_qss("""
             QGroupBox {
                 color: {{FG_PRIMARY}};
@@ -3408,7 +3408,7 @@ class MainWindowERP(QMainWindow):
 
             lines = [
                 "=" * 72,
-                "  RELATÓRIO DE EXPORTAÇÃO DE CARGA — LogScan Manager",
+                "  RELATÓRIO DE EXPORTAÇÃO DE CARGA — CSColetor Manager",
                 "=" * 72,
                 f"  Data/Hora          : {now.strftime('%d/%m/%Y %H:%M:%S')}",
                 f"  Usuário logado      : {usuario_logado}",

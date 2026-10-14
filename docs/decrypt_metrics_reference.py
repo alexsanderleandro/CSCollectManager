@@ -1,5 +1,5 @@
 """Script de referência para decifrar o arquivo `<nome>_metricas.enc` gerado
-pelo LogScan mobile (CSCollect) e empacotado no zip de exportação de contagem.
+pelo CSColetor mobile (CSCollect) e empacotado no zip de exportação de contagem.
 
 NÃO está integrado ao CSCollectManager ainda — é só a implementação de
 referência para quando essa leitura for construída na UI do Manager.

@@ -818,8 +818,8 @@ class StockAnalysisPage(QWidget):
         self._table = QTableWidget()
         self._table.setItemDelegate(_DelegateFundoCelula(self._table))
         self._montar_cabecalho()
-        # Clique no cabeçalho ordena pela coluna (a base da diferença fica no
-        # seletor acima da grade). Ordenação manual, ver `_ordenar`.
+        # Clique no cabeçalho de um Contado o torna a base da diferença; nas
+        # demais colunas, ordena. Ver `_on_cabecalho_clicado` e `_ordenar`.
         self._table.horizontalHeader().setSectionsClickable(True)
         self._table.horizontalHeader().sectionClicked.connect(self._on_cabecalho_clicado)
         # Larguras calculadas em `_ajustar_colunas` (não Stretch): numa coluna
@@ -1611,9 +1611,9 @@ class StockAnalysisPage(QWidget):
                 if not varias:
                     dica = arquivo
                 elif i == base:
-                    dica = f"{arquivo}\nBase da diferença."
+                    dica = f"{arquivo}\nBase da diferença · clique para ordenar por esta coluna."
                 else:
-                    dica = f"{arquivo}\nPara usar como base, escolha no seletor acima da grade."
+                    dica = f"{arquivo}\nClique para usar esta contagem como base da diferença."
                 self._table.horizontalHeaderItem(_COL_CONTADO + i).setToolTip(dica)
             _cabecalho("diferenca").setToolTip(f"{colunas[base]} − Sistema")
 
@@ -1823,12 +1823,17 @@ class StockAnalysisPage(QWidget):
     # ----- ordenação e filtros -----
 
     def _on_cabecalho_clicado(self, col: int):
-        """Clique no cabeçalho: ordena pela coluna; um segundo clique inverte.
-        Colunas numéricas começam do maior para o menor."""
+        """Clique no cabeçalho de uma coluna de contado que não é a base: ela
+        passa a ser a base da diferença (o seletor acima da grade acompanha).
+        Nas demais colunas — e na de contado que já é a base — ordena; um
+        segundo clique inverte. Colunas numéricas começam do maior para o menor."""
         if self._resultado is None or not self._table.isEnabled():
             return
         chave = self._chave_coluna(col)
         if chave is None:
+            return
+        if chave[0] == "contado" and chave[1] != self._resultado.indice_base:
+            self._on_base_escolhida(chave[1])
             return
         if self._ordem and self._ordem[0] == chave:
             ordem = (Qt.SortOrder.AscendingOrder if self._ordem[1] == Qt.SortOrder.DescendingOrder
@@ -2252,10 +2257,41 @@ class StockAnalysisPage(QWidget):
         # O texto da análise anterior (se houver) volta, com o contexto dele.
         self._lbl_contexto_ia.setText(self._contexto_ia_anterior)
         self._atualizar_botoes_resultado()
-        mensagem = str(exc) if isinstance(exc, AIClientError) else f"Erro inesperado: {exc}"
-        QMessageBox.critical(self, "Erro na Análise", mensagem)
+        self._mostrar_erro_ia("Erro na Análise", exc)
+
+    def _mostrar_erro_ia(self, titulo: str, exc: Exception):
+        """Mostra o erro da IA em duas partes — o que houve e o que fazer —, com
+        o erro técnico só para copiar e mandar ao suporte."""
+        if isinstance(exc, AIClientError):
+            mensagem, orientacao, detalhe = exc.mensagem, exc.orientacao, exc.detalhe
+        else:
+            mensagem = "Erro inesperado ao analisar com a IA."
+            orientacao = "Tente de novo. Se continuar, envie ao suporte os detalhes técnicos deste erro."
+            detalhe = f"{type(exc).__name__}: {exc}"
+
+        caixa = QMessageBox(self)
+        caixa.setWindowTitle(titulo)
+        caixa.setIcon(QMessageBox.Icon.Critical)
+        # Largura mínima nos botões, não no texto: sem ela a caixa encolhe e
+        # corta o botão de copiar; no texto ela impediria a quebra de linha.
+        caixa.setStyleSheet("QDialogButtonBox { min-width: 400px; }")
+        # As duas partes num rótulo só: o QMessageBox não quebra a linha do
+        # texto principal quando há texto informativo — a frase era cortada.
+        texto = f"<p style='margin:0'><b>{html_lib.escape(mensagem)}</b></p>"
+        if orientacao:
+            texto += f"<p style='margin:10px 0 0 0'>{html_lib.escape(orientacao)}</p>"
+        caixa.setText(texto)
+        btn_copiar = None
+        if detalhe:
+            btn_copiar = caixa.addButton("Copiar detalhes técnicos", QMessageBox.ButtonRole.ActionRole)
+        caixa.setDefaultButton(caixa.addButton("OK", QMessageBox.ButtonRole.AcceptRole))
+        caixa.exec()
+
         self._lbl_status.setText(f"❌ {mensagem}")
         self._lbl_status.setStyleSheet(themed_qss("color: {{ERROR}}; font-size: 9pt;"))
+        if btn_copiar is not None and caixa.clickedButton() is btn_copiar:
+            QApplication.clipboard().setText(f"{mensagem}\n{orientacao}\n\n{detalhe}".strip())
+            self._lbl_status.setText(f"❌ {mensagem} (detalhes técnicos copiados)")
 
     # ------------------------------------------------------------------
     # Seções da aba da IA e aprofundamentos
@@ -2462,10 +2498,7 @@ class StockAnalysisPage(QWidget):
         self._aprofundando = None
         self._parar_animacao_aprofundar()
         self._atualizar_botoes_resultado()
-        mensagem = str(exc) if isinstance(exc, AIClientError) else f"Erro inesperado: {exc}"
-        QMessageBox.critical(self, "Erro ao Aprofundar", mensagem)
-        self._lbl_status.setText(f"❌ {mensagem}")
-        self._lbl_status.setStyleSheet(themed_qss("color: {{ERROR}}; font-size: 9pt;"))
+        self._mostrar_erro_ia("Erro ao Aprofundar", exc)
 
     # ------------------------------------------------------------------
     # Animação da IA ("linha de leitura")
@@ -3123,7 +3156,7 @@ def _gerar_pdf_relatorio(caminho: str, cabecalho_html: str, secoes: list,
         doc.setTextWidth(largura_texto)
         return doc
 
-    # --- Marca: logotipo + "LogScan Manager" / "by CEOsoftware" ---
+    # --- Marca: logotipo + "CSColetor Manager" / "by CEOsoftware" ---
     logo = _logo_pdf()
     alt_logo = mm(11)
     larg_logo = logo.width() * alt_logo / logo.height() if logo else 0.0

@@ -2,7 +2,7 @@
   "provider": "openai",
   "providers": {
     "openai": {
-      "token": "gAAAAABqvAywjYyOgXVj8h0AukhMtjLpG1Qe75_yWw0fNoUJd60U59uipRgg5hSZnqjQ21bP3cTjXxedNiGE5gER77sd4fBsIgwXlApYqsskfTXN33j99t0-MuWsKfs7d6a12z_ZvL-tgbhRTtaWHcyDtu3-GrGZg3e45E87s7KSwa8BOE4AwdzzeTOs3qt_lf54HTPR2LmCrGdxHxxVzuOg9vRdpfO27VdDCTCQIBplLZHhnV14BWmiE12klAYY7elbJ5BxwkU2_a6p7_pqK2l8w4U4zqDFcocWVgf2Ydk59XJSHOUZcbo=",
+      "token": "gAAAAABqz8eIobIdgrh2TBR7lHumUshmrtWdymeKqmc2230TRKK49BLvzP17Ez3hOQY5BBj0bVphLcmOQosvDwImUySik-_dBqbqgDaAD2krOU-ECKtZvw5p0aoxCby70h8LAx1TkLii65BRGvee9qaLmwdusFxCrTjNHEL_FcClg69BJ3g753h1sK7FhWVXoLYRiUIXvtmjr716_aKRCiN86gLxYAxR8_w2wwSsIXhqgg9Ji_bBOCO_T6r3npDw4tMdBH-erQh03xkkZUaHa979Qq3x82-VPeQREWPjgpvkpw-PEpC2iPU=",
       "model": "gpt-5-mini"
     },
     "anthropic": {
